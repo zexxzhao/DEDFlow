@@ -3,10 +3,10 @@
 
 
 int main(int argc, char *argv[]) {
-	Mesh* mesh;
-	MeshCrate(&mesh);
-	MeshLoad(mesh, "mesh/file/name");
-	MeshMove(mesh, HostToDevice);
+	Mesh3D* mesh;
+	Mesh3DCreate(&mesh);
+	Mesh3DLoad(mesh, "mesh/file/name");
+	Mesh3DMove(mesh, HostToDevice);
 
 	Field* wgold, *dwgold, *dwg;
 	i32 nDofPerNode = 6;
@@ -77,6 +77,6 @@ int main(int argc, char *argv[]) {
 	FieldDestroy(wgold);
 	FieldDestroy(dwgold);
 	FieldDestroy(dwg);
-	MeshDestroy(mesh);
+	Mesh3DDestroy(mesh);
 	return 0;
 }

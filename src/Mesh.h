@@ -6,23 +6,36 @@ __BEGIN_DECLS__
 
 #include "common.h"
 
-typedef struct Mesh3Df64 Mesh3Df64;
-struct Mesh3D {
-	u32 nNode;
-	u32 nElem;
+typedef struct Mesh3DData Mesh3DData;
+struct Mesh3DData
+{
+	bool is_host;
 	f64* xg; /* xg[3*nNode] */
-	f64* dg; /* dg[3*nElem] */
-	u32* offset; /* offset[nElem+1] */
-	u32* ien; /* ien[4*nElem] */
+	u32* ien_tet; /* ien_tet[4*nElem] */
+	u32* ien_prism; /* ien_prism[6*nElem] */
+	u32* ien_hex; /* ien_hex[8*nElem] */
+};
+
+
+typedef struct Mesh3D Mesh3D;
+struct Mesh3D {
+	u32 num_node;
+	u32 num_tet;
+	u32 num_prism;
+	u32 num_hex;
+
+	Mesh3DData* host;
+	Mesh3DData* device;
 };
 
 
 
-void Mesh3DHostCreate(Mesh3DHost);
-void Mesh3DHostDestory(Mesh3DHost* mesh);
 
-typedef Mesh3D Mesh3DHost;
-typedef Mesh3D Mesh3DDevice;
+void Mesh3DCreate(Mesh3D** mesh);
+void Mesh3DDestroy(Mesh3D* mesh);
+
+void Mesh3DLoad(Mesh3D* mesh, const char* filename);
+void Mesh3DMove(Mesh3D* mesh, MemCopyKind kind);
 
 
 

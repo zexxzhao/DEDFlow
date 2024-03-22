@@ -17,6 +17,7 @@
 
 
 #include <stdint.h>
+
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
@@ -32,6 +33,17 @@ typedef double f64;
 
 typedef char byte;
 typedef ptrdiff_t size;
+
+#include <stdbool.h>
+
+#include <cuda_runtime.h>
+
+typdef enum {
+	H2H = cudaMemcpyHostToHost,
+	H2D = cudaMemcpyHostToDevice,
+	D2H = cudaMemcpyDeviceToHost,
+	D2D = cudaMemcpyDeviceToDevice
+} MemCopyKind;
 
 
 #endif // __COMMON_H__
