@@ -54,19 +54,19 @@ Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32
 
 	if (num_node) {
 		Mesh3DDataCoord(data) = (f64*)CdamMallocDevice(sizeof(f64) * num_node * 3);
-		cudaMemset(Mesh3DDataCoord(data), 0, num_node * 3 * sizeof(f64));
+		CUGUARD(cudaMemset(Mesh3DDataCoord(data), 0, num_node * 3 * sizeof(f64)));
 	}
 	if (num_tet) {
 		Mesh3DDataTet(data) = (u32*)CdamMallocDevice(sizeof(u32) * num_tet * 4);
-		cudaMemset(Mesh3DDataTet(data), 0, num_tet * 4 * sizeof(u32));
+		CUGUARD(cudaMemset(Mesh3DDataTet(data), 0, num_tet * 4 * sizeof(u32)));
 	}
 	if (num_prism) {
 		Mesh3DDataPrism(data) = (u32*)CdamMallocDevice(sizeof(u32) * num_prism * 6);
-		cudaMemset(Mesh3DDataPrism(data), 0, num_prism * 6 * sizeof(u32));
+		CUGUARD(cudaMemset(Mesh3DDataPrism(data), 0, num_prism * 6 * sizeof(u32)));
 	}
 	if (num_hex) {
 		Mesh3DDataHex(data) = (u32*)CdamMallocDevice(sizeof(u32) * num_hex * 8);
-		cudaMemset(Mesh3DDataHex(data), 0, num_hex * 8 * sizeof(u32));
+		CUGUARD(cudaMemset(Mesh3DDataHex(data), 0, num_hex * 8 * sizeof(u32)));
 	}
 	return data;
 }
@@ -213,19 +213,19 @@ void Mesh3DDataCopy(Mesh3DData* dst, Mesh3DData* src, MemCopyKind kind) {
 	ASSERT(!!dst_hex == !!len_buff_hex && "Invalid buffer");
 
 	if (len_buff_node) {
-		cudaMemcpy(dst_xg, src_xg, len_buff_node, kind);
+		CUGUARD(cudaMemcpy(dst_xg, src_xg, len_buff_node, kind));
 	}
 
 	if (len_buff_tet) {
-		cudaMemcpy(dst_tet, src_tet, len_buff_tet, kind);
+		CUGUARD(cudaMemcpy(dst_tet, src_tet, len_buff_tet, kind));
 	}
 
 	if (len_buff_prism) {
-		cudaMemcpy(dst_prism, src_prism, len_buff_prism, kind);
+		CUGUARD(cudaMemcpy(dst_prism, src_prism, len_buff_prism, kind));
 	}
 
 	if (len_buff_hex) {
-		cudaMemcpy(dst_hex, src_hex, len_buff_hex, kind);
+		CUGUARD(cudaMemcpy(dst_hex, src_hex, len_buff_hex, kind));
 	}
 }
 

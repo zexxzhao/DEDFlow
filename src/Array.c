@@ -75,7 +75,7 @@ void ArrayCopy(Array* dst, const Array* src, MemCopyKind kind) {
 		memcpy(dst->data, src->data, sizeof(f64) * src->len);
 	}
 	else {
-		cudaMemcpy(dst->data, src->data, sizeof(f64) * src->len, kind);
+		CUGUARD(cudaMemcpy(dst->data, src->data, sizeof(f64) * src->len, kind));
 	}
 }
 
@@ -93,7 +93,7 @@ void ArraySet(Array* a, f64 val) {
 		for (u32 i = 0; i < ArrayLen(a); i++) {
 			d_data[i] = val;
 		}
-		cudaMemcpy(ArrayData(a), d_data, sizeof(f64) * ArrayLen(a), cudaMemcpyHostToDevice);
+		CUGUARD(cudaMemcpy(ArrayData(a), d_data, sizeof(f64) * ArrayLen(a), cudaMemcpyHostToDevice));
 		free(d_data);
 	}
 }
@@ -112,11 +112,11 @@ void ArraySetAt(Array* a, u32 n, const u32* idx, const f64* val) {
 	}
 	else {
 		f64* d_data = (f64*)malloc(sizeof(f64) * ArrayLen(a));
-		cudaMemcpy(d_data, ArrayData(a), sizeof(f64) * ArrayLen(a), cudaMemcpyDeviceToHost);
+		CUGUARD(cudaMemcpy(d_data, ArrayData(a), sizeof(f64) * ArrayLen(a), cudaMemcpyDeviceToHost));
 		for(u32 i = 0; i < n; i++) {
 			d_data[idx[i]] = val[i];
 		}
-		cudaMemcpy(ArrayData(a), d_data, sizeof(f64) * ArrayLen(a), cudaMemcpyHostToDevice);
+		CUGUARD(cudaMemcpy(ArrayData(a), d_data, sizeof(f64) * ArrayLen(a), cudaMemcpyHostToDevice));
 		free(d_data);
 	}
 }
@@ -131,7 +131,7 @@ void ArrayAt(const Array* a, u32 n, const u32* idx, f64* val) {
 	}
 	else {
 		f64* d_data = (f64*)malloc(sizeof(f64) * ArrayLen(a));
-		cudaMemcpy(d_data, ArrayData(a), sizeof(f64) * ArrayLen(a), cudaMemcpyDeviceToHost);
+		CUGUARD(cudaMemcpy(d_data, ArrayData(a), sizeof(f64) * ArrayLen(a), cudaMemcpyDeviceToHost));
 		for (u32 i = 0; i < n; i++) {
 			val[i] = d_data[idx[i]];
 		}

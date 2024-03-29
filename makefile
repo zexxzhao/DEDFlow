@@ -34,7 +34,7 @@ info:
 
 
 $(DEST)/$(NAME).exe: $(OBJS) $(CU_OBJS) | $(DEST)
-	$(CC) $(CU_OBJS) $(OBJS) $(LIB) $(LDFLAGS) $(CU_LIB) -o $@ 
+	$(CC) $(CFLAGS) $(CU_OBJS) $(OBJS) $(LIB) $(LDFLAGS) $(CU_LIB) -o $@ 
 
 obj:
 	mkdir -p obj

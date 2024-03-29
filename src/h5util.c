@@ -52,7 +52,7 @@ b32 H5FileIsReadable(H5FileInfo* h5file) {
 	unsigned intent;
 	hid_t file_id = h5file->file_id;
 	H5Fget_intent(file_id, &intent);
-	return intent & (H5F_ACC_RDWR | H5F_ACC_RDONLY);
+	return intent == H5F_ACC_RDONLY || intent & H5F_ACC_RDWR;
 }
 
 /* Check the existence of a group */
@@ -92,7 +92,8 @@ void H5GetDatasetSize(H5FileInfo* h5file, const char* dataset_name, u32* size) {
 	ASSERT(ndims == 1 && "All arraies are flattened into 1D.\n");
 
 	H5Sget_simple_extent_dims(dataspace_id, &dataset_size, NULL);
-	*size = dataset_size;
+	ASSERT(dataset_size < UINT_MAX && "H5GetDatasetSize: Dataset size exceeds the limit of u32.\n");
+	*size = (u32)dataset_size;
 
 	H5Sclose(dataspace_id);
 	H5Dclose(dataset_id);
@@ -155,13 +156,13 @@ H5WriteDataset(H5FileInfo* h5file, const char *dataset_name,
 			strncpy(buff, dataset_name, index);
 			if (H5GroupExist(h5file, buff)) {
 				group_id = H5Gopen(h5file->file_id, buff, H5P_DEFAULT);
-				printf("H5WriteDataset: Opened group %s\n", buff);
+				/* printf("H5WriteDataset: Opened group %s\n", buff); */
 			}
 			else {
 				group_id = H5Gcreate(h5file->file_id, buff, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-				printf("H5WriteDataset: Created group %s\n", buff);
+				/* printf("H5WriteDataset: Created group %s\n", buff); */
 			}
-				ASSERT(group_id >= 0 && "H5WriteDataset: Failed to create group!");
+			ASSERT(group_id >= 0 && "H5WriteDataset: Failed to create group!");
 			H5Gclose(group_id);
 		}
 		index++;

@@ -23,8 +23,8 @@ static void DefaultFreeHostPrivate(void* p, ptrdiff_t size, void* ctx) {
 static void* DefaultMallocDevicePrivate(ptrdiff_t size, void* ctx) {
 	void* p;
 	UNUSED(ctx);
-	cudaMalloc(&p, size);
-	cudaMemset(p, 0, size);
+	CUGUARD(cudaMalloc(&p, size));
+	CUGUARD(cudaMemset(p, 0, size));
 	ASSERT(p && "Out of memory");
 	return p;
 }
@@ -32,7 +32,7 @@ static void* DefaultMallocDevicePrivate(ptrdiff_t size, void* ctx) {
 static void DefaultFreeDevicePrivate(void* p, ptrdiff_t size, void* ctx) {
 	UNUSED(size);
 	UNUSED(ctx);
-	cudaFree(p);
+	CUGUARD(cudaFree(p));
 }
 
 static Allocator _default_allocator[2] = {
