@@ -34,7 +34,7 @@ info:
 
 
 $(DEST)/$(NAME).exe: $(OBJS) $(CU_OBJS) | $(DEST)
-	$(NVCC) $(LDFLAGS) $(CU_OBJS) $(OBJS) $(LIB) -o $@
+	$(CC) $(CU_OBJS) $(OBJS) $(LIB) $(LDFLAGS) $(CU_LIB) -o $@ 
 
 obj:
 	mkdir -p obj
@@ -52,6 +52,6 @@ obj/%.o: src/%.cu | obj
 -include $(DEPS) $(CU_DEPS)
 
 clean:
-	rm -rf obj $(TARGET)
+	rm -rf obj $(DEST) $(TARGET)
 
 .PHONY: info clean
