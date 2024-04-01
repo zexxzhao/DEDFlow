@@ -4,10 +4,10 @@
 
 
 #include "common.h"
+#include "MeshData.h"
 
 __BEGIN_DECLS__
 typedef struct H5FileInfo H5FileInfo;
-typedef struct Mesh3DData Mesh3DData;
 
 typedef struct Mesh3D Mesh3D;
 struct Mesh3D {

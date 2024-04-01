@@ -22,7 +22,7 @@ struct Field {
 Field* FieldCreate3D(const Mesh3D* mesh, i32 num_nodal_dof);
 void FieldDestroy(Field* f);
 
-// void FieldInitCond(Field* f, void(*func)(f64*, const f64*, const void* ctx), const void* ctx);
+void FieldInit(Field* f, void(*func)(f64*, void* ctx), void* ctx);
 
 void FieldLoad(Field* f, H5FileInfo* h5f, const char* group_name);
 void FieldSave(const Field* f, H5FileInfo* h5f, const char* group_name);

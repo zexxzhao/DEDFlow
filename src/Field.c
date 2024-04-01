@@ -37,6 +37,14 @@ void FieldDestroy(Field* f) {
 	f = NULL;
 }
 
+
+void FieldInit(Field* f, void(*func)(f64*, void*), void* ctx) {
+	ASSERT(f && func && "FieldInitCond: NULL pointer.");
+	Array* host = FieldHost(f);
+	(*func)(ArrayData(host), ctx);
+	ArrayCopy(FieldDevice(f), FieldHost(f), H2D);
+}
+
 void FieldLoad(Field* f, H5FileInfo* h5f, const char* group_name) {
 	ASSERT(f && h5f && group_name && "FieldLoad: NULL pointer.");
 	ArrayLoad(FieldHost(f), h5f, group_name);

@@ -1,4 +1,8 @@
 #include <stdio.h>
+#include <math.h>
+#ifndef M_PI
+#define M_PI (3.14159265358979323846)
+#endif
 #include <stdlib.h>
 
 #include "h5util.h"
@@ -13,39 +17,80 @@
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
 
+void MyFieldInit(f64* value, void* ctx) {
+	double eps = 1.5e-4 * 0.5;
+	double z, h;
+	Mesh3D* mesh = (Mesh3D*)ctx;
+	Mesh3DData* data = Mesh3DHost(mesh);
+	u32 i;
+	u32 num_node = Mesh3DDataNumNode(data);
+	f64* coord = Mesh3DDataCoord(data);
+
+	for(i = 0; i < num_node; i++) {
+		z = 1.5e-4 - coord[i * 3 + 2];
+		if (z > eps) {
+			h = 1.0;
+		}
+		else if (z < -eps) {
+			h = 0.0;
+		}
+		else {
+			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
+		}
+		value[i] = h;
+	}
+}
+
 int main() {
 	b32 converged = FALSE;
-	char filename_buffer[256];
-	H5FileInfo* h5_handler = H5OpenFile("example_tet_mesh.h5", "r");
+	i32 step = 0, num_step = 10;
+	char filename_buffer[256] = {0};
+	struct cudaDeviceProp prop;
+	i32 num_device;
+	cudaGetDeviceCount(&num_device);
+	ASSERT(num_device > 0 && "No CUDA device found");
+	if (num_device) {
+		cudaGetDeviceProperties(&prop, 0);
+		printf("Device name: %s\n", prop.name);
+		printf("Compute capability: %d.%d\n", prop.major, prop.minor);
+		printf("Total global memory: %f (MB)\n", (f64)prop.totalGlobalMem / 1024.0 / 1024.0);
+		printf("Shared memory per block: %f (KB)\n", (f64)prop.sharedMemPerBlock / 1024.0);
+		printf("Registers per block: %f (KB)\n", (f64)prop.regsPerBlock / 1024.0);
+		printf("Warp size: %d\n", prop.warpSize);
+		printf("Max threads per block: %d\n", prop.maxThreadsPerBlock);
+		printf("Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
+		printf("Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
+		printf("Clock rate: %f (Hz) \n", (f64)prop.clockRate);
+		printf("Total constant memory: %f (MB)\n", (f64)prop.totalConstMem / 1024.0 / 1024.0);
+		printf("Peak memory clock rate: %f (MHz)\n", (f64)prop.memoryClockRate / 1e6);
+		printf("Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
+	}
+
+	H5FileInfo* h5_handler = H5OpenFile("cube.h5", "r");
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);
-
-	i32 num_nodal_dof = 6;
-	Field* wgold = FieldCreate3D(mesh, num_nodal_dof);
-	Field* dwgold = FieldCreate3D(mesh, num_nodal_dof);
-	Field* dwg = FieldCreate3D(mesh, num_nodal_dof);
+	Field* wgold = FieldCreate3D(mesh, 1);
+	Field* dwgold = FieldCreate3D(mesh, 1);
+	Field* dwg = FieldCreate3D(mesh, 1);
+	FieldUpdateDevice(wgold);
+	FieldUpdateDevice(dwgold);
+	FieldUpdateDevice(dwg);
 
 	ParticleContext* pctx = ParticleContextCreate(100);
-
-	i32 step = 0, num_step = 10;
-	if (step == 0) {
-		// FieldInit(wgold, wgoldInit);
-		// FieldInit(dwgold, dwgoldInit);
-		// FieldInit(dwg, dwgInit);
-		// ParticleInit(pctx);
-	}
-	else {
+	ParticleContextUpdateDevice(pctx);
+	if (step) {
 		sprintf(filename_buffer, "sol.%d.h5", step);
 		h5_handler = H5OpenFile(filename_buffer, "r");
 		FieldLoad(wgold, h5_handler, "w");
 		FieldLoad(dwgold, h5_handler, "dw");
+		ParticleContextLoad(pctx, h5_handler, "ptc/test/group/context");
 		FieldCopy(dwg, dwgold);
-		ParticleContextLoad(pctx, h5_handler, "ptc");
+		H5CloseFile(h5_handler);
 	}
-	FieldUpdateDevice(wgold);
-	FieldUpdateDevice(dwgold);
-	FieldUpdateDevice(dwg);
-	ParticleContextUpdateDevice(pctx);
+	else {
+		/* Initial condition */
+		FieldInit(wgold, MyFieldInit, mesh);
+	}
 
 	while(step++ < num_step) {
 		/* Prediction stage */
