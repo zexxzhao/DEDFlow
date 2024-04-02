@@ -27,6 +27,7 @@ CFLAGS=-O0 -g3 -std=c99 \
 			 -Wall -Wextra \
 			 -Wconversion -Wdouble-promotion \
 			 -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
+			 -Wno-deprecated-declarations \
 			 -fsanitize=undefined # -fno-omit-frame-pointer
 INC=-I$(MK_HDF5_DIR)/include -I$(CUDA_DIR)/include
 LIB=-L$(MK_HDF5_DIR)/lib -lhdf5 -lm
