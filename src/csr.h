@@ -24,19 +24,19 @@ struct CSRAttr {
 #define CSRAttrRowPtr(attr) ((attr)->row_ptr)
 #define CSRAttrColInd(attr) ((attr)->col_ind)
 
-CSRAttr* CSRAttrCreate(const Mesh3D* mesh);
+CSRAttr* CSRAttrCreate(const Mesh3D* mesh, csr_index_type block_size);
 void CSRAttrDestroy(CSRAttr *attr);
 
-u32 CSRAttrLength(const CSRAttr *attr, csr_index_type row);
-csr_index_type* CSRAttrRow(const CSRAttr *attr, csr_index_type row);
+u32 CSRAttrLength(CSRAttr *attr, csr_index_type row);
+csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row);
 
 
 typedef struct CSRMatrix CSRMatrix;
 typedef f64 csr_value_type;
 struct CSRMatrix {
-	csr_index_type block_size;
-	csr_value_type *data;
+	b32 external_attr;
 	CSRAttr *attr;
+	csr_value_type *data;
 	cusparseSpMatDescr_t descr;
 };
 
@@ -44,19 +44,18 @@ struct CSRMatrix {
 #define CSRMatrixRowPtr(matrix) (CSRAttrRowPtr(CSRMatrixAttr(matrix)))
 #define CSRMatrixColInd(matrix) (CSRAttrColInd(CSRMatrixAttr(matrix)))
 #define CSRMatrixData(matrix) ((matrix)->data)
-#define CSRMatrixBS(matrix) ((matrix)->block_size)
 #define CSRMatrixNumRow(matrix) (CSRAttrNumRow(CSRMatrixAttr(matrix)))
 #define CSRMatrixNumCol(matrix) (CSRAttrNumCol(CSRMatrixAttr(matrix)))
 #define CSRMatrixNNZB(matrix) (CSRAttrNNZ(CSRMatrixAttr(matrix)))
 #define CSRMatrixNNZ(matrix) (CSRAttrNNZ(CSRMatrixAttr(matrix))*CSRMatrixBS(matrix)*CSRMatrixBS(matrix))
 #define CSRMatrixDescr(matrix) ((matrix)->descr)
 
-CSRMatrix* CSRMatrixCreate(CSRAttr *attr, csr_index_type block_size);
+CSRMatrix* CSRMatrixCreate(CSRAttr *attr);
 CSRMatrix* CSRMatrixCreateMesh(const Mesh3D* mesh, csr_index_type block_size);
 
 void CSRMatrixDestroy(CSRMatrix *matrix);
 
-void CSRMatrixSpMV(const CSRMatrix *matrix, const csr_value_type *x, csr_value_type *y);
+
 
 __END_DECLS__
 
