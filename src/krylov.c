@@ -1,5 +1,8 @@
+#include <float.h>
+#include <cublas_v2.h>
 #include "alloc.h"
 
+#include "csr.h"
 #include "pc.cuh"
 #include "krylov.h"
 
@@ -12,37 +15,41 @@ static Krylov* KryloveInitPrivate(u32 max_iter, f64 atol, f64 rtol) {
 	ksp->rtol = rtol;
 
 	ksp->handle = NULL;
-	ksp->KSPSolve = NULL;
-	ksp->PCApply = NULL;
-	ksp->ctx = NULL;
+	ksp->ksp_solve = NULL;
+	ksp->pc_apply = NULL;
+	ksp->ksp_ctx = NULL;
+	ksp->pc_ctx = NULL;
 	return ksp;
 }
-static void PCJacobiApply(CSRMatrix* A, f64* x, f64* b) {
-	u32 n = CSRMatrixNumRows(A);
+
+static void PCJacobiApply(CSRMatrix* A, f64* x, f64* y, void* ctx) {
+	u32 n = CSRMatrixNumRow(A);
 	u32 nnz = CSRMatrixNNZ(A);
 	u32* row_ptr = CSRMatrixRowPtr(A);
-	u32* col_idx = CSRMatrixColIdx(A);
-	f64* val = CSRMatrixVal(A);
+	u32* col_idx = CSRMatrixColInd(A);
+	f64* val = CSRMatrixData(A);
 
-	i32 block_size = 1024;
-	i32 num_blocks = (n + block_size - 1) / block_size;
-	if(x == NULL or x == b) {
-		PCJacobiApplyInPlaceKernel<<<num_blocks, block_size>>>(n, nnz, row_ptr, col_idx, val, b);
+	ASSERT(x && y && "x and y must not be NULL");
+	if(x == y) {
+		PCJacobiInplaceDevice(n, nnz, val, row_ptr, col_idx, y);
 	}
 	else {
-		PCJacobiApplyKernel<<<num_blocks, block_size>>>(n, nnz, row_ptr, col_idx, val, b, x);
+		PCJacobiDevice(n, nnz, val, row_ptr, col_idx, x, y);
 	}
 	
 }
-static void CGSolvePrivate(CSRMatrix* A, f64* x, f64* b, u32 max_iter, f64 atol, f64 rtol, PCApplyFunc pc, void* ctx) {
-	u32 n = CSRMatrixNumRows(A);
+static void CGSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
+	u32 n = CSRMatrixNumRow(A);
 	cusparseDnVecDescr_t vec_x, vec_b;
-	cusparseCreateDnVec(&vec_x, n, x);
-	cusparseCreateDnVec(&vec_b, n, b);
+	cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);
+	cusparseCreateDnVec(&vec_b, n, b, CUDA_R_64F);
 
-	cusparseDnMatDescr_t mat_A = CSRMatrixDescr(A);
+	cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
+	UNUSED(mat_A);
 	/* TODO: Implement CG solver */
 }
+
+void GMRESResidualUpdatePrivate(f64*, f64*);
 
 /* GMRES solver */
 static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
@@ -52,18 +59,24 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 	f64 atol = ksp->atol;
 	f64 rtol = ksp->rtol;
 	void* buffer_mv = ksp->ksp_ctx;
-	u32 n = CSRMatrixNumRows(A);
+	u32 iter;
+	u32 n = CSRMatrixNumRow(A);
+	f64 rnrm_init, rnrm;
+	b32 converged;
 
 	cusparseHandle_t cusparse_handle = ksp->handle;
 	cusparseDnVecDescr_t vec_r, vec_x, vec_tmp;
-	cusparseDnMatDescr_t mat_A = CSRMatrixDescr(A);
+	cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 
 	cublasHandle_t cublas_handle;
 
-	cublasCreate(&cublas_handle);
+#define QCOL(col) (Q + (col) * n)
+#define HCOL(col) (H + (col) * (maxit + 1))
+#define GVCOS(i) (gv + 2 * (i))
+#define GVSIN(i) (gv + 2 * (i) + 1)
 
-	/* Allocate memory for Q[maxit, n] */
-	f64* Q = (f64*)CdamMallocDevice(n * sizeof(64) * maxit);
+	/* Allocate memory for Q[n, maxit+1] */
+	f64* Q = (f64*)CdamMallocDevice(n * sizeof(64) * (maxit + 1));
 	cudaMemset(Q, 0, n * sizeof(f64) * maxit);
 	/* Allocate memeory for Hessenberg matrix H[(maxit + 1) * maxit] */
 	f64* H = (f64*)CdamMallocDevice((maxit + 1) * maxit * sizeof(f64));
@@ -72,119 +85,140 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 	f64* tmp = (f64*)CdamMallocDevice(n * sizeof(f64));
 	cudaMemset(tmp, 0, n * sizeof(f64));
 	/* Allocate memory for Givens rotation */
-	f64* cs = (f64*)CdamMallocDevice(2 * maxit * sizeof(f64));
-	cudaMemset(cs, 0, 2 * maxit * sizeof(f64));
-	f64* sn = cs + maxit;
+	/* gv[::2] = cs, gv[1::2] = sn */
+	f64* gv = (f64*)CdamMallocDevice(2 * maxit * sizeof(f64));
+	cudaMemset(gv, 0, 2 * maxit * sizeof(f64));
 	/* Allocate memory for residual vector */
 	f64* beta = (f64*)CdamMallocDevice((maxit + 1) * sizeof(f64));
 	cudaMemset(beta, 0, (maxit + 1) * sizeof(f64));
 	cublasSetVector(1, sizeof(f64), &one, 1, beta, 1);
 
+	cublasCreate(&cublas_handle);
+	cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);				/* vec_x -> x */
+	cusparseCreateDnVec(&vec_r, n, QCOL(0), CUDA_R_64F);  /* vec_r -> Q[:, 0] */
+	cusparseCreateDnVec(&vec_tmp, n, tmp, CUDA_R_64F);		/* vec_tmp -> tmp */
 	/* 0. r = b - A * x */
-	cusparseCreateDnVec(&vec_x, n, x);
-	cusparseCreateDnVec(&vec_r, n, Q + n * 0);
-	cusparseCreateDnVec(&vec_tmp, n, tmp);
 	/* 0.0. r = b */
-	cublasDcopy(cublas_handle, n, b, 1, Q, 1);
+	cublasDcopy(cublas_handle, n, b, 1, QCOL(0), 1);
 	/* 0.1. r -= A * x */
 	cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 							 &minus_one, mat_A, vec_x, &one, vec_r,
 							 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
 
 
-	b32 converged = FALSE;
-	f64 rnrm_init, rnrm;
-	cublasDnrm2(handle, n, vec_r, &rnrm_init);
+	converged = FALSE;
+	cublasDnrm2(cublas_handle, n, QCOL(0), 1, &rnrm_init);
 	if (rnrm_init < atol) {
 		converged = TRUE;
 	}
 
+	/* 1. Generate initial vector Q[:, 0] */
 	/* Normalize Q[:, 0] */
 	rnrm = (f64)1.0 / rnrm_init;
-	cublasDscal(cublas_handle, n, &rnrm, Q, 1);
+	cublasDscal(cublas_handle, n, &rnrm, QCOL(0), 1);
 
 
-	u32 iter = 1;
+	iter = 0;
 	while (!converged && iter < maxit) {
-		/* 1. Q[:, iter] = A * inv(P) * Q[:, iter-1] */
-		ksp->pc_apply(A, Q + (iter - 1) * n, tmp);
+		/* 2. Q[:, iter + 1] = A * inv(P) * Q[:, iter] */
+		/* 2.0. Apply preconditioner: tmp[:] = inv(P) Q[:, iter] */
+		ksp->pc_apply(A, QCOL(iter), tmp, (void*)NULL);
+		/* 2.1 let vec_r -> Q[:, iter + 1] */
 		cusparseDestroyDnVec(vec_r);
-		cusparseCreateDnVec(&vec_r, n, Q + iter * n);
+		cusparseCreateDnVec(&vec_r, n, QCOL(iter + 1), CUDA_R_64F);
+		/* 2.2. vec_r = A * tmp */
 		cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 								 &one, mat_A, vec_tmp, &zero, vec_r,
 								 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
-		/* 2. Arnoldi process */
-		/* 2.1. H[0:iter, iter-1] = Q[0:n, 0:iter].T * Q[0:n, iter] */
-		cublasDgemv(cublas_handle, CUBLAS_OP_T, n, iter, &one, Q, n, Q + iter * n, 1, &zero, H + (iter-1) * maxit, 1);
-		/* 2.2. Q[0:n, iter] -= Q[0:n, 0:iter] * H[0:iter, iter-1] */
-		cublasDgemv(cublas_handle, CUBLAS_OP_N, n, iter, &minus_one, Q, n, H + (iter-1) * maxit, 1, &one, Q + iter * n, 1);
-		/* 2.3. H[iter, iter-1] = ||Q[0:n, iter]|| */
-		cublasDnrm2(cublas_handle, n, Q + iter * n, H + (iter-1) * maxit + iter);
-		/* 2.4. Q[0:n, iter] /= H[iter, iter-1] */
-		cublasGetVector(1, sizeof(f64), H + (iter-1) * maxit + iter, 1, &rnrm, 1);
+
+		/* 3. Arnoldi process */
+		/* 3.1. H[0:iter+1, iter] = Q[0:n, 0:iter+1].T * Q[0:n, iter+1] */
+		cublasDgemv(cublas_handle, CUBLAS_OP_T,
+								n, iter + 1, &one, Q, n,
+								QCOL(iter + 1), 1, &zero, 
+								HCOL(iter), 1);
+		/* 3.2. Q[0:n, iter+1] -= Q[0:n, 0:iter+1] * H[0:iter+1, iter] */
+		cublasDgemv(cublas_handle, CUBLAS_OP_N,
+							  n, iter + 1, &minus_one, Q, n,
+								HCOL(iter), 1, &one,
+								QCOL(iter + 1), 1);
+		/* 3.3. H[iter+1, iter] = || Q[0:n, iter+1] || */
+		cublasDnrm2(cublas_handle, n, QCOL(iter + 1), 1, HCOL(iter) + iter + 1);
+		/* 3.4. Q[0:n, iter+1] /= H[iter+1, iter] */
+		cublasGetVector(1, sizeof(f64), HCOL(iter) + iter, 1, &rnrm, 1);
 		rnrm = (f64)1.0 / rnrm;
-		cublasDscal(cublas_handle, n, &rnrm, Q + iter * n, 1);
+		cublasDscal(cublas_handle, n, &rnrm, QCOL(iter + 1), 1);
 
-		/* 3. Apply Givens rotation to H[0:iter+1, iter-1] */
-		/* 3.0. Apply Givens rotation to H[0:iter, iter-1] using cs[0:iter] and sn[0:iter] */
-		for (u32 i = 0; i < iter - 1; i++) {
+		/* 4. Apply Givens rotation to H[0:iter+2, iter] */
+		/* 4.0. Apply Givens rotation to H[0:iter+1, iter] using cs[0:iter+1] and sn[0:iter+1] */
+		for (u32 i = 0; i < iter; i++) {
 			cublasDrot(cublas_handle, 1,
-								 H + iter * maxit + i, 1,
-								 H + iter * maxit + i + 1, 1,
-								 cs + i, sn + i);
+								 HCOL(iter) + i, 1,
+								 HCOL(iter) + i + 1, 1,
+								 GVCOS(i), GVSIN(i));
 		}
-		/* 3.1. Compute Givens rotation */
-		cublasDrotg(cublas_handle,
-								H + (iter-1) * maxit + iter - 1, H + iter * maxit + iter,
-								cs + iter - 1, sn + iter - 1);
-		/* 3.2. Apply Givens rotation to H[iter-1:iter+1, iter-1] */
+		/* 4.1. Compute Givens rotation */
+		cublasDrotg(cublas_handle, HCOL(iter) + iter, HCOL(iter) + iter + 1, GVCOS(iter), GVSIN(iter));
+		/* 4.2. Apply Givens rotation to H[iter:iter+2, iter] */
 		cublasDrot(cublas_handle, 1,
-							 H + (iter-1) * maxit + iter - 1, 1,
-							 H + iter * maxit + iter - 1, 1,
-							 cs + iter - 1, sn + iter - 1);
-		/* 3.3. beta[iter  ] = -sn[iter - 1] * beta[iter-1]
-		 *			beta[iter-1] =  cn[iter - 1] * beta[iter-1] */
-		cublas
-
+							 HCOL(iter) + iter, 1,
+							 HCOL(iter) + iter + 1, 1,
+							 GVCOS(iter), GVSIN(iter));
+		/* 4.3. beta[iter+1] = -sn[iter] * beta[iter]
+		 *			beta[iter+0] =  cn[iter] * beta[iter] */
+		GMRESResidualUpdatePrivate(beta, GVCOS(iter));
+		
 		/* 4. Check convergence */
-		cublasGetVector(1, sizeof(f64), beta + iter, 1, &rnrm, 1);
-		if (rnrm < atol) {
+		cublasGetVector(1, sizeof(f64), beta + iter + 1, 1, &rnrm, 1);
+		rnrm = fabs(rnrm);
+		if (rnrm < atol || rnrm < rtol * (rnrm_init + DBL_EPSILON)) {
 			converged = TRUE;
 		}
-		else {
-			rnrm = fabs(sn[iter - 1]) * rnrm;
-			if (rnrm < rtol) {
-				converged = TRUE;
-			}
-		}
+	}
+	/* 5. Solve linear system */
+	if(iter == 0) {
+		/* 5.1. Solve upper triangular system H[0:iter+1, 0:iter] y = beta[0:iter+1] */
+		cublasDtrsv(cublas_handle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+								iter + 1, H, maxit + 1, beta, 1);
+		/* 5.2. Compute x += Q[0:n, 0:iter] * y */
+		cublasDgemv(cublas_handle, CUBLAS_OP_N,
+								n, iter + 1, &one, Q, n,
+								beta, 1, &one, x, 1);
 	}
 
+#undef QCOL
+#undef HCOL
+
+#undef GVCOS
+#undef GVSIN
 
 	cusparseDestroyDnVec(vec_r);
 	cusparseDestroyDnVec(vec_x);
 	cusparseDestroyDnVec(vec_tmp);
 
-	CdamFreeDevice(Q, n * sizeof(f64) * maxit);
+	CdamFreeDevice(Q, n * sizeof(f64) * (maxit + 1));
 	CdamFreeDevice(H, (maxit + 1) * maxit * sizeof(f64));
 	CdamFreeDevice(tmp, n * sizeof(f64));
-	CdamFreeDevice(cs, 2 * maxit * sizeof(f64));
+	CdamFreeDevice(gv, 2 * maxit * sizeof(f64));
 	CdamFreeDevice(beta, (maxit + 1) * sizeof(f64));
 
 	cublasDestroy(cublas_handle);
 }
 
-Krylov* KrylovCreateCG(u32 max_iter, f64 atol, f64 rtol, void* ctx) {
+Krylov* KrylovCreateCG(u32 max_iter, f64 atol, f64 rtol) {
 	Krylov* ksp = KryloveInitPrivate(max_iter, atol, rtol);
 	cusparseCreate(&ksp->handle);
 	ksp->ksp_solve = CGSolvePrivate;
 	ksp->pc_apply = PCJacobiApply;
+	return ksp;
 }
 
-Krylov* KryloveCreateGMRES(u32 max_iter, f64 atol, f64 rtol, void* ctx) {
+Krylov* KrylovCreateGMRES(u32 max_iter, f64 atol, f64 rtol) {
 	Krylov* ksp = KryloveInitPrivate(max_iter, atol, rtol);
 	cusparseCreate(&ksp->handle);
 	ksp->ksp_solve = GMRESSolvePrivate;
 	ksp->pc_apply = PCJacobiApply;
+	return ksp;
 }
 
 void KrylovDestroy(Krylov* ksp) {
@@ -198,11 +232,11 @@ static void KrylovSetUp(Krylov* ksp, CSRMatrix* A, f64* vec) {
 	if(ksp->ksp_ctx) {
 		return;
 	}
-	u32 buffer_size = 0;
-	u32 n = CSRMatrixNumRows(A);
+	size_t buffer_size = 0;
+	u32 n = CSRMatrixNumRow(A);
 	cusparseDnVecDescr_t vec_x, vec_b;
-	cusparseCreateDnVec(&vec_x, n, vec);
-	cusparseCreateDnVec(&vec_b, n, vec);
+	cusparseCreateDnVec(&vec_x, n, vec, CUDA_R_64F);
+	cusparseCreateDnVec(&vec_b, n, vec, CUDA_R_64F);
 
 	cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 

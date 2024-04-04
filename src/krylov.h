@@ -6,9 +6,9 @@
 
 __BEGIN_DECLS__
 
-typedef void (*PCApplyFunc)(CSRMatrix*, f64*, f64*, u32, f64, f64, void*);
-typedef void (*KSPSolveFunc)(CSRMatrix*, f64*, f64*, u32, f64, f64, PCApplyFunc, void*);
 typedef struct CSRMatrix CSRMatrix;
+typedef void (*PCApplyFunc)(CSRMatrix*, f64*, f64*, void*);
+typedef void (*KSPSolveFunc)(CSRMatrix*, f64*, f64*, void*);
 
 typedef struct Krylov Krylov;
 struct Krylov {
@@ -17,7 +17,7 @@ struct Krylov {
 	cusparseHandle_t handle;
 	PCApplyFunc pc_apply;
 	KSPSolveFunc ksp_solve;
-	u32 ksp_ctx_size, pc_ctx_size;
+	size_t ksp_ctx_size, pc_ctx_size;
 	void* ksp_ctx;
 	void* pc_ctx;
 };

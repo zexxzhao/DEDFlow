@@ -8,7 +8,7 @@
 
 #include <cuda_runtime.h>
 
-#if defined(__cplusplus)
+#if defined(__cplusplus) || defined(__CUDACC__)
 #define __BEGIN_DECLS__ extern "C" {
 #define __END_DECLS__ }
 #else

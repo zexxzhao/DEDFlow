@@ -46,8 +46,7 @@ struct CSRMatrix {
 #define CSRMatrixData(matrix) ((matrix)->data)
 #define CSRMatrixNumRow(matrix) (CSRAttrNumRow(CSRMatrixAttr(matrix)))
 #define CSRMatrixNumCol(matrix) (CSRAttrNumCol(CSRMatrixAttr(matrix)))
-#define CSRMatrixNNZB(matrix) (CSRAttrNNZ(CSRMatrixAttr(matrix)))
-#define CSRMatrixNNZ(matrix) (CSRAttrNNZ(CSRMatrixAttr(matrix))*CSRMatrixBS(matrix)*CSRMatrixBS(matrix))
+#define CSRMatrixNNZ(matrix) (CSRAttrNNZ(CSRMatrixAttr(matrix)))
 #define CSRMatrixDescr(matrix) ((matrix)->descr)
 
 CSRMatrix* CSRMatrixCreate(CSRAttr *attr);
