@@ -5,20 +5,28 @@
 #include "common.h"
 
 __BEGIN_DECLS__
+
+typedef void (*PCApplyFunc)(CSRMatrix*, f64*, f64*, u32, f64, f64, void*);
+typedef void (*KSPSolveFunc)(CSRMatrix*, f64*, f64*, u32, f64, f64, PCApplyFunc, void*);
 typedef struct CSRMatrix CSRMatrix;
+
 typedef struct Krylov Krylov;
-struct Krylove {
+struct Krylov {
 	u32 max_iter;
 	f64 atol, rtol;
 	cusparseHandle_t handle;
-	void* buffer_mv;
-	void(*solve)(CSRMatrix* A, f64* b, f64* x);
-	void(*pc_solve)(CSRMatrix* A, f64* b, f64* x);
+	PCApplyFunc pc_apply;
+	KSPSolveFunc ksp_solve;
+	u32 ksp_ctx_size, pc_ctx_size;
+	void* ksp_ctx;
+	void* pc_ctx;
 };
 
 Krylov* KrylovCreateCG(u32, f64, f64);
 Krylov* KrylovCreateGMRES(u32, f64, f64);
 void KrylovDestroy(Krylov* krylov);
+
+void KrylovSolve(Krylov* krylov, CSRMatrix* A, f64* b, f64* x);
 
 __END_DECLS__
 #endif /* __KRYLOV_H__ */
