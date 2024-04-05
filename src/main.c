@@ -5,12 +5,16 @@
 #endif
 #include <stdlib.h>
 
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+
 #include "alloc.h"
 #include "h5util.h"
 #include "Mesh.h"
 #include "Field.h"
 #include "Particle.h"
 #include "csr.h"
+#include "krylov.h"
 
 #define kRHOC (0.5)
 #define kDT (0.1)
@@ -18,26 +22,74 @@
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
-void SolveFlowSystem(Mesh3D* mesh, Field* w, Field* dw, Field* dwg) {
-	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
-	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64));
-	CSRMatrix* J = CSRMatrixCreate(num_node, num_node);
 
+void assemble_system(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, CSRMatrix* J) {
+	u32 i, j, k;
+	u32 num_node = (u32)Mesh3DDataNumNode(Mesh3DHost(mesh));
+	u32 num_tet = (u32)Mesh3DDataNumTet(Mesh3DHost(mesh));
+	u32 num_prism = (u32)Mesh3DDataNumPrism(Mesh3DHost(mesh));
+	u32 num_hex = (u32)Mesh3DDataNumHex(Mesh3DHost(mesh));
+	f64* xg = Mesh3DDataCoord(Mesh3DHost(mesh));
+
+	if(num_tet) {
+		assemble_system_tet(mesh, wgold, dwgold, dwg, F, J);
+	}
+	
+	if(num_prism) {
+		// assemble_system_prism(mesh, wgold, dwgold, dwg, F, J);
+	}
+
+	if(num_hex) {
+		// assemble_system_hex(mesh, wgold, dwgold, dwg, F, J);
+	}
+}
+
+void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 	u32 maxit = 10;
 	f64 tol = 1.0e-6;
 	b32 converged = FALSE;
+	f64 rnorm, rnorm_init;
+	const f64 one = 1.0, zero = 0.0, minus_one = -1.0;
+
+	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
+	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64));
+	f64* dx = (f64*)CdamMallocDevice(num_node * sizeof(f64));
+	CSRMatrix* J = CSRMatrixCreateMesh(mesh, num_node);
+	Krylov* ksp = KrylovCreateGMRES(60, tol, tol);
+
+	Array* d_dwg = FieldDevice(dwg);
+	cublasHandle_t handle;
+
+	/* Construct the right-hand side */
+	assemble_system(mesh, wgold, dwgold, dwg, F, NULL);
+	cublasCreate(&handle);
+	cublasDnrm2(handle, num_node, F, 1, &rnorm_init);
 
 	while(!converged && maxit--) {
-		/* Construct the right-hand side */
-		
-
+		/* Construct the Jacobian matrix */
+		assemble_system(mesh, wgold, dwgold, dwg, NULL, J);
+	
 		/* Solve the linear system */
-		CSRMatrixSolve(A, FieldDevice(dw), rhs, tol, 1000);
-		ArrayCopy(rhs, FieldDevice(dwg), D2D);
+		KrylovSolve(ksp, J, F, dx);	
+
+		/* Update the solution */	
+		// ArrayAXPY(FieldDevice(dwg), -1.0, dx);
+		cublasDaxpy(handle, ArrayLen(d_dwg), &minus_one, dx, 1, ArrayData(d_dwg), 1);
+
+		/* Construct the right-hand side */
+		assemble_system(mesh, wgold, dwgold, dwg, F, NULL);
+		cublasDnrm2(handle, num_node, F, 1, &rnorm);
+		if (rnorm < tol * rnorm_init) {
+			converged = TRUE;
+		}
+
 	}
 
-	CdamFreeDevice(rhs, num_node * sizeof(f64));
-	CSRMatrixDestroy(A);
+	CdamFreeDevice(F, num_node * sizeof(f64));
+	CdamFreeDevice(dx, num_node * sizeof(f64));
+	CSRMatrixDestroy(J);
+	KrylovDestroy(ksp);
+	cublasDestroy(handle);
 }
 
 
@@ -125,8 +177,8 @@ int main() {
 
 		/* Newton-Raphson iteration */
 		while(!converged) {
+			SolveFlowSystem(mesh, wgold, dwgold, dwg);
 #ifdef DEBUG
-			SolveFlowSystem(wgold, dwgold, dwg);
 			SolveParticleSystem(pctx);
 #endif
 			converged = TRUE;
