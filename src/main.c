@@ -5,16 +5,40 @@
 #endif
 #include <stdlib.h>
 
+#include "alloc.h"
 #include "h5util.h"
 #include "Mesh.h"
 #include "Field.h"
 #include "Particle.h"
+#include "csr.h"
 
 #define kRHOC (0.5)
 #define kDT (0.1)
 #define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
+
+void SolveFlowSystem(Mesh3D* mesh, Field* w, Field* dw, Field* dwg) {
+	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
+	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64));
+	CSRMatrix* J = CSRMatrixCreate(num_node, num_node);
+
+	u32 maxit = 10;
+	f64 tol = 1.0e-6;
+	b32 converged = FALSE;
+
+	while(!converged && maxit--) {
+		/* Construct the right-hand side */
+		
+
+		/* Solve the linear system */
+		CSRMatrixSolve(A, FieldDevice(dw), rhs, tol, 1000);
+		ArrayCopy(rhs, FieldDevice(dwg), D2D);
+	}
+
+	CdamFreeDevice(rhs, num_node * sizeof(f64));
+	CSRMatrixDestroy(A);
+}
 
 
 void MyFieldInit(f64* value, void* ctx) {
