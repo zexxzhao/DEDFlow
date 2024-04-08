@@ -148,27 +148,85 @@ GetShapeGradKernel(u32 num_elem, const f64* elem_invJ, f64* shgradl) {
 }
 static __global__ void
 AssemleTetWeakFormKernel(u32 num_elem, const u32* iel, const f64* elem_invJ,
-												 const f64* qr_wgalpha, const f64* qr_dwgalpha,
+												 const f64* qr_wgalpha, const f64* qr_dwgalpha, const f64* qr_wggradalpha,
+												 const f64* shgradl,
 												 f64* elem_F, f64* elem_J) {
 	i32 idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if(idx >= num_elem) return;
 
 	const f64* elem_invJ_ptr = elem_invJ + idx * 10;
+	const f64 detJ = elem_invJ_ptr[9];
 	const f64* qr_wgalpha_ptr = qr_wgalpha + idx * 4;
 	const f64* qr_dwgalpha_ptr = qr_dwgalpha + idx * 4;
+	const f64* qr_wggradalpha_ptr = qr_wggradalpha + idx * 3;
+	const f64* shgradl_ptr = shgradl + idx * 12;
+
 	f64* elem_F_ptr = elem_F + idx * 4;
 	f64* elem_J_ptr = elem_J + idx * 16;
 
-	f64 F[4] = {0.0, 0.0, 0.0, 0.0};
-	f64 J[16] = {0.0, 0.0, 0.0, 0.0,
-							 0.0, 0.0, 0.0, 0.0,
-							 0.0, 0.0, 0.0, 0.0,
-							 0.0, 0.0, 0.0, 0.0};
+	f64 F_ptr[4+16] = {0.0, 0.0, 0.0, 0.0,
+								 0.0, 0.0, 0.0, 0.0,
+								 0.0, 0.0, 0.0, 0.0,
+								 0.0, 0.0, 0.0, 0.0,
+								 0.0, 0.0, 0.0, 0.0};
+	f64* J_ptr = F_ptr + 4;
 	
-	for(u32 q = 0; q < 4; ++q) {
+	/* Weak form: */
+	/* F_A[0:NSHL] += (gw[0:NQR] * detJ * qr_dwgalpha_ptr[0:NQR]) @ shl[0:NQR, 0:NSHL] */
+	/* F_A[0:NSHL] += sum(gw[0:NQR]) * detJ * qr_wggradalpha_ptr[0:3] @ shgradl[0:3, 0:NSHL] */
+	/* J_AB[0:NSHL, 0:NSHL] += kALPHAM * detJ * shl[0,NQR, NSHL].T @ (gw[0:NQR, None] * shl[0:NQR, 0:NSHL]) */
+	/* J_AB[0:NSHL, 0:NSHL] += kDT * kALPHAF * kGAMMA * sum(gw[0:NQR]) * detJ 
+													 * shgradl[0:3, 0:NSHL].T @ shgradl[0:3, 0:NSHL] */
 
+	if(elem_F) {
+		#pragma unroll
+		for(u32 q = 0; q < NQR; ++q) {
+			f64 qr_dwgalpha_q = qr_dwgalpha_ptr[q];
+			f64 qr_wggradalpha_q = qr_wggradalpha_ptr[q];
+			#pragma unroll
+			for(u32 s = 0; s < NSHL; ++s) {
+				F_ptr[s] += gw[q] * detJ * qr_dwgalpha_q * shgradl_ptr[q*3+s];
+				F_ptr[s] += gw[q] * detJ * qr_wggradalpha_q * shgradl_ptr[q*3+s];
+			}
+		}
+
+		#pragma unroll
+		for(u32 s = 0; s < NSHL; ++s) {
+			#pragma unroll
+			for(u32 t = 0; t < NSHL; ++t) {
+				elem_F_ptr[s] += F_ptr[s*NSHL+t];
+			}
+		}
+	}
+	if(elem_J) {
+		#pragma unroll
+		for(u32 q = 0; q < NQR; ++q) {
+			#pragma unroll
+			for(u32 s = 0; s < NSHL; ++s) {
+				#pragma unroll
+				for(u32 t = 0; t < NSHL; ++t) {
+					J_ptr[s*NSHL+t] += kALPHAM * detJ * shlgradu[q*3+s] * gw[q] * shlgradu[q*3+t];
+					J_ptr[s*NSHL+t] += kDT * kALPHAF * kGAMMA * detJ * shgradl_ptr[q*3+s] * shgradl_ptr[q*3+t];
+				}
+			}
+		}
+
+		#pragma unroll
+		for(u32 s = 0; s < NSHL; ++s) {
+			#pragma unroll
+			for(u32 t = 0; t < NSHL; ++t) {
+				elem_J_ptr[s*NSHL+t] = J_ptr[s*NSHL+t];
+			}
+		}
 	
+	}
 }
+
+struct AssembleGraph {
+	u32 num_elem;
+
+};
+
 void AssembleSystemTet(Mesh3D *mesh,
 											 Field *wgold, Field* dwgold, Field* dwg,
 											 f64* F, CSRMatrix* J) {
@@ -237,7 +295,16 @@ void AssembleSystemTet(Mesh3D *mesh,
 		}
 
 
-		/* 2. Calculate the elementwise residual vector */
+		/* 2. Calculate the elementwise residual vector and matrix */
+		AssemleTetWeakFormKernel<<<num_block, num_thread>>>(num_tet, iel_tet, elem_invJ,
+																													qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
+																													shgradl,
+																													elem_F, elem_J);
+		/* 3. Assemble the global residual vector and matrix */
+		if(F) {
+			/* F[:] += elem_F[:] */
+			cublasDaxpy(handle, num_tet * NSHL, one, elem_F, 1, F, 1);
+		}
 	}	
 	CdamFreeDevice(buffer, num_tet * sizeof(f64));
 	CdamFreeDevice(elem_invJ, num_tet * sizeof(f64) * 10);
