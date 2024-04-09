@@ -9,6 +9,7 @@ Mesh3DData* Mesh3DDataCreateHost(u32 num_node,
 																 u32 num_prism,
 																 u32 num_hex) {
 	Mesh3DData* data = (Mesh3DData*)CdamMallocHost(sizeof(Mesh3DData));
+	u32 elem_buff_size = num_tet * 4 + num_prism * 6 + num_hex * 8;
 
 	ASSERT(num_node >= 4 && "Invalid number of nodes");
 	ASSERT(num_tet + num_prism + num_hex && "Invalid number of elements");
@@ -24,24 +25,16 @@ Mesh3DData* Mesh3DDataCreateHost(u32 num_node,
 		Mesh3DDataCoord(data) = (f64*)CdamMallocHost(sizeof(f64) * num_node * 3);
 		memset(Mesh3DDataCoord(data), 0, num_node * 3 * sizeof(f64));
 	}
-	if (num_tet) {
-		Mesh3DDataTet(data) = (u32*)CdamMallocHost(sizeof(u32) * num_tet * 4);
-		memset(Mesh3DDataTet(data), 0, num_tet * 4 * sizeof(u32));
-	}
-	if (num_prism) {
-		Mesh3DDataPrism(data) = (u32*)CdamMallocHost(sizeof(u32) * num_prism * 6);
-		memset(Mesh3DDataPrism(data), 0, num_prism * 6 * sizeof(u32));
-	}
-	if (num_hex) {
-		Mesh3DDataHex(data) = (u32*)CdamMallocHost(sizeof(u32) * num_hex * 8);
-		memset(Mesh3DDataHex(data), 0, num_hex * 8 * sizeof(u32));
-	}
+	data->ien = (u32*)CdamMallocHost(sizeof(u32) * elem_buff_size);
+	memset(data->ien, 0, elem_buff_size * sizeof(u32));
 	return data;
 }
 
 Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex) {
 
 	Mesh3DData* data = (Mesh3DData*)CdamMallocHost(sizeof(Mesh3DData));
+	u32 elem_buff_size = num_tet * 4 + num_prism * 6 + num_hex * 8;
+
 	ASSERT(num_node >= 4 && "Invalid number of nodes");
 	ASSERT(num_tet + num_prism + num_hex && "Invalid number of elements");
 	memset(data, 0, sizeof(Mesh3DData));
@@ -56,18 +49,8 @@ Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32
 		Mesh3DDataCoord(data) = (f64*)CdamMallocDevice(sizeof(f64) * num_node * 3);
 		CUGUARD(cudaMemset(Mesh3DDataCoord(data), 0, num_node * 3 * sizeof(f64)));
 	}
-	if (num_tet) {
-		Mesh3DDataTet(data) = (u32*)CdamMallocDevice(sizeof(u32) * num_tet * 4);
-		CUGUARD(cudaMemset(Mesh3DDataTet(data), 0, num_tet * 4 * sizeof(u32)));
-	}
-	if (num_prism) {
-		Mesh3DDataPrism(data) = (u32*)CdamMallocDevice(sizeof(u32) * num_prism * 6);
-		CUGUARD(cudaMemset(Mesh3DDataPrism(data), 0, num_prism * 6 * sizeof(u32)));
-	}
-	if (num_hex) {
-		Mesh3DDataHex(data) = (u32*)CdamMallocDevice(sizeof(u32) * num_hex * 8);
-		CUGUARD(cudaMemset(Mesh3DDataHex(data), 0, num_hex * 8 * sizeof(u32)));
-	}
+	data->ien = (u32*)CdamMallocDevice(sizeof(u32) * elem_buff_size);
+	CUGUARD(cudaMemset(data->ien, 0, elem_buff_size * sizeof(u32)));
 	return data;
 }
 
@@ -126,17 +109,14 @@ Mesh3DData* Mesh3DDataCreateH5(H5FileInfo* h5f, const char* group_name) {
 }
 
 void Mesh3DDataDestroy(Mesh3DData* data) {
+	u32 elem_buff_size = Mesh3DDataNumTet(data) * 4 + Mesh3DDataNumPrism(data) * 6 + Mesh3DDataNumHex(data) * 8;
 	if (data->is_host) {
 		CdamFreeHost(Mesh3DDataCoord(data), sizeof(f64) * Mesh3DDataNumNode(data) * 3);
-		CdamFreeHost(Mesh3DDataTet(data), sizeof(u32) * Mesh3DDataNumTet(data) * 4);
-		CdamFreeHost(Mesh3DDataPrism(data), sizeof(u32) * Mesh3DDataNumPrism(data) * 6);
-		CdamFreeHost(Mesh3DDataHex(data), sizeof(u32) * Mesh3DDataNumHex(data) * 8);
+		CdamFreeHost(data->ien, sizeof(u32) * elem_buff_size);
 	}
 	else {
 		CdamFreeDevice(Mesh3DDataCoord(data), sizeof(f64) * Mesh3DDataNumNode(data) * 3);
-		CdamFreeDevice(Mesh3DDataTet(data), sizeof(u32) * Mesh3DDataNumTet(data) * 4);
-		CdamFreeDevice(Mesh3DDataPrism(data), sizeof(u32) * Mesh3DDataNumPrism(data) * 6);
-		CdamFreeDevice(Mesh3DDataHex(data), sizeof(u32) * Mesh3DDataNumHex(data) * 8);
+		CdamFreeDevice(data->ien, sizeof(u32) * elem_buff_size);
 	}
 	Mesh3DDataNumNode(data) = 0;
 	Mesh3DDataNumTet(data) = 0;
@@ -144,9 +124,7 @@ void Mesh3DDataDestroy(Mesh3DData* data) {
 	Mesh3DDataNumHex(data) = 0;
 
 	Mesh3DDataCoord(data) = NULL;
-	Mesh3DDataTet(data) = NULL;
-	Mesh3DDataPrism(data) = NULL;
-	Mesh3DDataHex(data) = NULL;
+	data->ien = NULL;
 
 	CdamFreeHost(data, sizeof(Mesh3DData));
 }

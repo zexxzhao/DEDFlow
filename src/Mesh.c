@@ -3,6 +3,9 @@
 #include <string.h>
 #include <cuda_runtime.h>
 
+/* Include metis for partitioning */
+#include "metis.h"
+
 #include "alloc.h"
 #include "h5util.h"
 #include "MeshData.h"
@@ -74,4 +77,10 @@ void Mesh3DUpdateDevice(Mesh3D* mesh) {
 	Mesh3DDataCopy(Mesh3DDevice(mesh), Mesh3DHost(mesh), H2D);
 }
 
+void Mesh3DPartition(Mesh3D* mesh, u32 num_part) {
+	Mesh3DData* host = Mesh3DHost(mesh);
+
+	PartitionMesh3DMETIS(host, num_part);
+
+}
 

@@ -18,6 +18,10 @@ struct Mesh3D {
 
 	Mesh3DData* host;
 	Mesh3DData* device;
+	
+	/* Partition */
+	u32* num_part;
+	u32* part_offset;
 };
 
 #define Mesh3DHost(mesh) ((mesh)->host)
@@ -35,6 +39,7 @@ void Mesh3DDestroy(Mesh3D* mesh);
 void Mesh3DUpdateHost(Mesh3D* mesh);
 void Mesh3DUpdateDevice(Mesh3D* mesh);
 
+void Mesh3DPartition(Mesh3D* mesh, u32 num_part);
 
 __END_DECLS__
 
