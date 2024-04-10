@@ -16,9 +16,6 @@ struct Mesh3DData {
 
 	f64* xg; /* xg[3*num_node] */
 	u32* ien; /* ien[4*num_tet+6*num_prism+8*num_hex] */
-	// u32* ien_tet; /* ien_tet[4*num_tet] */
-	// u32* ien_prism; /* ien_prism[6*num_prism] */
-	// u32* ien_hex; /* ien_hex[8*num_hex] */
 };
 
 #define Mesh3DDataNumNode(data) ((data)->num_node)
@@ -26,6 +23,7 @@ struct Mesh3DData {
 #define Mesh3DDataNumPrism(data) ((data)->num_prism)
 #define Mesh3DDataNumHex(data) ((data)->num_hex)
 #define Mesh3DDataCoord(data) ((data)->xg)
+#define Mesh3DDataIEN(data) ((data)->ien)
 #define Mesh3DDataTet(data) ((data)->ien + 0)
 #define Mesh3DDataPrism(data) ((data)->ien + 4 * Mesh3DDataNumTet(data))
 #define Mesh3DDataHex(data) ((data)->ien + 4 * Mesh3DDataNumTet(data) + 6 * Mesh3DDataNumPrism(data))

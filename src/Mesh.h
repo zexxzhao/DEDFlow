@@ -21,7 +21,7 @@ struct Mesh3D {
 	
 	/* Partition */
 	u32* num_part;
-	u32* part_offset;
+	u32* epart;
 };
 
 #define Mesh3DHost(mesh) ((mesh)->host)
