@@ -31,13 +31,13 @@ endif
 ###############################################################################
 # Compiler and flags
 ###############################################################################
+FLAGS=-O0 \
+			-Wall -Wextra \
+			-Wconversion -Wdouble-promotion \
+			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
+			-Wno-deprecated-declarations
 CC=gcc
-CFLAGS=-O0 -g3 -std=c99 \
-			 -Wall -Wextra \
-			 -Wconversion -Wdouble-promotion \
-			 -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
-			 -Wno-deprecated-declarations \
-			 -fsanitize=undefined # -fno-omit-frame-pointer
+CFLAGS=-std=c99 -g3 $(FLAGS) -fsanitize=undefined # -fno-omit-frame-pointer
 
 INC=-I$(CUDA_DIR)/include
 LIB=-lm
@@ -52,7 +52,7 @@ LIB+=-L$(MK_METIS_DIR)/lib -lmetis
 endif
 
 NVCC=nvcc
-NVCCFLAGS=-O0 -g -G
+NVCCFLAGS=-O3 -g -G -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse
 

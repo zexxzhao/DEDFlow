@@ -10,6 +10,17 @@
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
+
+template <typename Index, typename Value>
+static __global__ void
+LoadValueKernel(Index size, const Index* indices, const Value* src, Value* dst) {
+	Index idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if(idx >= size) return;
+	dst[idx] = src[indices[idx]];
+}
+
+#ifdef ASSEMBLY
+
 __BEGIN_DECLS__
 #define NQR 4
 __constant__ f64 gw[4] = {0.0416666666666667, 0.0416666666666667, 0.0416666666666667, 0.0416666666666667};
@@ -24,6 +35,40 @@ __constant__ f64 shlgradu[12] = {-1.0, -1.0, -1.0,
 																 0.0, 0.0, 1.0};
 
 /**
+* @brief find all the indices of an integer array that are equal to a given value
+* @param[in]  size   The number of values to be found
+* @param[in]  input  The source array to be searched
+* @param[in]  value  The value to be found
+* @param[out] output The destination array to store the indices of the values that are equal to the given value
+*/
+static __global__ void
+FindIndicesOrderedKernel(u32 size, const u32* input, u32 value, u32* output) {
+	i32 idx = blockIdx.x * blockDim.x + threadIdx.x;
+	i32 wrap_idx = idx / 32;
+	i32 lane_idx = idx % 32;
+
+	/* Shared memory to hold the starting index for each warp in the block */
+    __shared__ int warp_start[32]; /* Assuming a maximum of 32 warps per block */
+
+	if (laneIdx == 0) {
+			warpStart[warpIdx] = 0;
+	}
+	__syncthreads(); // Ensure all initializations are completed
+
+	if (idx < size && input[idx] == value) {
+			i32 local_idx = atomicAdd(&warpStart[warpIdx], 1); // Atomic add on shared memory
+			if (lane_idx == 0) {
+					warp_start[warp_idx] = atomicAdd(count, warpStart[warp_idx]); // Update global count
+			}
+			__syncthreads(); // Ensure warpStart is updated for all threads in the warp
+
+			i32 global_idx = warp_start[warp_idx] + local_idx;
+			output[global_idx] = idx;
+	}
+}
+
+
+/**
 * @brief Load the values from the source array to the destination array
 * @param[in]  count The number of values to be loaded
 * @param[in]  index The index of the values to be loaded, whose size is (count*inc,)
@@ -32,9 +77,8 @@ __constant__ f64 shlgradu[12] = {-1.0, -1.0, -1.0,
 * @param[in]  src   The source array to be loaded. The array is column-majored of size (block_length, *)
 * @param[out] dst   The destination array to be loaded. The array is column-majored of size (block_length, count)
 */
-static __global__
-template<typename Index, typename Real> void
-LoadValueKernel(Index count, const Index* index, Index inc, Index block_length, const Real* src, Real* dst) {
+static __global__ void
+LoadValueKernel(u32 count, const u32* index, u32 inc, u32 block_length, const f64* src, f64* dst) {
 
 	i32 idx = blockIdx.x * blockDim.x + threadIdx.x; 
 	if(idx >= count) return;
@@ -224,11 +268,6 @@ AssemleTetWeakFormKernel(u32 num_elem, const u32* iel, const f64* elem_invJ,
 	}
 }
 
-struct AssembleGraph {
-	u32 num_elem;
-
-};
-
 void AssembleSystemTet(Mesh3D *mesh,
 											 Field *wgold, Field* dwgold, Field* dwg,
 											 f64* F, CSRMatrix* J) {
@@ -250,9 +289,9 @@ void AssembleSystemTet(Mesh3D *mesh,
 	f64* elem_F = (f64*)CdamMallocDevice(num_tet * sizeof(f64) * NSHL);
 	f64* elem_J = (f64*)CdamMallocDevice(num_tet * sizeof(f64) * NSHL * NSHL);
 
-	f64* qr_wgalpha = (f64*)CdamMallocDevice(2 * num_tet * sizeof(f64) * NQR);
-	f64* qr_dwgalpha = qr_wgalpha + num_tet * 4 * sizeof(f64);
-	f64* qr_wggradalpha = (f64*)CdamMallocDevice(2 * num_tet * sizeof(f64) * 3);
+	f64* qr_wgalpha = (f64*)CdamMallocDevice(num_tet * sizeof(f64) * NSHL);
+	f64* qr_dwgalpha = (f64*)CdamMallocDevice(num_tet * sizeof(f64) * NSHL);
+	f64* qr_wggradalpha = (f64*)CdamMallocDevice(num_tet * sizeof(f64) * 3 * NSHL);
 
 	i32 num_thread = 256;
 	i32 num_block = (num_tet + num_thread - 1) / num_thread;
@@ -271,9 +310,22 @@ void AssembleSystemTet(Mesh3D *mesh,
 		GetShapeGradKernel<<<num_block, num_thread>>>(num_tet, elem_invJ, shgradl);
 
 		/* 1. Interpolate the field values */  
-		/* 1.0. Calculate qr_wgalpha */
-		cudaMemset(qr_wgalpha, 0, 2 * num_tet * sizeof(f64) * NQR);
-		cudaMemset(qr_wggradalpha, 0, 2 * num_tet * sizeof(f64) * 3);
+		cudaMemset(qr_wgalpha, 0, num_tet * sizeof(f64));
+		cudaMemset(qr_dwgalpha, 0, num_tet * sizeof(f64));
+		cudaMemset(qr_wggradalpha, 0, num_tet * sizeof(f64) * 3);
+	
+		/* 1.0. Calculate the field value on the vertices */
+		LoadValueKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, wgold_dptr, buffer);
+		LoadValueAXPYKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, dwgold_dptr, buffer, kDT * kALPHAF * (1.0 - kGAMMA));
+		LoadValueAXPYKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, dwg_dptr, buffer, kDT * kALPHAF * kGAMMA);
+
+		/* 1.1. Calculate */
+
+		for(u32 q = 0; q < NQR; ++q) {
+			cublasDger(handle, NQR, num_tet, gw[q], shlu + q * NQR, NQR, buffer, 1, qr_wgalpha, NQR);
+
+			/* 1.1. Calculate the field gradient on the quadrature */
+		}
 		for(u32 v = 0; v < NSHL; ++v) {
 			/* 1.0.0. buffer[:] = wgold[iel_tet[v, :]] */
 			LoadValueKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, wgold_dptr, buffer);
@@ -281,12 +333,12 @@ void AssembleSystemTet(Mesh3D *mesh,
 			LoadValueAXPYKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, dwgold_dptr, buffer, kDT * kALPHAF * (1.0 - kGAMMA)); 
 			/* 1.0.2. buffer[:] += kDT * kALPHAF * kGAMMA * dwg[iel_tet[v, :]] */
 			LoadValueAXPYKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, dwg_dptr, buffer, kDT * kALPHAF * kGAMMA);
-			/* 1.0.3. qr_wgalpha[0:NQR, :] += shlu[0:NQR, v] * buffer[:] */
+			/* 1.0.3. qr_wgalpha[0:NQR, :] += outer(shlu[0:NQR, v], buffer[:]) */
 			cublasDger(handle, NQR, num_tet, 1.0, shlu + v * NQR, NQR, buffer, 1, qr_wgalpha, NQR);
 		}
 		/* 1.1. Calculate qr_dwgalpha */
 		cudaMemset(qr_dwgalpha, 0, num_tet * sizeof(f64) * NQR);
-		cudaMemset(qr_wggradalpha, 0, 2 * num_tet * sizeof(f64) * 3);
+		cudaMemset(qr_wggradalpha, 0, num_tet * sizeof(f64) * 3);
 		for(u32 v = 0; v < NSHL; ++v) {
 			/* 1.1.0. buffer[:] = (1.0 - kALPHAM) * dwgold[iel_tet[v, :]] */
 			LoadValueAXPYKernel<<<num_block, num_thread>>>(num_tet, iel_tet, NSHL, 1, dwgold_dptr, buffer, 1.0 - kALPHAM);
@@ -315,9 +367,11 @@ void AssembleSystemTet(Mesh3D *mesh,
 	CdamFreeDevice(elem_F, num_tet * sizeof(f64) * NSHL);
 	CdamFreeDevice(elem_J, num_tet * sizeof(f64) * NSHL * NSHL);
 
-	CdamFreeDevice(qr_wgalpha, 2 * num_tet * sizeof(f64) * 4);
-	CdamFreeDevice(qr_wggradalpha, 2 * num_tet * sizeof(f64) * 3);
+	CdamFreeDevice(qr_wgalpha, num_tet * sizeof(f64));
+	CdamFreeDevice(qr_dwgalpha, num_tet * sizeof(f64));
+	CdamFreeDevice(qr_wggradalpha, num_tet * sizeof(f64) * 3);
 	cublasDestroy(handle);
 }
 
 __END_DECLS__
+#endif

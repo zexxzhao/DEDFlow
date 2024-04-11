@@ -24,6 +24,8 @@ Mesh3D* Mesh3DCreate(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex) {
 
 	Mesh3DHost(mesh) = Mesh3DDataCreateHost(num_node, num_tet, num_prism, num_hex);
 	Mesh3DDevice(mesh) = Mesh3DDataCreateDevice(num_node, num_tet, num_prism, num_hex);
+
+
 	return mesh;
 }
 
@@ -54,8 +56,10 @@ Mesh3D* Mesh3DCreateH5(H5FileInfo* h5f, const char* group_name) {
 }
 
 void Mesh3DDestroy(Mesh3D* mesh) {
+	u32 num_elem = Mesh3DNumTet(mesh) + Mesh3DNumPrism(mesh) + Mesh3DNumHex(mesh);
 	Mesh3DDataDestroy(Mesh3DHost(mesh));
 	Mesh3DDataDestroy(Mesh3DDevice(mesh));
+	CdamFreeDevice(mesh->epart, sizeof(u32) * num_elem);
 	CdamFreeHost(mesh, sizeof(Mesh3D));
 }
 
@@ -79,8 +83,9 @@ void Mesh3DUpdateDevice(Mesh3D* mesh) {
 
 #include "partition.h"
 void Mesh3DPartition(Mesh3D* mesh, u32 num_part) {
-
+	u32 num_elem = Mesh3DNumTet(mesh) + Mesh3DNumPrism(mesh) + Mesh3DNumHex(mesh);
+	mesh->num_part = num_part;
+	mesh->epart = CdamMallocDevice(sizeof(u32) * num_elem);
 	PartitionMesh3DMETIS(mesh, num_part);
-
 }
 

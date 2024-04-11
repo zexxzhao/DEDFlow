@@ -25,6 +25,7 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
 	idx_t* eptr;
 	idx_t* epart;
 	idx_t* npart;
+	u32* epart_u32;
 
 	i32 i;
 
@@ -59,13 +60,15 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
 
 	/* Call METIS */
 	METIS_PartMeshNodal(&num_tet, &num_node, eptr, eind, NULL, NULL, &nparts, NULL, options, &objval, epart, npart);
-
-	/* Copy the partitioning result */
-	mesh->num_part = num_part;
+	epart_u32 = (u32*)CdamMallocHost(sizeof(u32) * (num_tet + num_prism + num_hex));
 	for (i = 0; i < num_tet + num_prism + num_hex; i++) {
-		mesh->epart[i] = epart[i];
+		epart_u32[i] = (u32)epart[i];
 	}
 
+	/* Copy the partitioning result */
+	cudaMemcpy(mesh->epart, epart_u32, sizeof(u32) * (num_tet + num_prism + num_hex), cudaMemcpyHostToDevice);
+
+	CdamFreeHost(epart_u32, sizeof(u32) * (num_tet + num_prism + num_hex));
 	CdamFreeHost(eind, sizeof(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
 	CdamFreeHost(eptr, sizeof(u32) * (num_tet + num_prism + num_hex + 1));
 	CdamFreeHost(epart, sizeof(idx_t) * (num_tet + num_prism + num_hex));
