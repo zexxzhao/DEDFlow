@@ -77,10 +77,10 @@ void Mesh3DUpdateDevice(Mesh3D* mesh) {
 	Mesh3DDataCopy(Mesh3DDevice(mesh), Mesh3DHost(mesh), H2D);
 }
 
+#include "partition.h"
 void Mesh3DPartition(Mesh3D* mesh, u32 num_part) {
-	Mesh3DData* host = Mesh3DHost(mesh);
 
-	PartitionMesh3DMETIS(host, num_part);
+	PartitionMesh3DMETIS(mesh, num_part);
 
 }
 

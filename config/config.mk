@@ -1,10 +1,11 @@
 
 ###############################################################################
-# Prerequisites: HDF5, CUDA (runtime, cublas) 
+# Prerequisites: HDF5, CUDA (runtime, cublas, cusparse), METIS
 ###############################################################################
 
 # HDF5: https://www.hdfgroup.org/downloads/hdf5/
 # CUDA: https://developer.nvidia.com/cuda-downloads
+# METIS: http://glaros.dtc.umn.edu/gkhome/metis/metis/download
 
 ifeq ($(origin HDF5_ROOT), undefined)
 $(error HDF5_ROOT is not set)
@@ -18,6 +19,14 @@ else
 CUDA_DIR=$(CUDA_ROOT)
 endif
 
+ifeq ($(origin METIS_DIR), undefined)
+$(warning METIS_DIR is not set)
+$(warning METIS will not be used)
+MK_METIS_DIR=
+else
+MK_METIS_DIR=$(METIS_DIR)
+endif
+
 
 ###############################################################################
 # Compiler and flags
@@ -29,8 +38,18 @@ CFLAGS=-O0 -g3 -std=c99 \
 			 -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			 -Wno-deprecated-declarations \
 			 -fsanitize=undefined # -fno-omit-frame-pointer
-INC=-I$(MK_HDF5_DIR)/include -I$(CUDA_DIR)/include
-LIB=-L$(MK_HDF5_DIR)/lib -lhdf5 -lm
+
+INC=-I$(CUDA_DIR)/include
+LIB=-lm
+
+INC+=-I$(MK_HDF5_DIR)/include
+LIB+=-L$(MK_HDF5_DIR)/lib -lhdf5
+
+# if MK_METIS_DIR is not set, then METIS will not be used
+ifneq ($(MK_METIS_DIR),)
+INC+=-I$(MK_METIS_DIR)/include
+LIB+=-L$(MK_METIS_DIR)/lib -lmetis
+endif
 
 NVCC=nvcc
 NVCCFLAGS=-O0 -g -G

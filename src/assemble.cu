@@ -32,8 +32,10 @@ __constant__ f64 shlgradu[12] = {-1.0, -1.0, -1.0,
 * @param[in]  src   The source array to be loaded. The array is column-majored of size (block_length, *)
 * @param[out] dst   The destination array to be loaded. The array is column-majored of size (block_length, count)
 */
-static __global__ void
-LoadValueKernel(u32 count, const u32* index, u32 inc, u32 block_length, const f64* src, f64* dst) {
+static __global__
+template<typename Index, typename Real> void
+LoadValueKernel(Index count, const Index* index, Index inc, Index block_length, const Real* src, Real* dst) {
+
 	i32 idx = blockIdx.x * blockDim.x + threadIdx.x; 
 	if(idx >= count) return;
 

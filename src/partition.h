@@ -4,10 +4,10 @@
 
 #include "common.h"
 
-#include "MeshData.h"
+#include "Mesh.h"
 __BEGIN_DECLS__
 
-void PartitionMesh3DMETIS(MeshData* mesh, u32 num_part);
+void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part);
 
 __END_DECLS__
 
