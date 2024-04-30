@@ -1,3 +1,17 @@
+# C
+# Compiled Object files
+*.o
+*.d
+*.a
+*.so
+*.dylib
+*.exe
+*.dll
+# Dest
+bin/
+
+
+# CUDA
 *.i
 *.ii
 *.gpu

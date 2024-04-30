@@ -31,6 +31,7 @@ info:
 	@echo "CU_LIB: $(CU_LIB)"
 	@echo "CU_OBJS: $(CU_OBJS)"
 	@echo "CU_DEPS: $(CU_DEPS)"
+	@echo "LINKER: $(LINKER)"
 
 
 $(DEST)/$(NAME).exe: $(OBJS) $(CU_OBJS) | $(DEST)

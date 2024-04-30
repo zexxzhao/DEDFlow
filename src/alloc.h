@@ -5,11 +5,11 @@
 
 __BEGIN_DECLS__
 
-typedef enum DeviceType DeviceType;
 enum DeviceType {
 	HOST = 0,
 	DEVICE = 1,
 };
+typedef enum DeviceType DeviceType;
 
 
 #define MEM_LEN_DEFAULT (-1);

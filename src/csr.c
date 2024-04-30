@@ -4,7 +4,7 @@
 #include "Mesh.h"
 
 #include "csr.h"
-
+#include "csr_impl.h"
 #define PREALLOC_SIZE 64
 __BEGIN_DECLS__
 typedef struct CSRHashMap CSRHashMap;
@@ -126,48 +126,69 @@ GetNodalGraphFromMesh(const Mesh3D* mesh) {
 	return map;
 }
 
-CSRAttr* CSRAttrCreate(const Mesh3D* mesh, csr_index_type block_size) {
+#include "csr_impl.h"
+
+// CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
+// 	CSRAttr* attr = (CSRAttr*)CdamMallocHost(sizeof(CSRAttr));
+// 
+// 	GenerateCSRFromMesh(mesh, attr);
+// }
+
+CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
 	CSRAttr* attr = (CSRAttr*)CdamMallocHost(sizeof(CSRAttr));
 	u32 num_node = Mesh3DNumNode(mesh);
-	u32 i, j, k, l;
+	u32 i, j;
 	u32 nnz = 0;
-	csr_index_type bz = block_size;
-	CSRAttrNumRow(attr) = num_node * bz;
-	CSRAttrNumCol(attr) = num_node * bz;
+	CSRAttrNumRow(attr) = num_node;
+	CSRAttrNumCol(attr) = num_node;
 
 	CSRHashMap* map = GetNodalGraphFromMesh(mesh);
 	/* count nnz */
 	for(i = 0; i < num_node; i++) {
 		nnz += map->row_len[i];
 	}
-	CSRAttrNNZ(attr) = nnz * bz * bz;
-	csr_index_type* row_ptr= (csr_index_type*)CdamMallocHost(sizeof(csr_index_type) * (num_node + 1) * bz);
-	csr_index_type* col_ind= (csr_index_type*)CdamMallocHost(sizeof(csr_index_type) * nnz * bz * bz);
+	CSRAttrNNZ(attr) = nnz;
+	csr_index_type* row_ptr= (csr_index_type*)CdamMallocHost(sizeof(csr_index_type) * (num_node + 1));
+	csr_index_type* col_ind= (csr_index_type*)CdamMallocHost(sizeof(csr_index_type) * nnz);
 
 	row_ptr[0] = 0;
 	for (i = 0; i < num_node; i++) {
-		for (j = 0; j < bz; ++j) {
-			row_ptr[i * bz + j + 1] = row_ptr[i * bz + j] + map->row_len[i] * bz;
-		}
-		for (j = 0; j < bz; ++j) {
-			for (k = 0; k < map->row_len[i]; ++k) {
-				for (l = 0; l < bz; ++l) {
-					col_ind[row_ptr[i * bz + j] + k * bz + l] = map->buff[i * PREALLOC_SIZE + k] * bz + l;
-				}
-			}
+		row_ptr[i + 1] = row_ptr[i] + map->row_len[i];
+		for (j = 0; j < map->row_len[i]; ++j) {
+			col_ind[row_ptr[i] + j] = map->buff[i * PREALLOC_SIZE + j];
 		}
 	}
 	CSRHashMapDestroy(map);
 
-	csr_index_type* row_ptr_dev = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * (num_node + 1) * bz);
-	csr_index_type* col_ind_dev = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * nnz * bz * bz);
-	cudaMemcpy(row_ptr_dev, row_ptr, sizeof(csr_index_type) * (num_node + 1) * bz, cudaMemcpyHostToDevice);
-	cudaMemcpy(col_ind_dev, col_ind, sizeof(csr_index_type) * nnz * bz * bz, cudaMemcpyHostToDevice);
-	CdamFreeHost(row_ptr, sizeof(csr_index_type) * (num_node + 1) * bz);
-	CdamFreeHost(col_ind, sizeof(csr_index_type) * nnz * bz * bz);
+	csr_index_type* row_ptr_dev = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * (num_node + 1));
+	csr_index_type* col_ind_dev = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * nnz);
+	cudaMemcpy(row_ptr_dev, row_ptr, sizeof(csr_index_type) * (num_node + 1), cudaMemcpyHostToDevice);
+	cudaMemcpy(col_ind_dev, col_ind, sizeof(csr_index_type) * nnz, cudaMemcpyHostToDevice);
+	CdamFreeHost(row_ptr, sizeof(csr_index_type) * (num_node + 1));
+	CdamFreeHost(col_ind, sizeof(csr_index_type) * nnz);
 	CSRAttrRowPtr(attr) = row_ptr_dev;
 	CSRAttrColInd(attr) = col_ind_dev;
 	return attr;
+}
+
+
+CSRAttr* CSRCreateBlock(const CSRAttr* attr, csr_index_type block_size[2]) {
+	csr_index_type block_row = block_size[0], block_col = block_size[1];
+	CSRAttr* new_attr = (CSRAttr*)CdamMallocHost(sizeof(CSRAttr));
+	u32 nnz = CSRAttrNNZ(attr);
+	u32 num_row = CSRAttrNumRow(attr);
+	u32 num_col = CSRAttrNumCol(attr);
+
+	CSRAttrNumRow(new_attr) = num_row * block_row;
+	CSRAttrNumCol(new_attr) = num_col * block_col;
+
+	CSRAttrNNZ(new_attr) = nnz * block_row * block_col;
+
+	CSRAttrRowPtr(new_attr) = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * (num_row * block_row + 1));
+	CSRAttrColInd(new_attr) = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * nnz * block_row * block_col);
+
+	ExpandCSRByBlockSize(attr, new_attr, block_size);
+	return new_attr;
 }
 
 void CSRAttrDestroy(CSRAttr* attr) {
@@ -184,34 +205,6 @@ csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row) {
 	return CSRAttrColInd(attr) + CSRAttrRowPtr(attr)[row];
 }
 
-
-CSRMatrix* CSRMatrixCreate(CSRAttr* attr) {
-	CSRMatrix* mat = (CSRMatrix*)CdamMallocHost(sizeof(CSRMatrix));
-	mat->external_attr = TRUE;
-	CSRMatrixAttr(mat) = attr;
-	CSRMatrixData(mat) = (csr_value_type*)CdamMallocDevice(sizeof(csr_value_type) * CSRAttrNNZ(attr));
-	cusparseCreateCsr(&CSRMatrixDescr(mat),
-										(i64)CSRAttrNumRow(attr), (i64)CSRAttrNumCol(attr), (i64)CSRAttrNNZ(attr),
-										CSRAttrRowPtr(attr), CSRAttrColInd(attr), CSRMatrixData(mat),
-										CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-	return mat;
-}
-
-CSRMatrix* CSRMatrixCreateMesh(const Mesh3D* mesh, csr_index_type block_size) {
-	CSRAttr* attr = CSRAttrCreate(mesh, block_size);
-	CSRMatrix* mat = CSRMatrixCreate(attr);
-	mat->external_attr = FALSE;
-	return mat;
-}
-
-void CSRMatrixDestroy(CSRMatrix* mat) {
-	cusparseDestroySpMat(CSRMatrixDescr(mat));
-	CdamFreeDevice(CSRMatrixData(mat), sizeof(csr_value_type) * CSRAttrNNZ(CSRMatrixAttr(mat)));
-	if (!mat->external_attr) {
-		CSRAttrDestroy(CSRMatrixAttr(mat));
-	}
-	CdamFreeHost(mat, sizeof(CSRMatrix));
-}
 
 __END_DECLS__
 

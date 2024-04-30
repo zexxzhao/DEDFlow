@@ -20,7 +20,7 @@ struct Mesh3D {
 	Mesh3DData* device;
 	
 	/* Partition */
-	u32* num_part;
+	u32 num_part;
 	u32* epart;
 };
 

@@ -23,7 +23,7 @@
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
 
-void assemble_system(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, CSRMatrix* J) {
+void assemble_system(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, Matrix* J) {
 	u32 i, j, k;
 	u32 num_node = (u32)Mesh3DDataNumNode(Mesh3DHost(mesh));
 	u32 num_tet = (u32)Mesh3DDataNumTet(Mesh3DHost(mesh));
@@ -54,7 +54,8 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
 	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64));
 	f64* dx = (f64*)CdamMallocDevice(num_node * sizeof(f64));
-	CSRMatrix* J = CSRMatrixCreateMesh(mesh, num_node);
+	CSRAttr* spy = CSRAttrCreate(mesh);
+	Matrix* J = MatrixCreateTypeCSR(spy);
 	Krylov* ksp = KrylovCreateGMRES(60, tol, tol);
 
 	Array* d_dwg = FieldDevice(dwg);
@@ -87,7 +88,8 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 
 	CdamFreeDevice(F, num_node * sizeof(f64));
 	CdamFreeDevice(dx, num_node * sizeof(f64));
-	CSRMatrixDestroy(J);
+	MatrixDestroy(J);
+	CSRAttrDestroy(spy);
 	KrylovDestroy(ksp);
 	cublasDestroy(handle);
 }

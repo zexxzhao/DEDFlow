@@ -3,9 +3,6 @@
 #include <string.h>
 #include <cuda_runtime.h>
 
-/* Include metis for partitioning */
-#include "metis.h"
-
 #include "alloc.h"
 #include "h5util.h"
 #include "MeshData.h"
