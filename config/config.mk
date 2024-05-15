@@ -47,14 +47,15 @@ LIB+=-L$(MK_HDF5_DIR)/lib -lhdf5
 
 # if MK_METIS_DIR is not set, then METIS will not be used
 ifneq ($(MK_METIS_DIR),)
+CLFAGS+= -DUSE_METIS
 INC+=-I$(MK_METIS_DIR)/include
 LIB+=-L$(MK_METIS_DIR)/lib -lmetis
 endif
 
 NVCC=nvcc
-NVCCFLAGS=-O3 -g -G -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
+NVCCFLAGS=-O0 -g -std=c++17 -G -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
 CU_INC=
-CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse
+CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand
 
 LINKER=g++
 

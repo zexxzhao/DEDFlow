@@ -3,7 +3,8 @@
 #include "alloc.h"
 
 #include "csr.h"
-#include "pc.cuh"
+#include "vec.h"
+#include "matrix.h"
 #include "krylov.h"
 
 __BEGIN_DECLS__
@@ -14,7 +15,6 @@ static Krylov* KryloveInitPrivate(u32 max_iter, f64 atol, f64 rtol) {
 	ksp->atol = atol;
 	ksp->rtol = rtol;
 
-	ksp->handle = NULL;
 	ksp->ksp_solve = NULL;
 	ksp->pc_apply = NULL;
 	ksp->ksp_ctx = NULL;
@@ -22,37 +22,38 @@ static Krylov* KryloveInitPrivate(u32 max_iter, f64 atol, f64 rtol) {
 	return ksp;
 }
 
-static void PCJacobiApply(CSRMatrix* A, f64* x, f64* y, void* ctx) {
-	u32 n = CSRMatrixNumRow(A);
-	u32 nnz = CSRMatrixNNZ(A);
-	u32* row_ptr = CSRMatrixRowPtr(A);
-	u32* col_idx = CSRMatrixColInd(A);
-	f64* val = CSRMatrixData(A);
+static void PCJacobiApply(Matrix* A, f64* x, f64* y, void* ctx) {
+	u32 n = MatrixNumRow(A);
+	Krylov* ksp = (Krylov*)ctx;
+	if(ksp->pc_ctx == NULL) {
+		ksp->pc_ctx_size = n * sizeof(f64);
+		ksp->pc_ctx = CdamMallocDevice(ksp->pc_ctx_size);
+	}
+	else if(ksp->pc_ctx_size != n * sizeof(f64)) {
+		CdamFreeDevice(ksp->pc_ctx, ksp->pc_ctx_size);
+		ksp->pc_ctx_size = n * sizeof(f64);
+		ksp->pc_ctx = CdamMallocDevice(ksp->pc_ctx_size);
+	}
 
-	ASSERT(x && y && "x and y must not be NULL");
-	if(x == y) {
-		PCJacobiInplaceDevice(n, nnz, val, row_ptr, col_idx, y);
-	}
-	else {
-		PCJacobiDevice(n, nnz, val, row_ptr, col_idx, x, y);
-	}
-	
+	f64* diag = (f64*)ksp->pc_ctx;
+	MatrixGetDiag(A, diag);
+	VecPointwiseDiv(y, x, diag, n);
 }
-static void CGSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
-	u32 n = CSRMatrixNumRow(A);
+static void CGSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
+	u32 n = MatrixNumRow(A);
 	cusparseDnVecDescr_t vec_x, vec_b;
 	cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);
 	cusparseCreateDnVec(&vec_b, n, b, CUDA_R_64F);
 
-	cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
-	UNUSED(mat_A);
+	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
+	// UNUSED(mat_A);
 	/* TODO: Implement CG solver */
 }
 
 void GMRESResidualUpdatePrivate(f64*, f64*);
 
 /* GMRES solver */
-static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
+static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	const f64 minus_one = -1.0, one = 1.0, zero = 0.0;
 	Krylov* ksp = (Krylov*)ctx;
 	u32 maxit = ksp->max_iter;
@@ -60,13 +61,13 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 	f64 rtol = ksp->rtol;
 	void* buffer_mv = ksp->ksp_ctx;
 	u32 iter;
-	u32 n = CSRMatrixNumRow(A);
+	u32 n = MatrixNumRow(A);
 	f64 rnrm_init, rnrm;
 	b32 converged;
 
-	cusparseHandle_t cusparse_handle = ksp->handle;
-	cusparseDnVecDescr_t vec_r, vec_x, vec_tmp;
-	cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
+	// cusparseHandle_t cusparse_handle = ksp->handle;
+	// cusparseDnVecDescr_t vec_r, vec_x, vec_tmp;
+	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 
 	cublasHandle_t cublas_handle;
 
@@ -94,16 +95,17 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 	cublasSetVector(1, sizeof(f64), &one, 1, beta, 1);
 
 	cublasCreate(&cublas_handle);
-	cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);				/* vec_x -> x */
-	cusparseCreateDnVec(&vec_r, n, QCOL(0), CUDA_R_64F);  /* vec_r -> Q[:, 0] */
-	cusparseCreateDnVec(&vec_tmp, n, tmp, CUDA_R_64F);		/* vec_tmp -> tmp */
+	// cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);				/* vec_x -> x */
+	// cusparseCreateDnVec(&vec_r, n, QCOL(0), CUDA_R_64F);  /* vec_r -> Q[:, 0] */
+	// cusparseCreateDnVec(&vec_tmp, n, tmp, CUDA_R_64F);		/* vec_tmp -> tmp */
 	/* 0. r = b - A * x */
 	/* 0.0. r = b */
 	cublasDcopy(cublas_handle, n, b, 1, QCOL(0), 1);
 	/* 0.1. r -= A * x */
-	cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-							 &minus_one, mat_A, vec_x, &one, vec_r,
-							 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
+	MatrixAMVPBY(-1.0, A, x, 1.0, QCOL(0));
+	// cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+	// 						 &minus_one, mat_A, vec_x, &one, vec_r,
+	// 						 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
 
 
 	converged = FALSE;
@@ -122,14 +124,15 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 	while (!converged && iter < maxit) {
 		/* 2. Q[:, iter + 1] = A * inv(P) * Q[:, iter] */
 		/* 2.0. Apply preconditioner: tmp[:] = inv(P) Q[:, iter] */
-		ksp->pc_apply(A, QCOL(iter), tmp, (void*)NULL);
+		ksp->pc_apply(A, QCOL(iter), tmp, ksp);
 		/* 2.1 let vec_r -> Q[:, iter + 1] */
-		cusparseDestroyDnVec(vec_r);
-		cusparseCreateDnVec(&vec_r, n, QCOL(iter + 1), CUDA_R_64F);
+		// cusparseDestroyDnVec(vec_r);
+		// cusparseCreateDnVec(&vec_r, n, QCOL(iter + 1), CUDA_R_64F);
 		/* 2.2. vec_r = A * tmp */
-		cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-								 &one, mat_A, vec_tmp, &zero, vec_r,
-								 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
+		MatrixMatVec(A, tmp, QCOL(iter + 1));
+		// cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+		// 						 &one, mat_A, vec_tmp, &zero, vec_r,
+		// 						 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
 
 		/* 3. Arnoldi process */
 		/* 3.1. H[0:iter+1, iter] = Q[0:n, 0:iter+1].T * Q[0:n, iter+1] */
@@ -174,17 +177,16 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 		if (rnrm < atol || rnrm < rtol * (rnrm_init + DBL_EPSILON)) {
 			converged = TRUE;
 		}
+		iter++;
 	}
 	/* 5. Solve linear system */
-	if(iter == 0) {
-		/* 5.1. Solve upper triangular system H[0:iter+1, 0:iter] y = beta[0:iter+1] */
-		cublasDtrsv(cublas_handle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
-								iter + 1, H, maxit + 1, beta, 1);
-		/* 5.2. Compute x += Q[0:n, 0:iter] * y */
-		cublasDgemv(cublas_handle, CUBLAS_OP_N,
-								n, iter + 1, &one, Q, n,
-								beta, 1, &one, x, 1);
-	}
+	/* 5.1. Solve upper triangular system H[0:iter+1, 0:iter] y = beta[0:iter+1] */
+	cublasDtrsv(cublas_handle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+							iter + 1, H, maxit + 1, beta, 1);
+	/* 5.2. Compute x += Q[0:n, 0:iter] * y */
+	cublasDgemv(cublas_handle, CUBLAS_OP_N,
+							n, iter + 1, &one, Q, n,
+							beta, 1, &one, x, 1);
 
 #undef QCOL
 #undef HCOL
@@ -192,9 +194,9 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 #undef GVCOS
 #undef GVSIN
 
-	cusparseDestroyDnVec(vec_r);
-	cusparseDestroyDnVec(vec_x);
-	cusparseDestroyDnVec(vec_tmp);
+	// cusparseDestroyDnVec(vec_r);
+	// cusparseDestroyDnVec(vec_x);
+	// cusparseDestroyDnVec(vec_tmp);
 
 	CdamFreeDevice(Q, n * sizeof(f64) * (maxit + 1));
 	CdamFreeDevice(H, (maxit + 1) * maxit * sizeof(f64));
@@ -207,7 +209,6 @@ static void GMRESSolvePrivate(CSRMatrix* A, f64* x, f64* b, void* ctx) {
 
 Krylov* KrylovCreateCG(u32 max_iter, f64 atol, f64 rtol) {
 	Krylov* ksp = KryloveInitPrivate(max_iter, atol, rtol);
-	cusparseCreate(&ksp->handle);
 	ksp->ksp_solve = CGSolvePrivate;
 	ksp->pc_apply = PCJacobiApply;
 	return ksp;
@@ -215,30 +216,29 @@ Krylov* KrylovCreateCG(u32 max_iter, f64 atol, f64 rtol) {
 
 Krylov* KrylovCreateGMRES(u32 max_iter, f64 atol, f64 rtol) {
 	Krylov* ksp = KryloveInitPrivate(max_iter, atol, rtol);
-	cusparseCreate(&ksp->handle);
 	ksp->ksp_solve = GMRESSolvePrivate;
 	ksp->pc_apply = PCJacobiApply;
 	return ksp;
 }
 
 void KrylovDestroy(Krylov* ksp) {
-	cusparseDestroy(ksp->handle);
 	CdamFreeDevice(ksp->ksp_ctx, ksp->ksp_ctx_size);
 	CdamFreeDevice(ksp->pc_ctx, ksp->pc_ctx_size);
 	CdamFreeHost(ksp, sizeof(Krylov));
 }
 
-static void KrylovSetUp(Krylov* ksp, CSRMatrix* A, f64* vec) {
+/*
+static void KrylovSetUp(Krylov* ksp, Matrix* A, f64* vec) {
 	if(ksp->ksp_ctx) {
 		return;
 	}
 	size_t buffer_size = 0;
-	u32 n = CSRMatrixNumRow(A);
+	u32 n = MatrixNumRow(A);
 	cusparseDnVecDescr_t vec_x, vec_b;
 	cusparseCreateDnVec(&vec_x, n, vec, CUDA_R_64F);
 	cusparseCreateDnVec(&vec_b, n, vec, CUDA_R_64F);
 
-	cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
+	cusparseSpMatDescr_t mat_A = MatrixCSRDescr(A);
 
 	const f64 one = 1.0;
 	cusparseSpMV_bufferSize(ksp->handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -247,7 +247,6 @@ static void KrylovSetUp(Krylov* ksp, CSRMatrix* A, f64* vec) {
 	ksp->ksp_ctx_size = buffer_size;
 	ksp->ksp_ctx = CdamMallocDevice(buffer_size);
 
-	/* Use cusparseSpMV_preprocess if CUDA VERSION is newer and equal than 12.4 */
 #if CUDA_VERSION >= 12040
 	cusparseSpMV_preprocess(ksp->handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 													&one, mat_A, vec_x, &zero, vec_b, CUDA_R_64F,
@@ -257,9 +256,9 @@ static void KrylovSetUp(Krylov* ksp, CSRMatrix* A, f64* vec) {
 	cusparseDestroyDnVec(vec_x);
 	cusparseDestroyDnVec(vec_b);
 }
-
-void KrylovSolve(Krylov* ksp, CSRMatrix* A, f64* x, f64* b) {
-	KrylovSetUp(ksp, A, b);
+*/
+void KrylovSolve(Krylov* ksp, Matrix* A, f64* x, f64* b) {
+	// KrylovSetUp(ksp, A, b);
 	ksp->ksp_solve(A, x, b, ksp);
 }
 

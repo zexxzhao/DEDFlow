@@ -1,20 +1,20 @@
 
 
 #include <string.h>
+
+#ifdef USE_METIS
 #include <metis.h>
+#else
+typedef int idx_t;
+#endif
 
 #include "alloc.h"
 #include "Mesh.h"
 
 __BEGIN_DECLS__
 
-static b32 u32_2_cmp(const void* a, const void* b) {
-	u32* aa = (u32*)a;
-	u32* bb = (u32*)b;
-	return aa[1] - bb[1];
-}
-
 void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
+#ifdef USE_METIS
 	Mesh3DData* host = Mesh3DHost(mesh);
 	u32* ien = Mesh3DDataIEN(host);
 	idx_t num_node = Mesh3DNumNode(mesh);
@@ -73,6 +73,7 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
 	CdamFreeHost(eptr, sizeof(u32) * (num_tet + num_prism + num_hex + 1));
 	CdamFreeHost(epart, sizeof(idx_t) * (num_tet + num_prism + num_hex));
 	CdamFreeHost(npart, sizeof(idx_t) * num_node);
+#endif
 }
 
 __END_DECLS__

@@ -24,9 +24,9 @@ struct Mesh3DData {
 #define Mesh3DDataNumHex(data) ((data)->num_hex)
 #define Mesh3DDataCoord(data) ((data)->xg)
 #define Mesh3DDataIEN(data) ((data)->ien)
-#define Mesh3DDataTet(data) ((data)->ien + 0)
-#define Mesh3DDataPrism(data) ((data)->ien + 4 * Mesh3DDataNumTet(data))
-#define Mesh3DDataHex(data) ((data)->ien + 4 * Mesh3DDataNumTet(data) + 6 * Mesh3DDataNumPrism(data))
+#define Mesh3DDataTet(data) (Mesh3DDataNumTet(data) ? (data)->ien + 0 : NULL)
+#define Mesh3DDataPrism(data) (Mesh3DDataNumPrism(data) ? (data)->ien + 4 * Mesh3DDataNumTet(data): NULL)
+#define Mesh3DDataHex(data) (Mesh3DDataNumHex(data) ? (data)->ien + 4 * Mesh3DDataNumTet(data) + 6 * Mesh3DDataNumPrism(data) : NULL)
 
 Mesh3DData* Mesh3DDataCreateHost(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex);
 Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex);

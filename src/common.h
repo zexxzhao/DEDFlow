@@ -35,6 +35,9 @@ typedef double f64;
 
 typedef char byte;
 
+typedef f64 value_type;
+typedef u32 index_type;
+
 /* Boolean */
 typedef int32_t b32;
 #define TRUE (1==1)

@@ -15,6 +15,7 @@
 #include "Particle.h"
 #include "csr.h"
 #include "krylov.h"
+#include "assemble.h"
 
 #define kRHOC (0.5)
 #define kDT (0.1)
@@ -23,7 +24,7 @@
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
 
-void assemble_system(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, CSRMatrix* J) {
+void AssembleSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, Matrix* J) {
 	u32 i, j, k;
 	u32 num_node = (u32)Mesh3DDataNumNode(Mesh3DHost(mesh));
 	u32 num_tet = (u32)Mesh3DDataNumTet(Mesh3DHost(mesh));
@@ -32,15 +33,15 @@ void assemble_system(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64*
 	f64* xg = Mesh3DDataCoord(Mesh3DHost(mesh));
 
 	if(num_tet) {
-		assemble_system_tet(mesh, wgold, dwgold, dwg, F, J);
+		AssembleSystemTet(mesh, wgold, dwgold, dwg, F, J);
 	}
 	
 	if(num_prism) {
-		// assemble_system_prism(mesh, wgold, dwgold, dwg, F, J);
+		// AssembleSystem_prism(mesh, wgold, dwgold, dwg, F, J);
 	}
 
 	if(num_hex) {
-		// assemble_system_hex(mesh, wgold, dwgold, dwg, F, J);
+		// AssembleSystem_hex(mesh, wgold, dwgold, dwg, F, J);
 	}
 }
 
@@ -54,20 +55,21 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
 	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64));
 	f64* dx = (f64*)CdamMallocDevice(num_node * sizeof(f64));
-	CSRMatrix* J = CSRMatrixCreateMesh(mesh, num_node);
+	CSRAttr* spy = CSRAttrCreate(mesh);
+	Matrix* J = MatrixCreateTypeCSR(spy);
 	Krylov* ksp = KrylovCreateGMRES(60, tol, tol);
 
 	Array* d_dwg = FieldDevice(dwg);
 	cublasHandle_t handle;
 
 	/* Construct the right-hand side */
-	assemble_system(mesh, wgold, dwgold, dwg, F, NULL);
+	AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
 	cublasCreate(&handle);
 	cublasDnrm2(handle, num_node, F, 1, &rnorm_init);
 
 	while(!converged && maxit--) {
 		/* Construct the Jacobian matrix */
-		assemble_system(mesh, wgold, dwgold, dwg, NULL, J);
+		AssembleSystem(mesh, wgold, dwgold, dwg, NULL, J);
 	
 		/* Solve the linear system */
 		KrylovSolve(ksp, J, F, dx);	
@@ -77,7 +79,7 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 		cublasDaxpy(handle, ArrayLen(d_dwg), &minus_one, dx, 1, ArrayData(d_dwg), 1);
 
 		/* Construct the right-hand side */
-		assemble_system(mesh, wgold, dwgold, dwg, F, NULL);
+		AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
 		cublasDnrm2(handle, num_node, F, 1, &rnorm);
 		if (rnorm < tol * rnorm_init) {
 			converged = TRUE;
@@ -87,7 +89,8 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 
 	CdamFreeDevice(F, num_node * sizeof(f64));
 	CdamFreeDevice(dx, num_node * sizeof(f64));
-	CSRMatrixDestroy(J);
+	MatrixDestroy(J);
+	CSRAttrDestroy(spy);
 	KrylovDestroy(ksp);
 	cublasDestroy(handle);
 }
@@ -145,6 +148,11 @@ int main() {
 	H5FileInfo* h5_handler = H5OpenFile("cube.h5", "r");
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);
+
+	Mesh3DColor(mesh);
+	return 0;
+
+
 	Field* wgold = FieldCreate3D(mesh, 1);
 	Field* dwgold = FieldCreate3D(mesh, 1);
 	Field* dwg = FieldCreate3D(mesh, 1);

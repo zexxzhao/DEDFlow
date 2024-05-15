@@ -3,9 +3,6 @@
 #include <string.h>
 #include <cuda_runtime.h>
 
-/* Include metis for partitioning */
-#include "metis.h"
-
 #include "alloc.h"
 #include "h5util.h"
 #include "MeshData.h"
@@ -60,6 +57,7 @@ void Mesh3DDestroy(Mesh3D* mesh) {
 	Mesh3DDataDestroy(Mesh3DHost(mesh));
 	Mesh3DDataDestroy(Mesh3DDevice(mesh));
 	CdamFreeDevice(mesh->epart, sizeof(u32) * num_elem);
+	CdamFreeDevice(mesh->color, sizeof(color_t) * num_elem);
 	CdamFreeHost(mesh, sizeof(Mesh3D));
 }
 
@@ -89,3 +87,9 @@ void Mesh3DPartition(Mesh3D* mesh, u32 num_part) {
 	PartitionMesh3DMETIS(mesh, num_part);
 }
 
+void Mesh3DColor(Mesh3D* mesh) {
+	u32 num_elem = Mesh3DNumTet(mesh) + Mesh3DNumPrism(mesh) + Mesh3DNumHex(mesh);
+	mesh->color = CdamMallocDevice(sizeof(color_t) * num_elem);
+	ColorMeshTet(mesh, MAX_COLOR, mesh->color);
+	mesh->num_color = GetMaxColor(mesh->color, Mesh3DNumTet(mesh)) + 1;
+}
