@@ -11,7 +11,6 @@ struct VecModFunctor {
 	}
 };
 
-
 __BEGIN_DECLS__
 
 void VecAXPY(value_type a, const value_type* x, value_type* y, index_type n) {

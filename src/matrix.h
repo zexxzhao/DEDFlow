@@ -16,7 +16,6 @@ typedef enum {
 	MAT_TYPE_CSR = 2,
 	MAT_TYPE_CUSTOM = 4,
 	MAT_TYPE_NESTED = 8
-
 } MatType;
 
 typedef struct Matrix Matrix;

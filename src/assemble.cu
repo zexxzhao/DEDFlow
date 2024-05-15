@@ -193,7 +193,6 @@ void GetElemInvJ3DKernel(I ne, const I* ien, const I* index, const T* xg, T* ele
 }
 
 
-
 __BEGIN_DECLS__
 
 /**
@@ -242,7 +241,6 @@ LoadValueAxpyKernel(u32 count, const u32* index, u32 inc, u32 block_length, cons
 	const u32* index_ptr = index + idx * inc;
 	f64* dst_ptr = dst + idx * block_length;
 	while(block_length >= 4) {
-		// *((double4*)dst_ptr) = fma(*((double4*)(src + index_ptr[0])), alpha, *((double4*)dst_ptr));
 		dst_ptr[0] += alpha * src[index_ptr[0]];
 		dst_ptr[1] += alpha * src[index_ptr[1]];
 		dst_ptr[2] += alpha * src[index_ptr[2]];
@@ -463,7 +461,6 @@ void AssembleSystemTet(Mesh3D *mesh,
 		LoadElementValueKernel<<<num_block, num_thread>>>(batch_size, ien, batch_index_ptr, wgold_dptr, buffer);
 		LoadElementValueAXPYKernel<<<num_block, num_thread>>>(batch_size, ien, batch_index_ptr, dwgold_dptr, buffer, kDT * kALPHAF * (1.0 - kGAMMA));
 		LoadElementValueAXPYKernel<<<num_block, num_thread>>>(batch_size, ien, batch_index_ptr, dwg_dptr, buffer, kDT * kALPHAF * kGAMMA);
-
 		/* 1.1. Calculate the gradient*/
 		for(u32 e = 0; e < batch_size; ++e) {
 			A_batch[e] = shgradg + e * 12;
