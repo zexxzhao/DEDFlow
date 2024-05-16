@@ -31,7 +31,25 @@ void ColorMeshTet(const Mesh3D* mesh, index_type max_color_len, color_t* color) 
 	index_type* v2e_col_ind = (index_type*)CdamMallocDevice(v2e_nnz * sizeof(index_type));
 	GenerateV2EMapColTetGPU(ien, num_elem, num_node, v2e_row_ptr, v2e_col_ind);
 
-	
+	if (0) {
+		FILE* fp_row = fopen("v2e_row_ptr.txt", "w");
+		index_type* v2e_row_ptr_host = (index_type*)CdamMallocHost((num_node + 1) * sizeof(index_type));
+		cudaMemcpy(v2e_row_ptr_host, v2e_row_ptr, (num_node + 1) * sizeof(index_type), cudaMemcpyDeviceToHost);
+		for (index_type i = 0; i < num_node + 1; i++) {
+			fprintf(fp_row, "%d\n", v2e_row_ptr_host[i]);
+		}
+		CdamFreeHost(v2e_row_ptr_host, (num_node + 1) * sizeof(index_type));
+
+		fclose(fp_row);
+		FILE* fp_col = fopen("v2e_col_ind.txt", "w");
+		index_type* v2e_col_ind_host = (index_type*)CdamMallocHost(v2e_nnz * sizeof(index_type));
+		cudaMemcpy(v2e_col_ind_host, v2e_col_ind, v2e_nnz * sizeof(index_type), cudaMemcpyDeviceToHost);
+		for (index_type i = 0; i < v2e_nnz; i++) {
+			fprintf(fp_col, "%d\n", v2e_col_ind_host[i]);
+		}
+		CdamFreeHost(v2e_col_ind_host, v2e_nnz * sizeof(index_type));
+		fclose(fp_col);
+	}
 	/* Jones-Plassman-Luby algorithm */
 	ColorElementJPLTetGPU(ien, v2e_row_ptr, v2e_col_ind, MAX_COLOR, color, num_elem);
 

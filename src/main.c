@@ -25,12 +25,12 @@
 
 
 void AssembleSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, Matrix* J) {
-	u32 i, j, k;
-	u32 num_node = (u32)Mesh3DDataNumNode(Mesh3DHost(mesh));
+	// u32 i, j, k;
+	// u32 num_node = (u32)Mesh3DDataNumNode(Mesh3DHost(mesh));
 	u32 num_tet = (u32)Mesh3DDataNumTet(Mesh3DHost(mesh));
 	u32 num_prism = (u32)Mesh3DDataNumPrism(Mesh3DHost(mesh));
 	u32 num_hex = (u32)Mesh3DDataNumHex(Mesh3DHost(mesh));
-	f64* xg = Mesh3DDataCoord(Mesh3DHost(mesh));
+	// f64* xg = Mesh3DDataCoord(Mesh3DHost(mesh));
 
 	if(num_tet) {
 		AssembleSystemTet(mesh, wgold, dwgold, dwg, F, J);
@@ -50,7 +50,7 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 	f64 tol = 1.0e-6;
 	b32 converged = FALSE;
 	f64 rnorm, rnorm_init;
-	const f64 one = 1.0, zero = 0.0, minus_one = -1.0;
+	f64 minus_one = -1.0;
 
 	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
 	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64));
@@ -106,7 +106,7 @@ void MyFieldInit(f64* value, void* ctx) {
 	f64* coord = Mesh3DDataCoord(data);
 
 	for(i = 0; i < num_node; i++) {
-		z = 1.5e-4 - coord[i * 3 + 2];
+		z = 2e-4 - coord[i * 3 + 2];
 		if (z > eps) {
 			h = 1.0;
 		}
@@ -150,7 +150,18 @@ int main() {
 	H5CloseFile(h5_handler);
 
 	Mesh3DColor(mesh);
-	return 0;
+	if(0){
+		Mesh3DData* dev = Mesh3DHost(mesh);
+		u32 num_elem = dev->num_tet;
+		color_t* h_color = (color_t*)CdamMallocHost(num_elem * sizeof(color_t));
+		color_t* d_color = mesh->color;
+		cudaMemcpy(h_color, d_color, num_elem * sizeof(color_t), D2H);
+		FILE* fp = fopen("color.txt", "w");
+		for (u32 i = 0; i < num_elem; i++) {
+			fprintf(fp, "%d\n", h_color[i]);
+		}
+		return 0;
+	}
 
 
 	Field* wgold = FieldCreate3D(mesh, 1);
@@ -174,6 +185,10 @@ int main() {
 	else {
 		/* Initial condition */
 		FieldInit(wgold, MyFieldInit, mesh);
+		h5_handler = H5OpenFile("sol.0.h5", "w");
+		FieldSave(wgold, h5_handler, "w");
+		FieldSave(dwgold, h5_handler, "dw");
+		H5CloseFile(h5_handler);
 	}
 
 	while(step++ < num_step) {

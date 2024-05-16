@@ -53,7 +53,7 @@ LIB+=-L$(MK_METIS_DIR)/lib -lmetis
 endif
 
 NVCC=nvcc
-NVCCFLAGS=-O0 -g -std=c++17 -G -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
+NVCCFLAGS=-O0 -g -G -std=c++17 -G -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand
 

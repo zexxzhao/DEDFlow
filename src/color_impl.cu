@@ -8,6 +8,11 @@
 #include "alloc.h"
 #include "color_impl.h"
 
+#define COLOR_RANDOM_LB (0)
+#define COLOR_RANDOM_UB (INT_MAX/2)
+
+#define COLOR_MARKED (COLOR_RANDOM_UB + 1)
+
 template <typename IndexType, int NSHL>
 __global__ void GenerateV2EMapRowCountKernel(const IndexType* ien, IndexType num_elem, IndexType num_node, IndexType* row_ptr) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -36,7 +41,7 @@ __global__ void GenerateV2EMapColKernel(const IndexType* ien, IndexType num_elem
 	#pragma unroll
 	for(int j = 0; j < NSHL; ++j) {
 		IndexType node = ien[i * NSHL + j];
-		int offset = atomicAdd(row_count + node, 1);
+		int offset = atomicAdd(row_count + node, (IndexType)1);
 		col_idx[row_ptr[node] + offset] = i;
 	}
 }
@@ -62,31 +67,28 @@ ColorElementJPLKernel(const IndexType* ien, /* Element to Vertex */
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if(i >= num_elem) return;
 
-	for(; i < num_elem; i += gridDim.x * blockDim.x) {
+	for (; i < num_elem; i += gridDim.x * blockDim.x) {
 		b32 found_max = TRUE;
 
 		ColorType ec = color[i];
-		if(ec < 0) continue; /* Already colored */
+		if (ec < 0) continue; /* Already colored */
 
 		/* Loop all the connected elements */
 		#pragma unroll
-		for(int j = 0; j < NSHL; ++j) {
+		for (int j = 0; j < NSHL; ++j) {
 			IndexType node = ien[i * NSHL + j];
 			IndexType start = row_ptr[node];
 			IndexType end = row_ptr[node + 1];
 
 			/* Loop all the connected elements */
-			#pragma unroll
-			for(IndexType k = start; k < end; ++k) {
+			for (IndexType k = start; k < end; ++k) {
 				IndexType elem = col_ind[k];
-				if(elem == i) continue;
-				if(ec < color[elem]) {
+				if (ec < color[elem] && elem != i) {
 					found_max = FALSE;
 				}
-
 			}
 		}
-		if(found_max) color[i] += max_color;
+		if(found_max) color[i] = COLOR_MARKED;
 	}
 
 }
@@ -94,18 +96,21 @@ ColorElementJPLKernel(const IndexType* ien, /* Element to Vertex */
 template<typename ColorType>
 struct ColorElementJPLReverseColorFunctor {
 	ColorType max_color;
-	ColorElementJPLReverseColorFunctor(ColorType max_color) : max_color(max_color) {}
+	ColorType c;
+	ColorElementJPLReverseColorFunctor(ColorType c) : c(c) {}
 
-	__host__ __device__ ColorType operator()(ColorType ec) {
-		return ec >= max_color ? -1 - ec % max_color : ec;
+	__host__ __device__ ColorType operator()(ColorType ec) const {
+		i32 marked = (i32)(ec == COLOR_MARKED);
+		return marked * c + (1 - marked) * ec;
 	}
+
 };
 
 template <typename ColorType>
 struct ColorElementJPLUncoloredFunctor {
 	ColorElementJPLUncoloredFunctor() { }
 
-	__host__ __device__ bool operator()(ColorType ec) {
+	__host__ __device__ bool operator()(ColorType ec) const {
 		return ec >= 0;
 	}
 };
@@ -122,23 +127,25 @@ IndexType ColorElementJPLGPU(const IndexType* ien, /* Element to Vertex */
 
 	GenerateRandomColor(color, num_elem, max_color);
 
-	for(; c < max_color or left == 0; c++) {
+	for(; c < max_color && left; c++) {
+		ColorType reverse_color = -1 - ColorType(c);
 		ColorElementJPLKernel<IndexType, ColorType, NSHL><<<grid_dim, block_dim>>>(ien, row_ptr, col_ind, max_color, color, num_elem);
+		printf("c=%d, left = %d\n", c, left);
 		thrust::transform(thrust::device, color, color + num_elem, color,
-											ColorElementJPLReverseColorFunctor<ColorType>(max_color));
-		left = thrust::count_if(thrust::device, color, color + num_elem,
-														ColorElementJPLUncoloredFunctor<ColorType>());
+											ColorElementJPLReverseColorFunctor<ColorType>(reverse_color));
+		left = thrust::count_if(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
+		cudaDeviceSynchronize();
 	}
 	thrust::transform(thrust::device, color, color + num_elem, color, thrust::placeholders::_1 * (-1) - 1);
 	return c;
 }
 
 template <typename ColorType> struct GenerateRandomColorFunctor {
-	ColorType max_color;
-	GenerateRandomColorFunctor(ColorType max_color) : max_color(max_color) {}
-	__host__ __device__ ColorType operator()(ColorType c) {
-		if(max_color == 0) return c;
-		return c % max_color;
+	ColorType lb, ub;
+	GenerateRandomColorFunctor(ColorType lb, ColorType ub) : lb(lb), ub(ub) {}
+	__host__ __device__ ColorType operator()(ColorType c) const {
+		unsigned int val = *(unsigned int*)&c;
+		return val % (ub - lb) + lb;
 	}
 };
 
@@ -180,8 +187,11 @@ void GenerateRandomColor(color_t* color, index_type n, color_t max_color) {
 	curandGenerate(gen, (unsigned int*)color, n);
 	curandDestroyGenerator(gen);
 
-	if(max_color == 0) return;
-		thrust::transform(thrust::device, color, color + n, color, GenerateRandomColorFunctor<color_t>(max_color));
+	if(max_color == 0) {
+		return;
+	}
+
+	thrust::transform(thrust::device, color, color + n, color, GenerateRandomColorFunctor<color_t>(COLOR_RANDOM_LB, COLOR_RANDOM_UB));
 }
 
 
