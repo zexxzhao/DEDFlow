@@ -81,7 +81,9 @@ void MatrixAMVPBYWithMask(value_type alpha, Matrix* A,  value_type* x, value_typ
 void MatrixMatVec(Matrix *matrix,  value_type *x, value_type *y);
 void MatrixMatVecWithMask(Matrix *matrix,  value_type *x, value_type *y,  value_type *left_mask, value_type* right_mask);
 void MatrixGetDiag(Matrix *matrix, value_type *diag);
-void MatrixAddElementLHS(Matrix* matrix, index_type nshl, index_type bs, index_type* ind, value_type* val);
+void MatrixAddElementLHS(Matrix* matrix, index_type nshl, index_type bs,
+												 index_type num_batch, const index_type* ien, const index_type* batch_ptr,
+												 const value_type* val);
 
 
 /* API for Type CSR */

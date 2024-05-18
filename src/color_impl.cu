@@ -1,5 +1,6 @@
 
 #include <algorithm>
+#include <thrust/logical.h>
 #include <thrust/scan.h>
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
@@ -119,7 +120,7 @@ template <typename IndexType, typename ColorType, int NSHL>
 IndexType ColorElementJPLGPU(const IndexType* ien, /* Element to Vertex */
 						const IndexType* row_ptr, const IndexType* col_ind, /* Vertex to Element */
 						ColorType max_color, ColorType* color, IndexType num_elem) {
-	int block_dim = 256;
+	int block_dim = 256*4;
 	int grid_dim = (num_elem + block_dim - 1) / block_dim;
 
 	IndexType left = num_elem;
@@ -130,11 +131,12 @@ IndexType ColorElementJPLGPU(const IndexType* ien, /* Element to Vertex */
 	for(; c < max_color && left; c++) {
 		ColorType reverse_color = -1 - ColorType(c);
 		ColorElementJPLKernel<IndexType, ColorType, NSHL><<<grid_dim, block_dim>>>(ien, row_ptr, col_ind, max_color, color, num_elem);
-		printf("c=%d, left = %d\n", c, left);
+		// printf("c=%d, left = %d\n", c, left);
 		thrust::transform(thrust::device, color, color + num_elem, color,
 											ColorElementJPLReverseColorFunctor<ColorType>(reverse_color));
-		left = thrust::count_if(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
-		cudaDeviceSynchronize();
+		// left = thrust::count_if(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
+		left = thrust::any_of(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
+		// cudaDeviceSynchronize();
 	}
 	thrust::transform(thrust::device, color, color + num_elem, color, thrust::placeholders::_1 * (-1) - 1);
 	return c;

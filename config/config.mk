@@ -31,7 +31,7 @@ endif
 ###############################################################################
 # Compiler and flags
 ###############################################################################
-FLAGS=-O0 \
+FLAGS=-O3 \
 			-Wall -Wextra \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
@@ -53,7 +53,7 @@ LIB+=-L$(MK_METIS_DIR)/lib -lmetis
 endif
 
 NVCC=nvcc
-NVCCFLAGS=-O0 -g -G -std=c++17 -G -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
+NVCCFLAGS=-O3 -g -G -std=c++17 -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand
 

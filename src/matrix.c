@@ -382,4 +382,12 @@ void MatrixGetDiag(Matrix* mat, value_type* diag) {
 	}
 }
 
+void MatrixAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
+												 index_type num_batch, const index_type* ien, const index_type* batch_ptr,
+												 const value_type* val) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->add_element_lhs) {
+		mat->op->add_element_lhs(mat, nshl, bs, num_batch, ien, batch_ptr, val);
+	}
+}
 __END_DECLS__

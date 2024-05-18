@@ -28,8 +28,6 @@ MatrixCSRAddElementLHSKernel(ValueType* matval,
 	IndexType iel = batch_ptr[idx];
 	val += NSHL*NSHL*BS*BS*iel;
 
-	constexpr int BATCH_SIZE = 16;
-
 	IndexType d_ien[8];
 	for(IndexType aa = 0; aa < NSHL; ++aa) {
 		d_ien[aa] = ien[iel * NSHL + aa];

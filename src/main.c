@@ -61,11 +61,15 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 
 	Array* d_dwg = FieldDevice(dwg);
 	cublasHandle_t handle;
+	cublasCreate(&handle);
 
 	/* Construct the right-hand side */
-	AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
-	cublasCreate(&handle);
+	for(u32 i = 0; i < 10; i++) {
+		AssembleSystem(mesh, wgold, dwgold, dwg, F, J);
+		printf("Iteration %d\n", i);
+	}
 	cublasDnrm2(handle, num_node, F, 1, &rnorm_init);
+	return;
 
 	while(!converged && maxit--) {
 		/* Construct the Jacobian matrix */

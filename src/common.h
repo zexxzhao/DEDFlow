@@ -69,10 +69,10 @@ typedef enum cudaMemcpyKind MemCopyKind;
 
 #define CUGUARD(err) do { GPUAssertPrivate((err), __FILE__, __LINE__); } while (0)
 
-static inline void __host__ __device__
+static inline void __host__
 GPUAssertPrivate(cudaError_t code, const char *file, int line) {
 	if (code != cudaSuccess) {
-		fprintf(stderr, "GPUAssert: %s %s %d\n", cudaGetErrorString(code), file, line);
+		printf("GPUAssert: %s %s %d\n", cudaGetErrorString(code), file, line);
 		ASSERT(FALSE);
 	}
 }
