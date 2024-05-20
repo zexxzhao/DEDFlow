@@ -37,8 +37,9 @@ static void PCJacobiApply(Matrix* A, f64* x, f64* y, void* ctx) {
 
 	f64* diag = (f64*)ksp->pc_ctx;
 	MatrixGetDiag(A, diag);
-	VecPointwiseDiv(y, x, diag, n);
+	VecPointwiseDiv(x, diag, y, n);
 }
+
 static void CGSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	u32 n = MatrixNumRow(A);
 	cusparseDnVecDescr_t vec_x, vec_b;
@@ -52,14 +53,25 @@ static void CGSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 
 void GMRESResidualUpdatePrivate(f64*, f64*);
 
+static f64 l2norm(f64* x, u32 n) {
+	f64 norm;
+	cublasHandle_t cublas_handle;
+	cublasCreate(&cublas_handle);
+
+	cublasDnrm2(cublas_handle, n, x, 1, &norm);
+
+	cublasDestroy(cublas_handle);
+
+	return norm;
+}
+
 /* GMRES solver */
 static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
-	const f64 minus_one = -1.0, one = 1.0, zero = 0.0;
+	f64 minus_one = -1.0, one = 1.0, zero = 0.0;
 	Krylov* ksp = (Krylov*)ctx;
 	u32 maxit = ksp->max_iter;
 	f64 atol = ksp->atol;
 	f64 rtol = ksp->rtol;
-	void* buffer_mv = ksp->ksp_ctx;
 	u32 iter;
 	u32 n = MatrixNumRow(A);
 	f64 rnrm_init, rnrm;
@@ -70,89 +82,126 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 
 	cublasHandle_t cublas_handle;
+	cublasStatus_t status;
 
 #define QCOL(col) (Q + (col) * n)
 #define HCOL(col) (H + (col) * (maxit + 1))
 #define GVCOS(i) (gv + 2 * (i))
 #define GVSIN(i) (gv + 2 * (i) + 1)
+	CUGUARD(cudaGetLastError());
 
 	/* Allocate memory for Q[n, maxit+1] */
-	f64* Q = (f64*)CdamMallocDevice(n * sizeof(64) * (maxit + 1));
-	cudaMemset(Q, 0, n * sizeof(f64) * maxit);
+	f64* Q = (f64*)CdamMallocDevice(n * sizeof(f64) * (maxit + 1));
+	CUGUARD(cudaGetLastError());
+	cudaMemset(Q, 0, n * sizeof(f64) * (maxit + 1));
+	CUGUARD(cudaGetLastError());
 	/* Allocate memeory for Hessenberg matrix H[(maxit + 1) * maxit] */
 	f64* H = (f64*)CdamMallocDevice((maxit + 1) * maxit * sizeof(f64));
 	cudaMemset(H, 0, (maxit + 1) * maxit * sizeof(f64));
+	CUGUARD(cudaGetLastError());
 	/* Allocate memory for tmp[n] */
 	f64* tmp = (f64*)CdamMallocDevice(n * sizeof(f64));
 	cudaMemset(tmp, 0, n * sizeof(f64));
+	CUGUARD(cudaGetLastError());
 	/* Allocate memory for Givens rotation */
 	/* gv[::2] = cs, gv[1::2] = sn */
 	f64* gv = (f64*)CdamMallocDevice(2 * maxit * sizeof(f64));
 	cudaMemset(gv, 0, 2 * maxit * sizeof(f64));
+	CUGUARD(cudaGetLastError());
 	/* Allocate memory for residual vector */
 	f64* beta = (f64*)CdamMallocDevice((maxit + 1) * sizeof(f64));
 	cudaMemset(beta, 0, (maxit + 1) * sizeof(f64));
-	cublasSetVector(1, sizeof(f64), &one, 1, beta, 1);
+	CUGUARD(cudaGetLastError());
 
+	/* Allocate memory for cublas handle */
 	cublasCreate(&cublas_handle);
-	// cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);				/* vec_x -> x */
-	// cusparseCreateDnVec(&vec_r, n, QCOL(0), CUDA_R_64F);  /* vec_r -> Q[:, 0] */
-	// cusparseCreateDnVec(&vec_tmp, n, tmp, CUDA_R_64F);		/* vec_tmp -> tmp */
+	CUGUARD(cudaGetLastError());
+
+	/* Initialize beta[0] = 1.0 */
+	cublasSetVector(1, sizeof(f64), &one, 1, beta, 1);
+	CUGUARD(cudaGetLastError());
+
 	/* 0. r = b - A * x */
 	/* 0.0. r = b */
 	cublasDcopy(cublas_handle, n, b, 1, QCOL(0), 1);
 	/* 0.1. r -= A * x */
 	MatrixAMVPBY(-1.0, A, x, 1.0, QCOL(0));
-	// cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-	// 						 &minus_one, mat_A, vec_x, &one, vec_r,
-	// 						 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
+	CUGUARD(cudaGetLastError());
 
 
 	converged = FALSE;
 	cublasDnrm2(cublas_handle, n, QCOL(0), 1, &rnrm_init);
-	if (rnrm_init < atol) {
-		converged = TRUE;
-	}
+	// if (rnrm_init < atol) {
+	// 	converged = TRUE;
+	// }
+	CUGUARD(cudaGetLastError());
 
 	/* 1. Generate initial vector Q[:, 0] */
 	/* Normalize Q[:, 0] */
 	rnrm = (f64)1.0 / rnrm_init;
 	cublasDscal(cublas_handle, n, &rnrm, QCOL(0), 1);
 
+	CUGUARD(cudaGetLastError());
 
 	iter = 0;
+
+	fprintf(stdout, "%3d) abs = %6.4e (tol = %6.4e) rel = %6.4e (tol = %6.4e)\n",
+					iter, rnrm_init, atol, 1.0, rtol);
 	while (!converged && iter < maxit) {
 		/* 2. Q[:, iter + 1] = A * inv(P) * Q[:, iter] */
 		/* 2.0. Apply preconditioner: tmp[:] = inv(P) Q[:, iter] */
 		ksp->pc_apply(A, QCOL(iter), tmp, ksp);
+		CUGUARD(cudaGetLastError());
+
+		ASSERT(!isnan(l2norm(tmp, n)));
+
 		/* 2.1 let vec_r -> Q[:, iter + 1] */
-		// cusparseDestroyDnVec(vec_r);
-		// cusparseCreateDnVec(&vec_r, n, QCOL(iter + 1), CUDA_R_64F);
 		/* 2.2. vec_r = A * tmp */
 		MatrixMatVec(A, tmp, QCOL(iter + 1));
-		// cusparseSpMV(cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-		// 						 &one, mat_A, vec_tmp, &zero, vec_r,
-		// 						 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer_mv);
+		CUGUARD(cudaGetLastError());
+
+		ASSERT(!isnan(l2norm(QCOL(iter + 1), n)));
 
 		/* 3. Arnoldi process */
 		/* 3.1. H[0:iter+1, iter] = Q[0:n, 0:iter+1].T * Q[0:n, iter+1] */
-		cublasDgemv(cublas_handle, CUBLAS_OP_T,
-								n, iter + 1, &one, Q, n,
-								QCOL(iter + 1), 1, &zero, 
+		cublasDgemv(cublas_handle,
+								CUBLAS_OP_T,
+								n, iter + 1,
+								&one,
+								Q, n,
+								QCOL(iter + 1), 1,
+								&zero, 
 								HCOL(iter), 1);
+		CUGUARD(cudaGetLastError());
+
+		ASSERT(!isnan(l2norm(HCOL(iter), iter + 1)));
+
 		/* 3.2. Q[0:n, iter+1] -= Q[0:n, 0:iter+1] * H[0:iter+1, iter] */
-		cublasDgemv(cublas_handle, CUBLAS_OP_N,
-							  n, iter + 1, &minus_one, Q, n,
-								HCOL(iter), 1, &one,
+		cublasDgemv(cublas_handle,
+								CUBLAS_OP_N,
+							  n, iter + 1,
+								&minus_one,
+								Q, n,
+								HCOL(iter), 1,
+								&one,
 								QCOL(iter + 1), 1);
+		CUGUARD(cudaGetLastError());
+
+		ASSERT(!isnan(l2norm(QCOL(iter + 1), n)));
+
 		/* 3.3. H[iter+1, iter] = || Q[0:n, iter+1] || */
+		cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
 		cublasDnrm2(cublas_handle, n, QCOL(iter + 1), 1, HCOL(iter) + iter + 1);
+		cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_HOST);
+		CUGUARD(cudaGetLastError());
+		
 		/* 3.4. Q[0:n, iter+1] /= H[iter+1, iter] */
 		cublasGetVector(1, sizeof(f64), HCOL(iter) + iter, 1, &rnrm, 1);
 		rnrm = (f64)1.0 / rnrm;
 		cublasDscal(cublas_handle, n, &rnrm, QCOL(iter + 1), 1);
 
 		/* 4. Apply Givens rotation to H[0:iter+2, iter] */
+		cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
 		/* 4.0. Apply Givens rotation to H[0:iter+1, iter] using cs[0:iter+1] and sn[0:iter+1] */
 		for (u32 i = 0; i < iter; i++) {
 			cublasDrot(cublas_handle, 1,
@@ -160,43 +209,51 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 								 HCOL(iter) + i + 1, 1,
 								 GVCOS(i), GVSIN(i));
 		}
+
 		/* 4.1. Compute Givens rotation */
 		cublasDrotg(cublas_handle, HCOL(iter) + iter, HCOL(iter) + iter + 1, GVCOS(iter), GVSIN(iter));
+		cublasSetVector(1, sizeof(f64), &zero, 1, HCOL(iter) + iter + 1, 1);
+
 		/* 4.2. Apply Givens rotation to H[iter:iter+2, iter] */
-		cublasDrot(cublas_handle, 1,
-							 HCOL(iter) + iter, 1,
-							 HCOL(iter) + iter + 1, 1,
-							 GVCOS(iter), GVSIN(iter));
+		// cublasDrot(cublas_handle, 1,
+		// 					 HCOL(iter) + iter, 1,
+		// 					 HCOL(iter) + iter + 1, 1,
+		// 					 GVCOS(iter), GVSIN(iter));
+
 		/* 4.3. beta[iter+1] = -sn[iter] * beta[iter]
 		 *			beta[iter+0] =  cn[iter] * beta[iter] */
-		GMRESResidualUpdatePrivate(beta, GVCOS(iter));
+		GMRESResidualUpdatePrivate(beta+iter, GVCOS(iter));
+		cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_HOST);
 		
 		/* 4. Check convergence */
 		cublasGetVector(1, sizeof(f64), beta + iter + 1, 1, &rnrm, 1);
-		rnrm = fabs(rnrm);
-		if (rnrm < atol || rnrm < rtol * (rnrm_init + DBL_EPSILON)) {
+		rnrm = fabs(rnrm) * rnrm_init;
+		if((iter + 1)% 10 == 0) {
+			fprintf(stdout, "%3d) abs = %6.4e (tol = %6.4e) rel = %6.4e (tol = %6.4e)\n",
+							iter + 1, rnrm, atol, rnrm / (rnrm_init + DBL_EPSILON), rtol);
+		}
+		if (rnrm < atol || rnrm < (rnrm_init + 1e-16) * rtol) {
 			converged = TRUE;
 		}
 		iter++;
 	}
 	/* 5. Solve linear system */
-	/* 5.1. Solve upper triangular system H[0:iter+1, 0:iter] y = beta[0:iter+1] */
+	/* 5.1. Solve upper triangular system H[0:iter, 0:iter] y = beta[0:iter+1] */
 	cublasDtrsv(cublas_handle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
 							iter + 1, H, maxit + 1, beta, 1);
+		
 	/* 5.2. Compute x += Q[0:n, 0:iter] * y */
 	cublasDgemv(cublas_handle, CUBLAS_OP_N,
 							n, iter + 1, &one, Q, n,
 							beta, 1, &one, x, 1);
+	/* 6. Apply preconditioner */
+	ksp->pc_apply(A, x, x, ksp);
 
 #undef QCOL
 #undef HCOL
 
 #undef GVCOS
 #undef GVSIN
-
-	// cusparseDestroyDnVec(vec_r);
-	// cusparseDestroyDnVec(vec_x);
-	// cusparseDestroyDnVec(vec_tmp);
 
 	CdamFreeDevice(Q, n * sizeof(f64) * (maxit + 1));
 	CdamFreeDevice(H, (maxit + 1) * maxit * sizeof(f64));

@@ -1,5 +1,7 @@
 
 #include <string.h>
+#include <stdio.h>
+
 #include "alloc.h"
 #include "Mesh.h"
 
@@ -45,6 +47,7 @@ static csr_index_type* lower_bound(csr_index_type* first,
 			first = ++it;
 			count -= step + 1;
 		} else {
+
 			count = step;
 		}
 	}
@@ -60,16 +63,16 @@ static u32 CSRHashMapPush(CSRHashMap* map, u32 key, u32 value) {
 	ASSERT(len < PREALLOC_SIZE && "CSRHashMapPush: row overflow");
 
 	u32* it = lower_bound(row, row + len, value);
-	if (it == row + len) { /* value is the largest */
+	if (it == row + len) { /* the value is the larger than the existing ones */
 		*it = value;
 		row_len[key]++;
 	}
-	else if (*it != value) { /* value is not in the row */
+	else if (*it != value) { /* the value is not in the row but in the middle */
 		memmove(it + 1, it, (row + len - it) * sizeof(u32));
 		*it = value;
 		row_len[key]++;
 	}
-	else { /* else value is already in the row */
+	else { /* the value is already in the row */
 	}
 
 	return row_len[key];
@@ -93,6 +96,7 @@ GetNodalGraphFromMesh(const Mesh3D* mesh) {
 	for(k = 0; k < num_tet; k++) {
 		elem = ien_tet + k * 4;
 		for(i = 0; i < 4; i++) {
+			CSRHashMapPush(map, elem[i], elem[i]);
 			for(j = 0; j < 4; j++) {
 				if(i != j) {
 					CSRHashMapPush(map, elem[i], elem[j]);
@@ -104,6 +108,7 @@ GetNodalGraphFromMesh(const Mesh3D* mesh) {
 	for(k = 0; k < num_prism; k++) {
 		elem = ien_prism + k * 6;
 		for(i = 0; i < 6; i++) {
+			CSRHashMapPush(map, elem[i], elem[i]);
 			for(j = 0; j < 6; j++) {
 				if(i != j) {
 					CSRHashMapPush(map, elem[i], elem[j]);
@@ -115,6 +120,7 @@ GetNodalGraphFromMesh(const Mesh3D* mesh) {
 	for(k = 0; k < num_hex; k++) {
 		elem = ien_hex + k * 8;
 		for(i = 0; i < 8; i++) {
+			CSRHashMapPush(map, elem[i], elem[i]);
 			for(j = 0; j < 8; j++) {
 				if(i != j) {
 					CSRHashMapPush(map, elem[i], elem[j]);
@@ -154,10 +160,19 @@ CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
 	row_ptr[0] = 0;
 	for (i = 0; i < num_node; i++) {
 		row_ptr[i + 1] = row_ptr[i] + map->row_len[i];
-		for (j = 0; j < map->row_len[i]; ++j) {
-			col_ind[row_ptr[i] + j] = map->buff[i * PREALLOC_SIZE + j];
-		}
+		memcpy(col_ind + row_ptr[i], map->buff + i * PREALLOC_SIZE, sizeof(csr_index_type) * map->row_len[i]);
 	}
+
+	FILE* fp = fopen("csr.txt", "w");
+	for(i = 0; i < num_node; i++) {
+		fprintf(fp, "%d: ", i);
+		for(j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
+			fprintf(fp, "%d ", col_ind[j]);
+		}
+		fprintf(fp, "\n");
+	}
+	fclose(fp);
+
 	CSRHashMapDestroy(map);
 
 	csr_index_type* row_ptr_dev = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * (num_node + 1));

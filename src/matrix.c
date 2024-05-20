@@ -66,6 +66,14 @@ void MatrixCSRDestroy(Matrix* mat) {
 	CdamFreeHost(mat, sizeof(MatrixCSR));
 }
 
+/* Zero out the matrix */
+static void MatrixCSRZero(Matrix* mat) {
+	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
+	const CSRAttr* attr = mat_csr->attr;
+	const index_type nnz = CSRAttrNNZ(attr);
+	cudaMemset(mat_csr->val, 0, nnz * sizeof(value_type));
+}
+
 
 /* Matrix-vector multiplication */
 /* y = alpha * A * x + beta * y */
@@ -214,6 +222,23 @@ void MatrixNestedDestroy(Matrix* mat) {
 	CdamFreeHost(mat, sizeof(Matrix));
 }
 
+static void MatrixNestedZero(Matrix* mat) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	index_type n_offset = mat_nested->n_offset;
+	const index_type* offset = mat_nested->offset;
+	Matrix** mat_list = mat_nested->mat;
+
+	/* Zero out the matrix */
+	for(index_type i = 0; i < n_offset; i++) {
+		for(index_type j = 0; j < n_offset; j++) {
+			if(mat_list[i * n_offset + j] == NULL) {
+				continue;
+			}
+			MatrixZero(mat_list[i * n_offset + j]);
+		}
+	}
+}
+
 static void MatrixNestedAMVPBY(value_type alpha, Matrix* A, value_type* x, value_type beta, value_type* y) {
 	MatrixNested* mat_nested = (MatrixNested*)A->data;
 	index_type n_offset = mat_nested->n_offset;
@@ -293,11 +318,13 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 
 	/* Set up the matrix operation */
 	mat->op = &mat->_op_private;
+	mat->op->zero = MatrixCSRZero;
 	mat->op->amvpby = MatrixCSRAMVPBY;
 	mat->op->amvpby_mask = MatrixCSRAMVPBYWithMask;
 	mat->op->matvec = MatrixCSRMatVec;
 	mat->op->matvec_mask = MatrixCSRMatVecWithMask;
 	mat->op->get_diag = MatrixCSRGetDiag;
+	mat->op->add_element_lhs = MatrixCSRAddElementLHS;
 	mat->op->destroy = MatrixCSRDestroy;
 	return mat;
 }
@@ -317,6 +344,7 @@ Matrix* MatrixCreateTypeNested(index_type n_offset, const index_type* offset) {
 
 	/* Set up the matrix operation */
 	mat->op = &mat->_op_private;
+	mat->op->zero = MatrixNestedZero;	
 	mat->op->amvpby = MatrixNestedAMVPBY;
 	mat->op->amvpby_mask = MatrixNestedAMVPBYWithMask;
 	mat->op->matvec = MatrixNestedMatVec;
@@ -332,6 +360,13 @@ void MatrixDestroy(Matrix* mat) {
 	}
 	if(mat->op->destroy) {
 		mat->op->destroy(mat);
+	}
+}
+
+void MatrixZero(Matrix* mat) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->zero) {
+		mat->op->zero(mat);
 	}
 }
 
@@ -390,4 +425,5 @@ void MatrixAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
 		mat->op->add_element_lhs(mat, nshl, bs, num_batch, ien, batch_ptr, val);
 	}
 }
+
 __END_DECLS__

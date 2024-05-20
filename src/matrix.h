@@ -23,6 +23,7 @@ typedef struct MatrixCSR MatrixCSR;
 typedef struct MatrixNested MatrixNested;
 
 struct MatrixOp {
+	void (*zero)(Matrix *matrix);
 	void (*amvpby)(value_type alpha, Matrix* A,  value_type* x, value_type beta, value_type* y);
 	void (*amvpby_mask)(value_type alpha, Matrix* A,  value_type* x, value_type beta, value_type* y,\
 											value_type* left_mask,  value_type* right_mask);
@@ -75,6 +76,7 @@ struct MatrixNested {
 Matrix* MatrixCreateTypeCSR(const CSRAttr* attr);
 Matrix* MatrixCreateTypeNested(index_type n_offset, const index_type* offset);
 void MatrixDestroy(Matrix *matrix);
+void MatrixZero(Matrix *matrix);
 void MatrixAMVPBY(value_type alpha, Matrix* A,  value_type* x, value_type beta, value_type* y);
 void MatrixAMVPBYWithMask(value_type alpha, Matrix* A,  value_type* x, value_type beta, value_type* y,\
 													 value_type* left_mask,  value_type* right_mask);

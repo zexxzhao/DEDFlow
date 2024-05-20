@@ -1,3 +1,4 @@
+#include <assert.h>
 #include "alloc.h"
 #include "matrix.h"
 
@@ -6,12 +7,18 @@ template <typename ValueType, typename IndexType>
 __global__ void
 MatrixCSRGetDiagKernel(const ValueType* val, const IndexType* row_ptr, const IndexType* col_idx, ValueType* diag, const IndexType num_row) {
 	const IndexType i = blockDim.x * blockIdx.x + threadIdx.x;
-	if(i < num_row) {
-		for(IndexType j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
-			if(col_idx[j] == i) {
-				diag[i] = val[j];
-				break;
-			}
+	if(i >= num_row) {
+		return;
+	}
+	b32 found = FALSE;
+	for(IndexType j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
+		if(col_idx[j] == i) {
+			diag[i] = val[j];
+			// if(diag[i] == 0.0) {
+			// 	printf("i=%d, col_idx[%d]=%d, val[%d]=%g\n", i, j, col_idx[j], j, val[j]);
+			// }
+			found = TRUE;
+			break;
 		}
 	}
 }
@@ -26,27 +33,38 @@ MatrixCSRAddElementLHSKernel(ValueType* matval,
 	const IndexType idx = blockDim.x * blockIdx.x + threadIdx.x;
 	if(idx >= num_batch) return;
 	IndexType iel = batch_ptr[idx];
-	val += NSHL*NSHL*BS*BS*iel;
+	val += NSHL * NSHL * BS * BS * idx;
 
-	IndexType d_ien[8];
+	IndexType vert[8];
 	for(IndexType aa = 0; aa < NSHL; ++aa) {
-		d_ien[aa] = ien[iel * NSHL + aa];
+		vert[aa] = ien[iel * NSHL + aa];
+		// if(vert[aa] == 1902) {
+		// 	printf("idx=%d, iel=%d, aa=%d\n", idx, iel, aa);
+		// }
 	}
 	
 	for(IndexType aa = 0; aa < NSHL; ++aa) {
 		for(IndexType ii = 0; ii < BS; ++ii) {
-			IndexType ir = d_ien[aa] * BS + ii;
+			IndexType ir = vert[aa] * BS + ii;
 			IndexType row_start = row_ptr[ir];
 			IndexType row_end = row_ptr[ir + 1];
 			for(IndexType bb = 0; bb < NSHL; ++bb) {
 				for(IndexType jj = 0; jj < BS; ++jj) {
-					IndexType ic = d_ien[bb] * BS + jj;
+					IndexType ic = vert[bb] * BS + jj;
+					b32 found = FALSE;
 					for(IndexType j = row_start; j < row_end; j++) {
 						if(col_ind[j] == ic) {
-							matval[j] += val[(aa * NSHL + ii) * BS * NSHL + bb * BS + jj];
+							matval[j] += val[(aa * BS + ii) * BS * NSHL + bb * BS + jj];
+							// if(ir == 1902 && ic == 1902) {
+							// 	printf("matval[%d]=%g, val[%d]=%g\n", j, matval[j], (aa * BS + ii) * BS * NSHL + bb * BS + jj, val[(aa * BS + ii) * BS * NSHL + bb * BS + jj]);
+							// }
+							found = TRUE;
 							break;
 						}
 					}
+					// if(!found) {
+					// 	printf("Error: MatrixCSRAddElementLHSKernel: Element not found\n");
+					// }
 				}
 			}
 		}

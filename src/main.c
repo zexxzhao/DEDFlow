@@ -46,7 +46,7 @@ void AssembleSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* 
 }
 
 void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
-	u32 maxit = 10;
+	u32 maxit = 10, iter = 0;
 	f64 tol = 1.0e-6;
 	b32 converged = FALSE;
 	f64 rnorm, rnorm_init;
@@ -58,36 +58,45 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 	CSRAttr* spy = CSRAttrCreate(mesh);
 	Matrix* J = MatrixCreateTypeCSR(spy);
 	Krylov* ksp = KrylovCreateGMRES(60, tol, tol);
+	f64 dxnorm = 0.0;
 
 	Array* d_dwg = FieldDevice(dwg);
 	cublasHandle_t handle;
 	cublasCreate(&handle);
 
 	/* Construct the right-hand side */
-	for(u32 i = 0; i < 10; i++) {
-		AssembleSystem(mesh, wgold, dwgold, dwg, F, J);
-		printf("Iteration %d\n", i);
-	}
+	AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
 	cublasDnrm2(handle, num_node, F, 1, &rnorm_init);
-	return;
 
-	while(!converged && maxit--) {
+	CUGUARD(cudaGetLastError());
+
+	fprintf(stdout, "Newton %d) abs = %6.4e rel = %6.4e (tol = %6.4e)\n",
+					0, rnorm_init, 1.0, tol);
+
+	while(!converged && iter < maxit) {
 		/* Construct the Jacobian matrix */
 		AssembleSystem(mesh, wgold, dwgold, dwg, NULL, J);
+		CUGUARD(cudaGetLastError());
 	
 		/* Solve the linear system */
-		KrylovSolve(ksp, J, F, dx);	
+		cudaMemset(dx, 0, num_node * sizeof(f64));
+		KrylovSolve(ksp, J, dx, F);
+		cublasDnrm2(handle, num_node, dx, 1, &dxnorm);
+		printf("dxnorm = %6.4e\n", dxnorm);
+
 
 		/* Update the solution */	
-		// ArrayAXPY(FieldDevice(dwg), -1.0, dx);
 		cublasDaxpy(handle, ArrayLen(d_dwg), &minus_one, dx, 1, ArrayData(d_dwg), 1);
 
 		/* Construct the right-hand side */
 		AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
 		cublasDnrm2(handle, num_node, F, 1, &rnorm);
-		if (rnorm < tol * rnorm_init) {
+		fprintf(stdout, "Newton %d) abs = %6.4e rel = %6.4e (tol = %6.4e)\n",
+						iter + 1, rnorm, rnorm / (rnorm_init + 1e-16), tol);
+		if (rnorm < tol * (rnorm_init + 1e-16)) {
 			converged = TRUE;
 		}
+		iter++;
 
 	}
 
@@ -121,6 +130,7 @@ void MyFieldInit(f64* value, void* ctx) {
 			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
 		}
 		value[i] = h;
+		// value[i] = coord[i * 3 + 2];
 	}
 }
 
@@ -134,19 +144,21 @@ int main() {
 	ASSERT(num_device > 0 && "No CUDA device found");
 	if (num_device) {
 		cudaGetDeviceProperties(&prop, 0);
-		printf("Device name: %s\n", prop.name);
-		printf("Compute capability: %d.%d\n", prop.major, prop.minor);
-		printf("Total global memory: %f (MB)\n", (f64)prop.totalGlobalMem / 1024.0 / 1024.0);
-		printf("Shared memory per block: %f (KB)\n", (f64)prop.sharedMemPerBlock / 1024.0);
-		printf("Registers per block: %f (KB)\n", (f64)prop.regsPerBlock / 1024.0);
-		printf("Warp size: %d\n", prop.warpSize);
-		printf("Max threads per block: %d\n", prop.maxThreadsPerBlock);
-		printf("Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
-		printf("Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
-		printf("Clock rate: %f (Hz) \n", (f64)prop.clockRate);
-		printf("Total constant memory: %f (MB)\n", (f64)prop.totalConstMem / 1024.0 / 1024.0);
-		printf("Peak memory clock rate: %f (MHz)\n", (f64)prop.memoryClockRate / 1e6);
-		printf("Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
+		printf("==================================================\n");
+		printf(" * Device name: %s\n", prop.name);
+		printf(" * Compute capability: %d.%d\n", prop.major, prop.minor);
+		printf(" * Total global memory: %f (MB)\n", (f64)prop.totalGlobalMem / 1024.0 / 1024.0);
+		printf(" * Shared memory per block: %f (KB)\n", (f64)prop.sharedMemPerBlock / 1024.0);
+		printf(" * Registers per block: %f (KB)\n", (f64)prop.regsPerBlock / 1024.0);
+		printf(" * Warp size: %d\n", prop.warpSize);
+		printf(" * Max threads per block: %d\n", prop.maxThreadsPerBlock);
+		printf(" * Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
+		printf(" * Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
+		printf(" * Clock rate: %f (Hz) \n", (f64)prop.clockRate);
+		printf(" * Total constant memory: %f (MB)\n", (f64)prop.totalConstMem / 1024.0 / 1024.0);
+		printf(" * Peak memory clock rate: %f (MHz)\n", (f64)prop.memoryClockRate / 1e6);
+		printf(" * Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
+		printf("==================================================\n");
 	}
 
 	H5FileInfo* h5_handler = H5OpenFile("cube.h5", "r");
