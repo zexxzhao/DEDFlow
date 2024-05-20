@@ -241,6 +241,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	/* 5.1. Solve upper triangular system H[0:iter, 0:iter] y = beta[0:iter+1] */
 	cublasDtrsv(cublas_handle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
 							iter + 1, H, maxit + 1, beta, 1);
+	// Bug here: what if iter == maxit?
 		
 	/* 5.2. Compute x += Q[0:n, 0:iter] * y */
 	cublasDgemv(cublas_handle, CUBLAS_OP_N,
