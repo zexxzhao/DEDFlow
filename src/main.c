@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include <math.h>
 #ifndef M_PI
 #define M_PI (3.14159265358979323846)
@@ -7,6 +8,7 @@
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cuda_profiler_api.h>
 
 #include "alloc.h"
 #include "h5util.h"
@@ -18,7 +20,7 @@
 #include "assemble.h"
 
 #define kRHOC (0.5)
-#define kDT (0.1)
+#define kDT (1e-1)
 #define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
@@ -46,8 +48,8 @@ void AssembleSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* 
 }
 
 void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
-	u32 maxit = 10, iter = 0;
-	f64 tol = 1.0e-6;
+	u32 maxit = 4, iter = 0;
+	f64 tol = 1.0e-5;
 	b32 converged = FALSE;
 	f64 rnorm, rnorm_init;
 	f64 minus_one = -1.0;
@@ -57,16 +59,21 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 	f64* dx = (f64*)CdamMallocDevice(num_node * sizeof(f64));
 	CSRAttr* spy = CSRAttrCreate(mesh);
 	Matrix* J = MatrixCreateTypeCSR(spy);
-	Krylov* ksp = KrylovCreateGMRES(60, tol, tol);
-	f64 dxnorm = 0.0;
+	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, tol);
 
+	clock_t start, end;
 	Array* d_dwg = FieldDevice(dwg);
 	cublasHandle_t handle;
 	cublasCreate(&handle);
 
 	/* Construct the right-hand side */
+	
+	start = clock();
 	AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
+	end = clock();
+	fprintf(stdout, "Assemble time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 	cublasDnrm2(handle, num_node, F, 1, &rnorm_init);
+
 
 	CUGUARD(cudaGetLastError());
 
@@ -75,21 +82,28 @@ void SolveFlowSystem(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg) {
 
 	while(!converged && iter < maxit) {
 		/* Construct the Jacobian matrix */
+		start = clock();
 		AssembleSystem(mesh, wgold, dwgold, dwg, NULL, J);
+		end = clock();
+		fprintf(stdout, "Assemble J time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		CUGUARD(cudaGetLastError());
+		
 	
 		/* Solve the linear system */
 		cudaMemset(dx, 0, num_node * sizeof(f64));
+		start = clock();
 		KrylovSolve(ksp, J, dx, F);
-		cublasDnrm2(handle, num_node, dx, 1, &dxnorm);
-		printf("dxnorm = %6.4e\n", dxnorm);
-
+		end = clock();
+		fprintf(stdout, "Krylov solve time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 
 		/* Update the solution */	
 		cublasDaxpy(handle, ArrayLen(d_dwg), &minus_one, dx, 1, ArrayData(d_dwg), 1);
 
 		/* Construct the right-hand side */
+		start = clock();
 		AssembleSystem(mesh, wgold, dwgold, dwg, F, NULL);
+		end = clock();
+		fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		cublasDnrm2(handle, num_node, F, 1, &rnorm);
 		fprintf(stdout, "Newton %d) abs = %6.4e rel = %6.4e (tol = %6.4e)\n",
 						iter + 1, rnorm, rnorm / (rnorm_init + 1e-16), tol);
@@ -134,9 +148,10 @@ void MyFieldInit(f64* value, void* ctx) {
 	}
 }
 
+
 int main() {
 	b32 converged = FALSE;
-	i32 step = 0, num_step = 10;
+	i32 step = 0, num_step = 1;
 	char filename_buffer[256] = {0};
 	struct cudaDeviceProp prop;
 	i32 num_device;
@@ -215,6 +230,7 @@ int main() {
 		ParticleContextAdd(pctx);
 
 		/* Newton-Raphson iteration */
+		converged = FALSE;
 		while(!converged) {
 			SolveFlowSystem(mesh, wgold, dwgold, dwg);
 #ifdef DEBUG
@@ -233,7 +249,7 @@ int main() {
 		/* Particle removal */
 		ParticleContextRemove(pctx);
 
-		if (step % 10 == 0) {
+		if (step % 1 == 0) {
 			sprintf(filename_buffer, "sol.%d.h5", step);
 			h5_handler = H5OpenFile(filename_buffer, "w");
 			FieldUpdateHost(wgold);
@@ -241,8 +257,8 @@ int main() {
 			FieldSave(wgold, h5_handler, "w");
 			FieldSave(dwgold, h5_handler, "dw");
 
-			ParticleContextUpdateHost(pctx);
-			ParticleContextSave(pctx, h5_handler, "ptc/test/group/context");
+			// ParticleContextUpdateHost(pctx);
+			// ParticleContextSave(pctx, h5_handler, "ptc/test/group/context");
 			H5CloseFile(h5_handler);
 		}	
 	}

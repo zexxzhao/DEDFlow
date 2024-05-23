@@ -9,7 +9,8 @@ __BEGIN_DECLS__
 index_type CountValueI(const index_type* data, index_type n, index_type value);
 void FindValueI(const index_type* data, index_type n, index_type value, index_type* result);
 
-index_type CountValueColor(const color_t* data, index_type n, color_t value);
+index_type CountValueColorLegacy(const color_t* data, index_type n, color_t value);
+index_type CountValueColor(const color_t* data, index_type n, color_t value, void* buffer);
 void FindValueColor(const color_t* data, index_type n, color_t value, index_type* result);
 
 __END_DECLS__

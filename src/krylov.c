@@ -117,9 +117,6 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	cublasCreate(&cublas_handle);
 	CUGUARD(cudaGetLastError());
 
-	/* Initialize beta[0] = 1.0 */
-	cublasSetVector(1, sizeof(f64), &one, 1, beta, 1);
-	CUGUARD(cudaGetLastError());
 
 	/* 0. r = b - A * x */
 	/* 0.0. r = b */
@@ -131,9 +128,10 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 
 	converged = FALSE;
 	cublasDnrm2(cublas_handle, n, QCOL(0), 1, &rnrm_init);
-	// if (rnrm_init < atol) {
-	// 	converged = TRUE;
-	// }
+	CUGUARD(cudaGetLastError());
+
+	/* Initialize beta[0] = rnrm_init */
+	cublasSetVector(1, sizeof(f64), &rnrm_init, 1, beta, 1);
 	CUGUARD(cudaGetLastError());
 
 	/* 1. Generate initial vector Q[:, 0] */
@@ -196,7 +194,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 		CUGUARD(cudaGetLastError());
 		
 		/* 3.4. Q[0:n, iter+1] /= H[iter+1, iter] */
-		cublasGetVector(1, sizeof(f64), HCOL(iter) + iter, 1, &rnrm, 1);
+		cublasGetVector(1, sizeof(f64), HCOL(iter) + iter + 1, 1, &rnrm, 1);
 		rnrm = (f64)1.0 / rnrm;
 		cublasDscal(cublas_handle, n, &rnrm, QCOL(iter + 1), 1);
 
@@ -212,7 +210,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 
 		/* 4.1. Compute Givens rotation */
 		cublasDrotg(cublas_handle, HCOL(iter) + iter, HCOL(iter) + iter + 1, GVCOS(iter), GVSIN(iter));
-		cublasSetVector(1, sizeof(f64), &zero, 1, HCOL(iter) + iter + 1, 1);
+		cudaMemset(HCOL(iter) + iter + 1, 0, sizeof(f64));
 
 		/* 4.2. Apply Givens rotation to H[iter:iter+2, iter] */
 		// cublasDrot(cublas_handle, 1,
@@ -227,8 +225,8 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 		
 		/* 4. Check convergence */
 		cublasGetVector(1, sizeof(f64), beta + iter + 1, 1, &rnrm, 1);
-		rnrm = fabs(rnrm) * rnrm_init;
-		if((iter + 1)% 10 == 0) {
+		rnrm = fabs(rnrm);
+		if((iter + 1) % 5 == 0) {
 			fprintf(stdout, "%3d) abs = %6.4e (tol = %6.4e) rel = %6.4e (tol = %6.4e)\n",
 							iter + 1, rnrm, atol, rnrm / (rnrm_init + DBL_EPSILON), rtol);
 		}
@@ -237,18 +235,32 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 		}
 		iter++;
 	}
-	/* 5. Solve linear system */
-	/* 5.1. Solve upper triangular system H[0:iter, 0:iter] y = beta[0:iter+1] */
-	cublasDtrsv(cublas_handle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
-							iter + 1, H, maxit + 1, beta, 1);
-	// Bug here: what if iter == maxit?
-		
-	/* 5.2. Compute x += Q[0:n, 0:iter] * y */
-	cublasDgemv(cublas_handle, CUBLAS_OP_N,
-							n, iter + 1, &one, Q, n,
-							beta, 1, &one, x, 1);
-	/* 6. Apply preconditioner */
-	ksp->pc_apply(A, x, x, ksp);
+
+	if(iter) { /* If the iteration is not zero */
+		/* 5. Get the solution */
+		/* 5.1. Solve upper triangular system H[0:iter, 0:iter] @ y = beta[0:iter+1] and beta <= y */
+		cublasDtrsv(cublas_handle,
+								CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+								iter,
+								H, maxit + 1,
+								beta, 1);
+			
+		/* 5.2. Compute tmp = Q[0:n, 0:iter] * y */
+		cublasDgemv(cublas_handle,
+								CUBLAS_OP_N,
+								n, iter,
+								&one,
+								Q, n,
+								beta, 1,
+								&zero,
+								tmp, 1);
+
+		/* 5.3 Apply preconditioner */
+		ksp->pc_apply(A, tmp, tmp, ksp);
+
+		/* 5.4. x += tmp */
+		cublasDaxpy(cublas_handle, n, &one, tmp, 1, x, 1);
+	}
 
 #undef QCOL
 #undef HCOL

@@ -2,13 +2,45 @@
 #include <thrust/count.h>
 #include <thrust/copy.h>
 #include <thrust/scan.h>
+#include <cub/device/device_reduce.cuh>
+#include "alloc.h"
 #include "color.h"
+
+template <typename IndexType, typename ValueType>
+struct CountingFunctor {
+	ValueType val;
+	CountingFunctor(ValueType v) : val(v) {}
+
+	__device__ IndexType operator()(IndexType a, ValueType b) const {
+		return a + (b == val);
+	}
+};
+
+template <typename IndexType, typename ValueType>
+IndexType CountValueLegacy(const ValueType* data, IndexType n, ValueType value) {
+
+		return thrust::count(data, data + n, value);
+}
 
 
 template <typename IndexType, typename ValueType>
-IndexType CountValue(const ValueType* data, IndexType n, ValueType value) {
-	thrust::device_ptr<const ValueType> data_ptr(data);
-	return thrust::count(data_ptr, data_ptr + n, value);
+IndexType CountValue(const ValueType* data, IndexType n, ValueType value, void* buffer) {
+
+	size_t buffer_size_used = 0;
+	IndexType init = 0;
+	if(buffer == NULL) {
+		IndexType* output = (IndexType*)CdamMallocDevice(sizeof(IndexType) * 1024);
+		cub::DeviceReduce::Reduce(NULL, buffer_size_used, data, output, n, CountingFunctor<IndexType, ValueType>(value), init);
+		CdamFreeDevice(output, sizeof(IndexType) * 1024);
+		return (IndexType)buffer_size_used;
+	}
+	
+	IndexType* output = (IndexType*)CdamMallocDevice(sizeof(IndexType) * 1024);
+	cub::DeviceReduce::Reduce(buffer, buffer_size_used, data, output, n, CountingFunctor<IndexType, ValueType>(value), init);
+	int sum;
+	cudaMemcpy(&sum, output, sizeof(int), cudaMemcpyDeviceToHost);
+	CdamFreeDevice(output, sizeof(IndexType) * 1024);
+	return (IndexType)sum;
 }
 
 template <typename IndexType, typename ValueType>
@@ -41,6 +73,7 @@ void FindValue(const ValueType* data, IndexType n, ValueType value, IndexType* r
 									thrust::make_counting_iterator<IndexType>(n),
 									result_ptr,
 									pred);
+
 }
 
 
@@ -51,13 +84,17 @@ index_type CountValueI(const index_type* data, index_type size, index_type value
 	return thrust::count(data_ptr, data_ptr + size, value);
 }
 
+
 void FindValueI(const index_type* data, index_type size, index_type value, index_type* result) {
 	FindValue<index_type, index_type>(data, size, value, result);
 }	
 
-index_type CountValueColor(const color_t* data, index_type size, color_t value) {
+index_type CountValueColorLegacy(const color_t* data, index_type size, color_t value) {
 	thrust::device_ptr<const color_t> data_ptr(data);
 	return thrust::count(data_ptr, data_ptr + size, value);
+}
+index_type CountValueColor(const color_t* data, index_type size, color_t value, void* buffer) {
+	return CountValue<index_type, color_t>(data, size, value, buffer);
 }
 
 void FindValueColor(const color_t* data, index_type size, color_t value, index_type* result) {
