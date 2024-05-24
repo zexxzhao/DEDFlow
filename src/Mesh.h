@@ -21,8 +21,13 @@ struct Mesh3D {
 	Mesh3DData* device;
 	
 	/* Partition */
-	u32 num_part;
-	u32* epart;
+	// u32 num_part;
+	// u32* epart;
+
+	/* Batch */
+	u32 num_batch;
+	u32* batch_offset;
+	u32* batch_ind;
 
 	/* color */
 	color_t num_color;
@@ -45,8 +50,10 @@ void Mesh3DDestroy(Mesh3D* mesh);
 void Mesh3DUpdateHost(Mesh3D* mesh);
 void Mesh3DUpdateDevice(Mesh3D* mesh);
 
-void Mesh3DPartition(Mesh3D* mesh, u32 num_part);
+// void Mesh3DPartition(Mesh3D* mesh, u32 num_part);
 void Mesh3DColor(Mesh3D* mesh);
+void Mesh3DGenerateColorBatch(Mesh3D* mesh);
+
 
 __END_DECLS__
 

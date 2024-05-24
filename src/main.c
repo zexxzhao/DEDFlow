@@ -143,8 +143,8 @@ void MyFieldInit(f64* value, void* ctx) {
 		else {
 			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
 		}
-		value[i] = h;
-		// value[i] = coord[i * 3 + 2];
+		// value[i] = h;
+		value[i] = coord[i * 3 + 2];
 	}
 }
 
@@ -180,18 +180,23 @@ int main() {
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);
 
-	Mesh3DColor(mesh);
+	// Mesh3DColor(mesh);
+	time_t start, end;
+	start = time(NULL);
+	Mesh3DGenerateColorBatch(mesh);
+	end = time(NULL);
+	fprintf(stdout, "Coloring time: %f s\n", difftime(end, start));
 	if(0){
-		Mesh3DData* dev = Mesh3DHost(mesh);
-		u32 num_elem = dev->num_tet;
-		color_t* h_color = (color_t*)CdamMallocHost(num_elem * sizeof(color_t));
-		color_t* d_color = mesh->color;
-		cudaMemcpy(h_color, d_color, num_elem * sizeof(color_t), D2H);
-		FILE* fp = fopen("color.txt", "w");
-		for (u32 i = 0; i < num_elem; i++) {
-			fprintf(fp, "%d\n", h_color[i]);
-		}
-		return 0;
+		// Mesh3DData* dev = Mesh3DHost(mesh);
+		// u32 num_elem = dev->num_tet;
+		// color_t* h_color = (color_t*)CdamMallocHost(num_elem * sizeof(color_t));
+		// color_t* d_color = mesh->color;
+		// cudaMemcpy(h_color, d_color, num_elem * sizeof(color_t), D2H);
+		// FILE* fp = fopen("color.txt", "w");
+		// for (u32 i = 0; i < num_elem; i++) {
+		// 	fprintf(fp, "%d\n", h_color[i]);
+		// }
+		// return 0;
 	}
 
 
