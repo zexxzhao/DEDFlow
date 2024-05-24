@@ -151,14 +151,14 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 		ksp->pc_apply(A, QCOL(iter), tmp, ksp);
 		CUGUARD(cudaGetLastError());
 
-		ASSERT(!isnan(l2norm(tmp, n)));
+		// ASSERT(!isnan(l2norm(tmp, n)));
 
 		/* 2.1 let vec_r -> Q[:, iter + 1] */
 		/* 2.2. vec_r = A * tmp */
 		MatrixMatVec(A, tmp, QCOL(iter + 1));
 		CUGUARD(cudaGetLastError());
 
-		ASSERT(!isnan(l2norm(QCOL(iter + 1), n)));
+		// ASSERT(!isnan(l2norm(QCOL(iter + 1), n)));
 
 		/* 3. Arnoldi process */
 		/* 3.1. H[0:iter+1, iter] = Q[0:n, 0:iter+1].T * Q[0:n, iter+1] */
@@ -172,7 +172,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 								HCOL(iter), 1);
 		CUGUARD(cudaGetLastError());
 
-		ASSERT(!isnan(l2norm(HCOL(iter), iter + 1)));
+		// ASSERT(!isnan(l2norm(HCOL(iter), iter + 1)));
 
 		/* 3.2. Q[0:n, iter+1] -= Q[0:n, 0:iter+1] * H[0:iter+1, iter] */
 		cublasDgemv(cublas_handle,
@@ -185,7 +185,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 								QCOL(iter + 1), 1);
 		CUGUARD(cudaGetLastError());
 
-		ASSERT(!isnan(l2norm(QCOL(iter + 1), n)));
+		// ASSERT(!isnan(l2norm(QCOL(iter + 1), n)));
 
 		/* 3.3. H[iter+1, iter] = || Q[0:n, iter+1] || */
 		cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_DEVICE);

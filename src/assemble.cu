@@ -254,10 +254,10 @@ AssemleWeakFormKernel(I batch_size, const T* elem_invJ,
 }
 
 template <typename I, typename T>
-__global__ void GetElemInvJ3DLoadMatrixBatchKernel(I batch_size, T** A, T* elem_metric) {
+__global__ void GetElemInvJ3DLoadMatrixBatchKernel(I batch_size, T** A, T* elem_metric, I inc) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if(i >= batch_size) return;
-	A[i] = elem_metric + i * 10;
+	A[i] = elem_metric + i * inc;
 }
 
 template <typename I, typename T, typename INC>
@@ -266,6 +266,62 @@ __global__ void IncrementByN(I n, T* a, INC inc) {
 	if(i >= n) return;
 	a[i] += inc;
 }
+
+
+template <typename I, typename T, I NSHL=4>
+void GetElemInvJ3DFll(I batch_size, const I* ien, const I* batch_index_ptr, const T* xg, T* elem_metric, void* buff, cublasHandle_t handle) {
+	f64 one = 1.0, zero = 0.0;
+	int block_size = 256;
+	int num_block = (batch_size + block_size - 1) / block_size;
+
+	cudaStream_t stream[1] = {0};
+	// cudaStreamCreate(stream + 0);
+
+
+	/* 0. Load the elements in the batch into elem_metric[0:10, :]  */
+	GetElemJ3DKernel<I, T, NSHL><<<num_block, block_size, 0, stream[0]>>>(batch_size, ien, batch_index_ptr, xg, elem_metric);
+
+	// cublasSetStream(handle, stream[0]);
+
+	byte* buff_ptr = (byte*)buff;
+
+	T* d_elem_buff = (T*)buff_ptr;
+	T** d_mat_batch = (T**)(buff_ptr + batch_size * 10 * sizeof(T));
+	T** d_matinv_batch = (T**)(buff_ptr + batch_size * 10 * sizeof(T) + batch_size * sizeof(T*));
+
+	int* info = (int*)((byte*)d_matinv_batch + batch_size * sizeof(T*));
+	int* pivot = info + batch_size;
+
+	/* Set mat_batch */
+	GetElemInvJ3DLoadMatrixBatchKernel<I, T><<<num_block, block_size, 0, stream[0]>>>(batch_size, d_matinv_batch, d_elem_buff, 10);
+	GetElemInvJ3DLoadMatrixBatchKernel<I, T><<<num_block, block_size, 0, stream[0]>>>(batch_size, d_mat_batch, elem_metric, 10);	
+
+	/* LU decomposition */
+	cublasDgetrfBatched(handle, 3, d_mat_batch, 3, pivot, info, batch_size);
+	/* Calculate the determinant of the Jacobian matrix */
+	GetElemDetJKernel<<<num_block, block_size, 0, stream[0]>>>(batch_size, elem_metric);
+	/* Invert the Jacobian matrix */
+	cublasDgetriBatched(handle, 3, d_mat_batch, 3, pivot, d_matinv_batch, 3, info, batch_size);
+
+	/* Copy the inverse of the Jacobian matrix to the elem_metric */
+	cublasDgeam(handle,
+							CUBLAS_OP_N, CUBLAS_OP_N,
+							9, batch_size,
+							&one,
+							d_elem_buff, 10,
+							&zero,
+							elem_metric, 10,
+							elem_metric, 10);
+
+
+
+
+	// CdamFreeDevice(info, batch_size * sizeof(int) * 4);
+
+	// cudaStreamDestroy(stream[0]);
+
+}
+
 
 /**
  * @brief Calculate the inverse of the Jacobian matrix of the element
@@ -412,6 +468,29 @@ struct SaveBatchFunctor {
 	}
 };
 
+template<typename I, typename T>
+__global__ void
+GetShapeGradKernel(I num_elem, const T* elem_invJ, T* shgrad) {
+	i32 idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if(idx >= num_elem) return;
+
+	const T* elem_invJ_ptr = elem_invJ + idx * 10;
+	T* shgrad_ptr = shgrad + idx * 12;
+	/* shgrad_ptr[0:3, 1:NSHL] = elem_invJ[0:3, 0:3] */
+	#pragma unroll
+	for(i32 i = 0; i < 3; ++i) {
+		for(i32 j = 0; j < 3; ++j) {
+			shgrad_ptr[i * 3 + j + 3] = elem_invJ_ptr[i + j * 3];
+		}
+	}
+
+	/* shgrad_ptr[0:3, 0] = -sum(elem_invJ[0:3, 0:3], axis=1)*/
+	shgrad_ptr[0] = -shgrad_ptr[3] - shgrad_ptr[6] - shgrad_ptr[9];
+	shgrad_ptr[1] = -shgrad_ptr[4] - shgrad_ptr[7] - shgrad_ptr[10];
+	shgrad_ptr[2] = -shgrad_ptr[5] - shgrad_ptr[8] - shgrad_ptr[11];
+}
+
+
 __BEGIN_DECLS__
 
 
@@ -479,26 +558,6 @@ LoadValueAxpyKernel(u32 count, const u32* index, u32 inc, u32 block_length, cons
 	}
 	if(block_length >= 1) {
 		*dst_ptr += alpha * src[index_ptr[0]];
-	}
-}
-
-static __global__ void
-GetShapeGradKernel(u32 num_elem, const f64* elem_invJ, f64* shgradl) {
-	i32 idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if(idx >= num_elem) return;
-
-	const f64* elem_invJ_ptr = elem_invJ + idx * 10;
-	f64* shgradl_ptr = shgradl + idx * 12;
-	f64 dxidx[9] = {elem_invJ_ptr[0], elem_invJ_ptr[1], elem_invJ_ptr[2],
-									elem_invJ_ptr[3], elem_invJ_ptr[4], elem_invJ_ptr[5],
-									elem_invJ_ptr[6], elem_invJ_ptr[7], elem_invJ_ptr[8]};
-
-	#pragma unroll
-	for(u32 s = 0; s < 4; ++s) {
-		f64 shgradu[3] = {shlgradu[s*3+0], shlgradu[s*3+1], shlgradu[s*3+2]};
-		shgradl_ptr[s*3+0] = shgradu[0] * dxidx[0] + shgradu[1] * dxidx[3] + shgradu[2] * dxidx[6];
-		shgradl_ptr[s*3+1] = shgradu[0] * dxidx[1] + shgradu[1] * dxidx[4] + shgradu[2] * dxidx[7];
-		shgradl_ptr[s*3+2] = shgradu[0] * dxidx[2] + shgradu[1] * dxidx[5] + shgradu[2] * dxidx[8];
 	}
 }
 
@@ -610,7 +669,7 @@ void AssembleSystemTet(Mesh3D *mesh,
 
 	f64* buffer = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL);
 	f64* elem_invJ = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * 10);
-	f64* shgradg = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL * 3);
+	f64* shgradg = (f64*)CdamMallocDevice(max_batch_size * (sizeof(f64) * NSHL * 3 + 4 * sizeof(int)));
 
 	f64* qr_wgalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NQR);
 	f64* qr_dwgalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NQR);
@@ -636,7 +695,6 @@ void AssembleSystemTet(Mesh3D *mesh,
 	/* Assume all 2D arraies are column-majored */
 	for(u32 b = 0; b < mesh->num_batch; ++b) {
 
-		start = std::chrono::steady_clock::now();
 		// batch_size = CountValueColorLegacy(mesh->color, num_tet, b);
 		batch_size = mesh->batch_offset[b+1] - mesh->batch_offset[b];
 		// batch_size = CountValueColor(mesh->color, num_tet, b, count_value_buffer);
@@ -649,25 +707,28 @@ void AssembleSystemTet(Mesh3D *mesh,
 		// FindValueColor(mesh->color, num_tet, b, batch_index_ptr);
 		// cudaMemcpy(batch_index_ptr, mesh->batch_ind + mesh->batch_offset[b], batch_size * sizeof(u32), cudaMemcpyDeviceToDevice);
 		batch_index_ptr = mesh->batch_ind + mesh->batch_offset[b];
-		end = std::chrono::steady_clock::now();
 		// CUGUARD(cudaGetLastError());
-		time_len[0] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 		/* 0. Calculate the element metrics */
 		/* 0.0. Get dxi/dx and det(dxi/dx) */
 
 		start = std::chrono::steady_clock::now();
-		GetElemInvJ3D(batch_size, ien, batch_index_ptr, xg, elem_invJ);
+		// GetElemInvJ3D(batch_size, ien, batch_index_ptr, xg, elem_invJ);
+		GetElemInvJ3DFll<u32, f64, NSHL>(batch_size, ien, batch_index_ptr, xg, elem_invJ, shgradg, handle);
+		end = std::chrono::steady_clock::now();
+		time_len[0] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 		/* 0.1. Calculate the gradient of the shape functions */
+		start = std::chrono::steady_clock::now();
+		GetShapeGradKernel<u32, f64><<<(batch_size + num_thread - 1) / num_thread, num_thread>>>(batch_size, elem_invJ, shgradg);
 		/* shgradg[0:3, 0:NSHL, e] = elem_invJ[0:3, 0:3, e].T @ d_shlgradu[0:3, 0:NSHL, e] for e in range(batch_size) */
-		cublasDgemmStridedBatched(handle,
-															CUBLAS_OP_T, CUBLAS_OP_N,
-															3, NSHL, 3,
-															&one,
-															elem_invJ, 3, 10ll,
-															d_shlgradu, 3, 0ll,
-															&zero,
-															shgradg, 3, (long long)(NSHL * 3),
-															batch_size);
+		// cublasDgemmStridedBatched(handle,
+		// 													CUBLAS_OP_T, CUBLAS_OP_N,
+		// 													3, NSHL, 3,
+		// 													&one,
+		// 													elem_invJ, 3, 10ll,
+		// 													d_shlgradu, 3, 0ll,
+		// 													&zero,
+		// 													shgradg, 3, (long long)(NSHL * 3),
+		// 													batch_size);
 		// CUGUARD(cudaGetLastError());
 		/* 1. Interpolate the field values */  
 		// cudaMemset(qr_wgalpha, 0, max_batch_size * sizeof(f64));
@@ -763,11 +824,12 @@ void AssembleSystemTet(Mesh3D *mesh,
 		if(J) {
 			MatrixAddElementLHS(J, NSHL, 1, batch_size, ien, batch_index_ptr, elem_J);
 		}
+		// cudaStreamSynchronize(0);
 		end = std::chrono::steady_clock::now();
 		time_len[5] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 	}
-	printf("Time[0]: GenerateBatch: %10.4f ms\n", time_len[0]* 1e-6);
-	printf("Time[1]: GetElemInvJ3D: %10.4f ms\n", time_len[1]* 1e-6);
+	printf("Time[0]: GetElemInvJ3D: %10.4f ms\n", time_len[0]* 1e-6);
+	printf("Time[1]: GetShapeGrad: %10.4f ms\n", time_len[1]* 1e-6);
 	printf("Time[2]: Interpolate wg: %10.4f ms\n", time_len[2]* 1e-6);
 	printf("Time[3]: Interpolate dwg: %10.4f ms\n", time_len[3]* 1e-6);
 	printf("Time[4]: AssembleWeakForm: %10.4f ms\n", time_len[4]* 1e-6);

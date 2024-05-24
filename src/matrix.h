@@ -40,7 +40,8 @@ struct Matrix {
 	index_type size[2];
 	MatType type;
 	void *data;
-	MatrixOp *op, _op_private;
+	// MatrixOp *op, _op_private;
+	MatrixOp op[1];
 };
 
 #define MatrixNumRow(A) ((A)->size[0])

@@ -11,6 +11,16 @@ struct VecModFunctor {
 	}
 };
 
+
+template<typename I, typename T>
+__global__ void
+VecPointwiseDivKernel(const T* a, const T* b, T* c, I n) {
+	I i = blockDim.x * blockIdx.x + threadIdx.x;
+	if (i < n) {
+		c[i] = a[i] / b[i];
+	}
+}
+
 __BEGIN_DECLS__
 
 void VecAXPY(value_type a, const value_type* x, value_type* y, index_type n) {
@@ -27,10 +37,13 @@ void VecPointwiseMult(const value_type* a, const value_type* b, value_type* c, i
 }
 
 void VecPointwiseDiv(const value_type* a, const value_type* b, value_type* c, index_type n) {
-	thrust::device_ptr<const value_type> a_ptr(a);
-	thrust::device_ptr<const value_type> b_ptr(b);
-	thrust::device_ptr<value_type> c_ptr(c);
-	thrust::transform(a_ptr, a_ptr + n, b_ptr, c_ptr, thrust::divides<value_type>());
+	// thrust::device_ptr<const value_type> a_ptr(a);
+	// thrust::device_ptr<const value_type> b_ptr(b);
+	// thrust::device_ptr<value_type> c_ptr(c);
+	// thrust::transform(a_ptr, a_ptr + n, b_ptr, c_ptr, thrust::divides<value_type>());
+	int block_dim = 256;
+	int grid_dim = (n + block_dim - 1) / block_dim;
+	VecPointwiseDivKernel<<<grid_dim, block_dim>>>(a, b, c, n);
 }
 
 

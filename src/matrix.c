@@ -317,7 +317,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 	mat->data = MatrixCSRCreate(attr);
 
 	/* Set up the matrix operation */
-	mat->op = &mat->_op_private;
+	// mat->op = &mat->_op_private;
 	mat->op->zero = MatrixCSRZero;
 	mat->op->amvpby = MatrixCSRAMVPBY;
 	mat->op->amvpby_mask = MatrixCSRAMVPBYWithMask;
@@ -343,7 +343,7 @@ Matrix* MatrixCreateTypeNested(index_type n_offset, const index_type* offset) {
 	mat->data = MatrixNestedCreate(n_offset, offset);
 
 	/* Set up the matrix operation */
-	mat->op = &mat->_op_private;
+	// mat->op = &mat->_op_private;
 	mat->op->zero = MatrixNestedZero;	
 	mat->op->amvpby = MatrixNestedAMVPBY;
 	mat->op->amvpby_mask = MatrixNestedAMVPBYWithMask;
