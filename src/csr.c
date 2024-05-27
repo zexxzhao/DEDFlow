@@ -163,15 +163,17 @@ CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
 		memcpy(col_ind + row_ptr[i], map->buff + i * PREALLOC_SIZE, sizeof(csr_index_type) * map->row_len[i]);
 	}
 
-	FILE* fp = fopen("csr.txt", "w");
-	for(i = 0; i < num_node; i++) {
-		fprintf(fp, "%d: ", i);
-		for(j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
-			fprintf(fp, "%d ", col_ind[j]);
+	if(0){
+		FILE* fp = fopen("csr.txt", "w");
+		for(i = 0; i < num_node; i++) {
+			fprintf(fp, "%d: ", i);
+			for(j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
+				fprintf(fp, "%d ", col_ind[j]);
+			}
+			fprintf(fp, "\n");
 		}
-		fprintf(fp, "\n");
+		fclose(fp);
 	}
-	fclose(fp);
 
 	CSRHashMapDestroy(map);
 

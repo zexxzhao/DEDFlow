@@ -26,21 +26,19 @@ MatrixCSRGetDiagKernel(const ValueType* val, const IndexType* row_ptr, const Ind
 
 template <typename IndexType, typename ValueType>
 __global__ void
-MatrixCSRAddElementLHSKernel(ValueType* matval,
-															const IndexType* row_ptr, const IndexType* col_ind, IndexType num_row, IndexType num_col,
-															IndexType NSHL, IndexType BS, IndexType num_batch, const IndexType* ien, const IndexType* batch_ptr,
-															const ValueType* val) {
+MatrixCSRAddElementLHSKernel(ValueType* matval, IndexType NSHL, IndexType BS,
+														 IndexType num_row, const IndexType* row_ptr,
+														 IndexType num_col, const IndexType* col_ind,
+														 IndexType batch_size, const IndexType* batch_ptr, const IndexType* ien,
+														 const ValueType* val, int lda) {
 	const IndexType idx = blockDim.x * blockIdx.x + threadIdx.x;
-	if(idx >= num_batch) return;
+	if(idx >= batch_size) return;
 	IndexType iel = batch_ptr[idx];
 	val += NSHL * NSHL * BS * BS * idx;
 
 	IndexType vert[8];
 	for(IndexType aa = 0; aa < NSHL; ++aa) {
 		vert[aa] = ien[iel * NSHL + aa];
-		// if(vert[aa] == 1902) {
-		// 	printf("idx=%d, iel=%d, aa=%d\n", idx, iel, aa);
-		// }
 	}
 	
 	for(IndexType aa = 0; aa < NSHL; ++aa) {
@@ -55,16 +53,10 @@ MatrixCSRAddElementLHSKernel(ValueType* matval,
 					for(IndexType j = row_start; j < row_end; j++) {
 						if(col_ind[j] == ic) {
 							matval[j] += val[(aa * BS + ii) * BS * NSHL + bb * BS + jj];
-							// if(ir == 1902 && ic == 1902) {
-							// 	printf("matval[%d]=%g, val[%d]=%g\n", j, matval[j], (aa * BS + ii) * BS * NSHL + bb * BS + jj, val[(aa * BS + ii) * BS * NSHL + bb * BS + jj]);
-							// }
 							found = TRUE;
 							break;
 						}
 					}
-					// if(!found) {
-					// 	printf("Error: MatrixCSRAddElementLHSKernel: Element not found\n");
-					// }
 				}
 			}
 		}
@@ -84,15 +76,19 @@ void MatrixCSRGetDiagGPU(const value_type* val, const index_type* row_ptr, const
 }
 
 
-void MatrixCSRAddElementLHSGPU(value_type* matval,
-															 const index_type* row_ptr, const index_type* col_ind, index_type num_row, index_type num_col,
-															 index_type nshl, index_type bs, index_type num_batch, const index_type* ien, const index_type* batch_ptr,
-															 const value_type* val) {
+void MatrixCSRAddElementLHSGPU(value_type* matval, index_type nshl, index_type bs, 
+															 index_type num_row, const index_type* row_ptr,
+															 index_type num_col, const index_type* col_ind,
+															 index_type batch_size, const index_type* batch_ptr, const index_type* ien,
+															 const value_type* val, int lda) {
 	const size_t block_dim = 256 * 4;
-	const size_t grid_dim = (num_batch + block_dim - 1) / block_dim;
+	const size_t grid_dim = (batch_size + block_dim - 1) / block_dim;
 
-	MatrixCSRAddElementLHSKernel<index_type, value_type><<<grid_dim, block_dim>>>(matval, row_ptr, col_ind, num_row, num_col,
-																																								nshl, bs, num_batch, ien, batch_ptr, val);
+	MatrixCSRAddElementLHSKernel<index_type, value_type><<<grid_dim, block_dim>>>(matval, nshl, bs,
+																																								num_row, row_ptr,
+																																								num_col, col_ind,
+																																								batch_size, batch_ptr, ien,
+																																								val, lda);
 }
 
 

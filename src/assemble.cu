@@ -28,6 +28,9 @@
 
 #define NQR (4)
 #define BS (6)
+#define M2D(aa, ii) ((aa) * BS + (ii))
+#define M4D(aa, bb, ii, jj) \
+	(((aa) * (NSHL) + ii) * (NSHL) * BS + (bb) * BS + (jj))
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
@@ -114,36 +117,62 @@ __global__ void LoadElementValueAXPYKernel(I n, const I* ien, const I* index, co
 }
 
 /** Add the elementwise residual vector to the global residual vector
+ * This is the CUDA kernel for the function ElemRHSLocal2Global
  * @tparam I The type of the index
  * @tparam T The type of the value
  * @tparam NSHL The number of shape functions
- * @param[in] batch_size The number of elements in the batch
- * @param[in] batch_index_ptr[:] The index of the elements in the batch
- * @param[in] ien[NSHL, :] The index of the nodes in the element
- * @param[in] elem_F[NSHL, :] The elementwise residual vector
- * @param[out] F[:] The global residual vector
- * @param[in] bs The block size
+ * @param[in]     batch_size The number of elements in the batch
+ * @param[in]     batch_index_ptr[:] The index of the elements in the batch
+ * @param[in]     ien[NSHL, :] The index of the nodes in the element
+ * @param[in]     width The width of the elementwise residual vector
+ * @param[in]     elem_F[lda, NSHL * batch_size] The elementwise residual vector
+ * @param[in]     lda The leading dimension of the elem_F
+ * @param[in,out] F[ldb, :] The global residual vector
+ * @param[in]     ldb The block size
  */
-
 template <typename I, typename T, I NSHL=4>
 __global__ void
-ElemRHSLocal2GlobalKernel(I batch_size, const I* batch_index_ptr, const I* ien, const T* elem_F, T* F, I bs) {
+ElemRHSLocal2GlobalKernel(I batch_size, const I* batch_index_ptr, const I* ien,
+													I width,
+													const T* elem_F, I lda,
+													T* F, I ldb) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if(i >= batch_size) {
+	if(i >= batch_size * NSHL) {
 		return;
 	}
-	int iel = batch_index_ptr[i];
-	ien += iel * NSHL;
-	I vert[NSHL] = {ien[0], ien[1], ien[2], ien[3]};
-	elem_F += i * NSHL * bs;
-	for(I k = 0; k < bs; ++k) {
-		#pragma unroll
-		for(I j = 0; j < NSHL; ++j) {
-			F[vert[j] * bs + k] += elem_F[k * NSHL + j];
-		}	
+	int iel = batch_index_ptr[i / NSHL];
+	int node_id = ien[iel * NSHL + i % NSHL];
+	elem_F += i * lda;
+
+	for(I j = 0; j < width; ++j) {
+		F[node_id * ldb + j] += elem_F[j];
 	}
 }
 
+/** Add the elementwise residual vector to the global residual vector
+ * @tparam I The type of the index
+ * @tparam T The type of the value
+ * @tparam NSHL The number of shape functions
+ * @param[in]     batch_size The number of elements in the batch
+ * @param[in]     batch_index_ptr[:] The index of the elements in the batch
+ * @param[in]     ien[NSHL, :] The index of the nodes in the element
+ * @param[in]     elem_F[BS, NSHL * batch_size] The elementwise residual vector
+ * @param[in]     lda The leading dimension of the elem_F
+ * @param[in,out] F[:] The global residual vector
+ * @param[in]     ldb The block size
+ */
+template <typename I, typename T, I NSHL=4>
+void ElemRHSLocal2Global(I batch_size, const I* batch_index_ptr, const I* ien,
+												 I width,
+												 const T* elem_F, I lda,
+												 T* F, I ldb) {
+	int block_dim = 256;
+	int grid_dim = CEIL_DIV(batch_size * NSHL, block_dim);
+	ElemRHSLocal2GlobalKernel<I, T><<<grid_dim, block_dim>>>(batch_size, batch_index_ptr, ien,
+																													 width,
+																													 elem_F, lda,
+																													 F, ldb);
+}
 
 
 
@@ -362,6 +391,7 @@ AssembleWeakFormKernel(I batch_size,
 	T rLi[3];
 	T uadv[3];
 	T ufull[3];
+	T shconv[NSHL];
 
 	for(I iq = 0; iq < NQR; ++iq) {
 		/* Get uadv */
@@ -381,7 +411,9 @@ AssembleWeakFormKernel(I batch_size,
 		/* Get Stab */
 		GetStabTau<I, T>(elem_invJ, uadv, kRHO, kCP, kMU, kKAPPA, kDT, tau);
 
-
+		for(I aa = 0; aa < NSHL; ++aa) {
+			shconv[aa] = uadv[0] * shgradg[aa * 3 + 0] + uadv[1] * shgradg[aa * 3 + 1] + uadv[2] * shgradg[aa * 3 + 2];
+		}
 
 		if(elem_F) {
 			T tmp0[3];
@@ -389,7 +421,8 @@ AssembleWeakFormKernel(I batch_size,
 			T tmp2[1];
 			/* Get tmp0 */
 			for(I i = 0; i < 3; ++i) {
-				tmp0[i] = qr_dwgalpha[BS * i + iq] - fb[i];
+				tmp0[i] = 0.0;
+				tmp0[i] += qr_dwgalpha[BS * i + iq] - fb[i];
 				tmp0[i] += (ufull[0] - tau[0] * rLi[0]) * qr_wggradalpha[BS * i + 0];
 				tmp0[i] += (ufull[1] - tau[0] * rLi[1]) * qr_wggradalpha[BS * i + 1];
 				tmp0[i] += (ufull[2] - tau[0] * rLi[2]) * qr_wggradalpha[BS * i + 2];
@@ -411,43 +444,62 @@ AssembleWeakFormKernel(I batch_size,
 
 			/* Momentum */
 			#pragma unroll
-			for(I i = 0; i < 3; ++i) {
+			for(I aa = 0; aa < NSHL; ++aa) {
 				#pragma unroll
-				for(I aa = 0; aa < NSHL; ++aa) {
+				for(I ii = 0; ii < 3; ++ii) {
 					T bm = 0.0;
-					bm += shlu[aa * NQR + iq] * tmp[i] * gw[iq] * detJ;
-					bm += shgradg[aa * 3 + 0] * tmp1[i * 3 + 0] * gw[iq] * detJ;
-					bm += shgradg[aa * 3 + 1] * tmp1[i * 3 + 1] * gw[iq] * detJ;
-					bm += shgradg[aa * 3 + 2] * tmp1[i * 3 + 2] * gw[iq] * detJ;
-					bm += shgradg[aa * 3 + i] * tmp2[0] * gw[iq] * detJ;
-					elem_F[i * NSHL + aa] = bm;
+					bm += shlu[aa * NQR + iq] * tmp0[ii];
+					bm += shgradg[aa * 3 + 0] * tmp1[ii * 3 + 0];
+					bm += shgradg[aa * 3 + 1] * tmp1[ii * 3 + 1];
+					bm += shgradg[aa * 3 + 2] * tmp1[ii * 3 + 2];
+					bm += shgradg[aa * 3 + ii] * tmp2[0];
+					elem_F[M2D(aa, ii)] = bm * gw[iq] * detJ;
 				}
 			}
 			/* Continuity */
 			for(I aa = 0; aa < NSHL; ++aa) {
 				T bc = 0.0;
-				bc += shlu[aa * NQR + iq] * divu * gw[iq] * detJ;
-				bc += tau[0] * rLi[0] * shgradg[aa * 3 + 0] * gw[iq] * detJ;
-				bc += tau[0] * rLi[1] * shgradg[aa * 3 + 1] * gw[iq] * detJ;
-				bc += tau[0] * rLi[2] * shgradg[aa * 3 + 2] * gw[iq] * detJ;
-				elem_F[3 * NSHL + aa] = bc;
+				bc += shlu[aa * NQR + iq] * divu;
+				bc += tau[0] * rLi[0] * shgradg[aa * 3 + 0];
+				bc += tau[0] * rLi[1] * shgradg[aa * 3 + 1];
+				bc += tau[0] * rLi[2] * shgradg[aa * 3 + 2];
+				elem_F[M2D(aa, 3)] = bc * gw[iq] * detJ;
+			}
+			/* Phi */
+			for(I aa = 0; aa < NSHL; ++aa) {
+				T bp = qr_dwgalpha[BS * 4 + iq]
+						 + uadv[0] * qr_wggradalpha[BS * 4 + 0]
+						 + uadv[1] * qr_wggradalpha[BS * 4 + 1]
+						 + uadv[2] * qr_wggradalpha[BS * 4 + 2];
+				elem_F[M2D(aa, 4)] = bp * (shlu[aa * NQR + iq] + tau[2] * shconv[aa]) * gw[iq] * detJ;
+			}
+
+			/* Temperature */
+			for(I aa = 0; aa < NSHL; ++aa) {
+				T bt = kRHO * kCP * (qr_dwgalpha[BS * 5 + iq]
+						 + uadv[0] * qr_wggradalpha[BS * 5 + 0]
+						 + uadv[1] * qr_wggradalpha[BS * 5 + 1]
+						 + uadv[2] * qr_wggradalpha[BS * 5 + 2]) 
+						 * (shlu[aa * NQR + iq] + kRHO * kCP * tau[3] * shconv[aa]);
+
+				bt += kKAPPA * (qr_wggradalpha[BS * 5 + 0] * shgradg[aa * 3 + 0] +
+												qr_wggradalpha[BS * 5 + 1] * shgradg[aa * 3 + 1] +
+												qr_wggradalpha[BS * 5 + 2] * shgradg[aa * 3 + 2]);
+
+				elem_F[M2D(aa, 5)] = bt * gw[iq] * detJ;
 			}
 		}
 
 		if(elem_J) {
-			T shconv[NSHL];
-			for(I aa = 0; aa < NSHL; ++aa) {
-				shconv[aa] = qr_wgalpha[BS * 0 + iq] * shgradg[aa * 3 + 0] +
-											qr_wgalpha[BS * 1 + iq] * shgradg[aa * 3 + 1] +
-											qr_wgalpha[BS * 2 + iq] * shgradg[aa * 3 + 2];
-			}
+			f64 fact1 = kALPHAM;
+			f64 fact2 = kDT * kALPHAF * kGAMMA;
 
 			T tmp[NSHL][NSHL];
 			for(I aa = 0; aa < NSHL; aa++) {
 				for(I bb = 0; bb < NSHL; bb++) {
 					tmp[aa][bb] = 0.0;
-					tmp[aa][bb] += fact1 * rho * shlu[aa * NQR + iq] * shlu[bb * NQR + iq];
-					tmp[aa][bb] += fact1 * rho * tau[0] * shconv[aa] * shlu[bb * NQR + iq];
+					tmp[aa][bb] += fact1 * kRHO * shlu[aa * NQR + iq] * shlu[bb * NQR + iq];
+					tmp[aa][bb] += fact1 * kRHO * tau[0] * shconv[aa] * shlu[bb * NQR + iq];
 					tmp[aa][bb] += fact2 * shlu[aa * NQR + iq] * shconv[bb];
 					tmp[aa][bb] += fact2 * tau[0] * shconv[aa] * shconv[bb];
 					tmp[aa][bb] += fact2 * kMU * (shgradg[aa * 3 + 0] * shgradg[bb * 3 + 0] +
@@ -456,44 +508,52 @@ AssembleWeakFormKernel(I batch_size,
 				}
 			}
 
-#define IDX(aa, bb, ii, jj) \
-	(((aa) * BS + (ii)) * NSHL * BS + (bb) * BS + (jj))
 			for(I aa = 0; aa < NSHL; ++aa) {
 				for(I bb = 0; bb < NSHL; ++bb) {
 					/* dRM/dU */
-					elem_J[IDX(aa, bb, 0, 0)] += tmp[aa][bb] * gw[iq] * detJ;
-					elem_J[IDX(aa, bb, 1, 1)] += tmp[aa][bb] * gw[iq] * detJ;
-					elem_J[IDX(aa, bb, 2, 2)] += tmp[aa][bb] * gw[iq] * detJ;
+					elem_J[M4D(aa, bb, 0, 0)] += tmp[aa][bb] * gw[iq] * detJ;
+					elem_J[M4D(aa, bb, 1, 1)] += tmp[aa][bb] * gw[iq] * detJ;
+					elem_J[M4D(aa, bb, 2, 2)] += tmp[aa][bb] * gw[iq] * detJ;
 					for(I ii = 0; ii < 3; ++ii) {
 						for(I jj = 0; jj < 3; ++jj) {
-							elem_J[IDX(aa, bb, ii, jj)] += fact2 * kMU * shgradg[aa * 3 + jj] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
-							elem_J[IDX(aa, bb, ii, jj)] += fact2 * rho * tau[1] * shgradg[aa * 3 + ii] * shgradg[bb * 3 + jj] * gw[iq] * detJ;
+							elem_J[M4D(aa, bb, ii, jj)] += fact2 * kMU * shgradg[aa * 3 + jj] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
+							elem_J[M4D(aa, bb, ii, jj)] += fact2 * kRHO * tau[1] * shgradg[aa * 3 + ii] * shgradg[bb * 3 + jj] * gw[iq] * detJ;
 						}
 					}
 
 					/* dRC/dU */
 					for(I ii = 0; ii < 3; ++ii) {
-						elem_J[IDX(aa, bb, 3, ii)] += fact1 * rho * shgradg[aa * 3 + ii] * shlu[bb * NQR + iq] * gw[iq] * detJ;
-						elem_J[IDX(aa, bb, 3, ii)] += fact2 * shlu[aa * NQR + iq] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
-						elem_J[IDX(aa, bb, 3, ii)] += fact2 * tau[0] * shgradg[aa * 3 + ii] * shconv[bb] * gw[iq] * detJ;
+						elem_J[M4D(aa, bb, 3, ii)] += fact1 * kRHO * shgradg[aa * 3 + ii] * shlu[bb * NQR + iq] * gw[iq] * detJ;
+						elem_J[M4D(aa, bb, 3, ii)] += fact2 * shlu[aa * NQR + iq] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
+						elem_J[M4D(aa, bb, 3, ii)] += fact2 * tau[0] * shgradg[aa * 3 + ii] * shconv[bb] * gw[iq] * detJ;
 					}
 
 					/* dRM/dP */
 					for(I ii = 0; ii < 3; ++ii) {
-						elem_J[IDX(aa, bb, ii, 3)] -= fact2 * rho * shgradg[aa * 3 + ii] * shlu[bb * NQR + iq] * gw[iq] * detJ;
-						elem_J[IDX(aa, bb, ii, 3)] -= fact2 * tau[0] * shconv[aa] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
+						elem_J[M4D(aa, bb, ii, 3)] -= fact2 * kRHO * shgradg[aa * 3 + ii] * shlu[bb * NQR + iq] * gw[iq] * detJ;
+						elem_J[M4D(aa, bb, ii, 3)] -= fact2 * tau[0] * shconv[aa] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
 					}
 
 					/* dRC/dP */
-					elem_J[IDX(aa, bb, 3, 3)] += fact2 * tau[0] * (shgradg[aa * 3 + 0] * shgradg[bb * 3 + 0] +
+					elem_J[M4D(aa, bb, 3, 3)] += fact2 * tau[0] * (shgradg[aa * 3 + 0] * shgradg[bb * 3 + 0] +
 																													shgradg[aa * 3 + 1] * shgradg[bb * 3 + 1] +
 																													shgradg[aa * 3 + 2] * shgradg[bb * 3 + 2]) * gw[iq] * detJ;
+
+					/* dRphi/dphi */
+					elem_J[M4D(aa, bb, 4, 4)] += (shlu[aa * NQR + iq] + tau[2] * shconv[aa]) 
+																			* (fact1 * shlu[bb * NQR + iq] + fact2 * shconv[bb]) * gw[iq] * detJ;
+
+					/* dRT/dT */
+					elem_J[M4D(aa, bb, 5, 5)] += (shlu[aa * NQR + iq] + kRHO * kCP * tau[3] * shconv[aa]) 
+																			* kRHO * kCP * (fact1 * shlu[bb * NQR + iq] + fact2 * shconv[bb]) * gw[iq] * detJ;
+					elem_J[M4D(aa, bb, 5, 5)] += kKAPPA * (shgradg[aa * 3 + 0] * shgradg[bb * 3 + 0] +
+																								 shgradg[aa * 3 + 1] * shgradg[bb * 3 + 1] +
+																								 shgradg[aa * 3 + 2] * shgradg[bb * 3 + 2]) * gw[iq] * detJ;
 				}
 			}
 		}
 	}
 	
-#undef IDX
 
 }
 
@@ -583,104 +643,25 @@ GetShapeGradKernel(I num_elem, const T* elem_invJ, T* shgrad) {
 }
 
 
+template<typename I, typename T>
+void IntElemAssembly(I batch_size,
+										 const T* elem_invJ, const T* shgradg,
+										 const T* qr_wgalpha, const T* qr_dwgalpha, const T* qr_wggradalpha,
+										 T* elem_F, T* elem_J) {
+	i32 block_dim = 256;
+	i32 grid_dim = CEIL_DIV(batch_size, block_dim);
+
+	AssembleWeakFormKernel<I, T><<<grid_dim, block_dim>>>(batch_size,
+																												elem_invJ, shgradg,
+																												qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
+																												elem_F, elem_J);
+
+}
+
 __BEGIN_DECLS__
 
 
 
-/**
-* @brief Load the values from the source array to the destination array
-* @param[in]  count The number of values to be loaded
-* @param[in]  index The index of the values to be loaded, whose size is (count*inc,)
-* @param[in]  inc   The increment of the index
-* @param[in]  bs    The length of the block
-* @param[in]  src   The source array to be loaded. The array is column-majored of size (block_length, *)
-* @param[out] dst   The destination array to be loaded. The array is column-majored of size (block_length, count)
-*/
-static __global__ void
-LoadValueKernel(u32 count, const u32* index, u32 inc, u32 block_length, const f64* src, f64* dst) {
-
-	i32 idx = blockIdx.x * blockDim.x + threadIdx.x; 
-	if(idx >= count) return;
-
-	const u32* index_ptr = index + idx * inc;
-	f64* dst_ptr = dst + idx * block_length;
-	while(block_length >= 4) {
-		*((double4*)dst_ptr) = *((double4*)(src + index_ptr[0]));
-		block_length -= 4;
-		dst_ptr += 4;
-		index_ptr += 4;
-	}
-	if(block_length >= 2) {
-		*((double2*)dst_ptr) = *((double2*)(src + index_ptr[0]));
-		block_length -= 2;
-		dst_ptr += 2;
-		index_ptr += 2;
-	}
-	if(block_length >= 1) {
-		*dst_ptr = src[index_ptr[0]];
-	}
-
-}
-
-/**
- * @brief Load the values from the source array and apply axpy operation to the destination array
- */
-static __global__ void
-LoadValueAxpyKernel(u32 count, const u32* index, u32 inc, u32 block_length, const f64* src, f64* dst, f64 alpha) {
-	i32 idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if(idx >= count) return;
-
-	const u32* index_ptr = index + idx * inc;
-	f64* dst_ptr = dst + idx * block_length;
-	while(block_length >= 4) {
-		dst_ptr[0] += alpha * src[index_ptr[0]];
-		dst_ptr[1] += alpha * src[index_ptr[1]];
-		dst_ptr[2] += alpha * src[index_ptr[2]];
-		dst_ptr[3] += alpha * src[index_ptr[3]];
-		block_length -= 4;
-		dst_ptr += 4;
-		index_ptr += 4;
-	}
-	if(block_length >= 2) {
-		dst_ptr[0] += alpha * src[index_ptr[0]];
-		dst_ptr[1] += alpha * src[index_ptr[1]];
-		block_length -= 2;
-		dst_ptr += 2;
-		index_ptr += 2;
-	}
-	if(block_length >= 1) {
-		*dst_ptr += alpha * src[index_ptr[0]];
-	}
-}
-
-
-/**
- * @brief Assemble RHS for the tetrahedral elements
- * @param[in] ne The number of elements
- * @param[in] elem_metric The metric of the elements. The metric is column-majored of size (10, ne), where the first 9 elements are the inverse of the Jacobian matrix and the last element is the determinant of the Jacobian matrix
- * @param[in] shgradg The gradient of the shape functions. The gradient is column-majored of size (12, ne)
- * @param[in] qr_dwgalpha The quadrature weights of the gradient of the field. The array is column-majored of size (NQR, ne)
- * @param[in] qr_wgalpha The quadrature weights of the field. The array is column-majored of size (NQR, ne)
- * @param[in] qr_wggradalpha The quadrature weights of the gradient of the field. The array is column-majored of size (3, ne)
- * @param[out] elem_F The elementwise residual vector. The array is column-majored of size (NSHL, ne)
- */
-void IntElemAssVec(u32 ne,
-									 const f64* elem_metric, const f64* shgradg,
-									 const f64* qr_dwgalpha, const f64* qr_wgalpha, const f64* qr_wggradalpha,
-									 f64* elem_F) {
-	/* 0. elem_F[0:NSHL, :] = 0.0 */
-	cudaMemset(elem_F, 0, ne * sizeof(f64) * 4);
-	/* 1. elem_F[0:NSHL, :] += \sum_{q=0}^{NQR-1} qr_dwgalpha[q, :] * gw[q] * detJ * shlu[q, 0:NSHL] */
-	cublasHandle_t handle;
-	cublasCreate(&handle);
-	const f64 one = 1.0, zero = 0.0;
-	for(u32 q = 0; q < NQR; ++q) {
-		cublasDger(handle, 4, ne, &one, qr_dwgalpha + q, NQR, shgradg + q * 4, 1, elem_F, 4);
-	}
-	
-
-	cublasDestroy(handle);
-}
 
 
 void AssembleSystemTet(Mesh3D *mesh,
@@ -925,23 +906,39 @@ void AssembleSystemTet(Mesh3D *mesh,
 
 		/* 2. Calculate the elementwise residual and jacobian */
 		start = std::chrono::steady_clock::now();
-		AssemleWeakFormKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size, num_thread), num_thread>>>(batch_size,
-																																													  elem_invJ,
-																																													  qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
-																																													  shgradg,
-																																													  elem_F, elem_J);
+		IntElemAssembly<u32, f64>(batch_size,
+															elem_invJ, shgradg,
+															qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
+															elem_F, elem_J);
 		end = std::chrono::steady_clock::now();
 		time_len[4] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 		/* 3. Assemble the global residual vector */
 		start = std::chrono::steady_clock::now();
 		if(F) {
-			ElemRHSLocal2GlobalKernel<u32, f64><<<CEIL_DIV(batch_size, num_thread), num_thread>>>(batch_size,
-																																														batch_index_ptr, ien,
-																																														elem_F, F, BS);
+			ElemRHSLocal2Global<u32, f64>(batch_size, batch_index_ptr, ien,
+																		3, 
+																		elem_F, BS,
+																		F, 3);
+			ElemRHSLocal2Global<u32, f64>(batch_size, batch_index_ptr, ien,
+																		1, 
+																		elem_F + 3, BS,
+																		F + num_node * 3, 1);
+			ElemRHSLocal2Global<u32, f64>(batch_size, batch_index_ptr, ien,
+																		1, 
+																		elem_F + 4, BS,
+																		F + num_node * 4, 1);
+			ElemRHSLocal2Global<u32, f64>(batch_size, batch_index_ptr, ien,
+																		1, 
+																		elem_F + 5, BS,
+																		F + num_node * 5, 1);
 		}
 		/* 4. Assemble the global residual matrix */
 		if(J) {
-			MatrixAddElementLHS(J, NSHL, BS, batch_size, ien, batch_index_ptr, elem_J);
+			// MatrixAddElementLHS(J, NSHL, BS, batch_size, ien, batch_index_ptr, elem_J, BS * NSHL);
+			ElemLHSLocal2Global<u32, f64>(batch_size, batch_index_ptr, ien,
+																		3, 
+																		elem_J, BS * NSHL,
+																		J, 3);
 		}
 		// cudaStreamSynchronize(0);
 		end = std::chrono::steady_clock::now();

@@ -31,8 +31,9 @@ struct MatrixOp {
 	void (*matvec_mask)(Matrix *matrix,  value_type *x, value_type *y,\
 											value_type* left_mask,  value_type *right_mask);
 	void (*get_diag)(Matrix *matrix, value_type *diag);
-	void (*add_element_lhs)(Matrix* matrix, index_type nshl, index_type bs, index_type num_batch, \
-													const index_type* ien, const index_type* batch_ptr, const value_type* val);
+	void (*add_element_lhs)(Matrix* matrix, index_type nshl, index_type bs, \
+													index_type batch_size, const index_type* batch_ptr, const index_type* ien, \
+													const value_type* val, int lda);
 	void (*destroy)(Matrix *matrix);
 };
 
@@ -85,8 +86,8 @@ void MatrixMatVec(Matrix *matrix,  value_type *x, value_type *y);
 void MatrixMatVecWithMask(Matrix *matrix,  value_type *x, value_type *y,  value_type *left_mask, value_type* right_mask);
 void MatrixGetDiag(Matrix *matrix, value_type *diag);
 void MatrixAddElementLHS(Matrix* matrix, index_type nshl, index_type bs,
-												 index_type num_batch, const index_type* ien, const index_type* batch_ptr,
-												 const value_type* val);
+												 index_type num_batch, const index_type* batch_ptr, const index_type* ien,
+												 const value_type* val, int lda);
 
 
 /* API for Type CSR */

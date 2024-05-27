@@ -187,16 +187,21 @@ static void MatrixCSRGetDiag(Matrix* mat, value_type* diag) {
 	MatrixCSRGetDiagGPU(val, row_ptr, col_idx, diag, num_row);
 }
 
-static void MatrixCSRAddElementLHS(Matrix* mat, index_type nshl, index_type bs, index_type num_batch,
-																	 const index_type* ien, const index_type* batch_ptr, const value_type* val) { 
+static void MatrixCSRAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
+																	 index_type batch_size, const index_type* batch_index_ptr,
+																	 const index_type* ien,
+																	 const value_type* val, int lda) {
 	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
 	const CSRAttr* attr = mat_csr->attr;
-	const index_type num_row = CSRAttrNumRow(attr);
-	const index_type num_col = CSRAttrNumCol(attr);
+	index_type num_row = CSRAttrNumRow(attr);
+	index_type num_col = CSRAttrNumCol(attr);
 	const index_type* row_ptr = CSRAttrRowPtr(attr);
-	const index_type* col_idx = CSRAttrColInd(attr);
+	const index_type* col_ind = CSRAttrColInd(attr);
 
-	MatrixCSRAddElementLHSGPU(mat_csr->val, row_ptr, col_idx, num_row, num_col, nshl, bs, num_batch, ien, batch_ptr, val);
+	MatrixCSRAddElementLHSGPU(mat_csr->val, nshl, bs,
+														num_row, row_ptr, num_col, col_ind,
+														batch_size, batch_index_ptr, ien,
+														val, lda);
 }
 
 
@@ -304,6 +309,27 @@ static void MatrixNestedGetDiag(Matrix* mat, value_type* diag) {
 	}
 }
 
+static void MatrixNestedAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
+																			index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
+																			const value_type* val, int lda) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	index_type n_offset = mat_nested->n_offset;
+	const index_type* offset = mat_nested->offset;
+	Matrix** mat_list = mat_nested->mat;
+
+	/* Add element to the matrix */
+	for(index_type i = 0; i < n_offset; i++) {
+		for(index_type j = 0; j < n_offset; j++) {
+			if(mat_list[i * n_offset + j] == NULL) {
+				continue;
+			}
+			MatrixAddElementLHS(mat_list[i * n_offset + j], nshl, bs,
+													batch_size, batch_index_ptr, ien,
+													val + offset[i] * lda + offset[j] * nshl, lda);
+		}
+	}
+}
+
 /* Matrix API */
 Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 	Matrix *mat = (Matrix*)CdamMallocHost(sizeof(Matrix));
@@ -350,6 +376,7 @@ Matrix* MatrixCreateTypeNested(index_type n_offset, const index_type* offset) {
 	mat->op->matvec = MatrixNestedMatVec;
 	mat->op->matvec_mask = MatrixNestedMatVecWithMask;
 	mat->op->get_diag = MatrixNestedGetDiag;
+	mat->op->add_element_lhs = MatrixNestedAddElementLHS;
 	mat->op->destroy = MatrixNestedDestroy;
 	return mat;
 }
@@ -418,11 +445,13 @@ void MatrixGetDiag(Matrix* mat, value_type* diag) {
 }
 
 void MatrixAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
-												 index_type num_batch, const index_type* ien, const index_type* batch_ptr,
-												 const value_type* val) {
+												 index_type batch_size, const index_type* batch_ptr, const index_type* ien,
+												 const value_type* val, int lda) {
 	ASSERT(mat && "Matrix is NULL");
 	if(mat->op->add_element_lhs) {
-		mat->op->add_element_lhs(mat, nshl, bs, num_batch, ien, batch_ptr, val);
+		mat->op->add_element_lhs(mat, nshl, bs,
+														 batch_size, batch_ptr, ien,
+														 val, lda);
 	}
 }
 
