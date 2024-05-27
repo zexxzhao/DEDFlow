@@ -27,32 +27,44 @@ SetRowLength(Index num_rows, const Index* __restrict__ row_ptr,
 						 Index block_row, Index block_col,
 						 Index* __restrict__ new_row_ptr) {
 	Index i = blockIdx.x * blockDim.x + threadIdx.x;
-	Index row = i / num_rows;
-	Index lane = i % num_rows;
-	
-	if (i < num_rows) {
-		Index start = row_ptr[i];
-		Index len = row_ptr[i + 1] - start;
-		new_row_ptr[i + 1] = start * block_row * block_col + lane * block_col * len;
+	if (i >= num_rows) return;
+	Index start = row_ptr[i];
+	Index len = row_ptr[i + 1] - start;
+	for(Index j = 0; j < block_row; j++) {
+		new_row_ptr[i * block_row + j] = start * block_row * block_col + j * block_col * len;
 	}
 }
 
 template<typename Index>
 __global__ void
-SetColIndex(Index nnz, Index num_rows, const Index* __restrict__ row_ptr, const Index* __restrict__ col_ind,
+SetColIndex(Index nnz, Index num_rows, 
+						const Index* __restrict__ row_ptr, const Index* __restrict__ col_ind,
 						Index block_row, Index block_col,
-						const Index* __restrict__ find_row,
 						const Index* __restrict__ new_row_ptr, Index* __restrict__ new_col_ind) {
+
 	Index i = blockIdx.x * blockDim.x + threadIdx.x;
-	while(i < nnz * block_row * block_col) {
-		Index row = find_row[i / block_row];
+	if (i >= num_rows) return;
+	Index start = row_ptr[i], end = row_ptr[i + 1];
+	Index len = end - start;
 
-		Index col = col_ind[i / (block_row* block_col)];
-		
-		new_col_ind[i] = col * block_col + i % block_col;
-
-		i += blockDim.x * gridDim.x;
+	for (Index j = 0; j < block_row; j++) {
+		Index row = i * block_row + j;
+		for(Index k = 0; k < len; k++) {
+			Index col = col_ind[start + k];
+			for(Index l = 0; l < block_col; l++) {
+				new_col_ind[new_row_ptr[row] + k * block_col + l] = col * block_col + l;
+			}
+		}
 	}
+	// while(i < nnz * block_row * block_col) {
+	// 	Index row = find_row[i / block_row];
+
+	// 	Index col = col_ind[i / (block_row* block_col)];
+	// 	
+	// 	new_col_ind[i] = col * block_col + i % block_col;
+
+	// 	i += blockDim.x * gridDim.x;
+	// }
 }
 
 /*
@@ -120,15 +132,15 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 
 	CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(sizeof(index_t) * (CSRAttrNumRow(new_attr) + 1));
 	CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(sizeof(index_t) * CSRAttrNNZ(new_attr));
-	index_t* find_row = (index_t*)CdamMallocDevice(sizeof(index_t) * nnz);
+	// index_t* find_row = (index_t*)CdamMallocDevice(sizeof(index_t) * nnz);
 
 	int block_dim = 256;
 	int block_num = (num_rows + block_dim - 1) / block_dim;
-	GetFindRowKernel<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, find_row);
+	// GetFindRowKernel<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, find_row);
 	SetRowLength<<<block_num, block_dim, 0, stream>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
-	SetColIndex<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, find_row, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
+	SetColIndex<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
 
-	CdamFreeDevice(find_row, sizeof(index_t) * nnz);
+	// CdamFreeDevice(find_row, sizeof(index_t) * nnz);
 	cudaStreamSynchronize(stream);
 	cudaStreamDestroy(stream);
 

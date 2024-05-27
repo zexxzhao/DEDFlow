@@ -82,7 +82,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 
 	cublasHandle_t cublas_handle;
-	cublasStatus_t status;
+	// cublasStatus_t status;
 
 #define QCOL(col) (Q + (col) * n)
 #define HCOL(col) (H + (col) * (maxit + 1))

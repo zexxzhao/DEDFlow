@@ -27,7 +27,16 @@
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
 #define NQR (4)
+#define BS (6)
 
+#define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
+
+#define kRHO (1.0e3)
+#define kCP (4.2e3)
+#define kKAPPA (0.66)
+#define kMU (1.0e-3)
+
+__constant__ f64 fb[3] = {0.0, 0.0, -9.81};
 __constant__ f64 gw[4] = {0.0416666666666667, 0.0416666666666667, 0.0416666666666667, 0.0416666666666667};
 __constant__ f64 shlu[16] = {0.5854101966249685, 0.1381966011250105, 0.1381966011250105, 0.1381966011250105,
 														 0.1381966011250105, 0.5854101966249685, 0.1381966011250105, 0.1381966011250105,
@@ -50,34 +59,40 @@ const f64 h_shlgradu[12] = {-1.0, -1.0, -1.0,
 													 0.0, 1.0, 0.0,
 													 0.0, 0.0, 1.0};
 
-template<typename I, typename T, I bs=1, I NSHL=4>
-__global__ void LoadElementValueKernel(I n, const I* ien, const I* index, const T* src, T* dst) {
-	I idx = blockIdx.x * blockDim.x + threadIdx.x;
-	I num_thread = blockDim.x * gridDim.x;
-	if(idx >= n) return;
-	I iel = index[idx];
+/** Load the value from the source array to the destination array belonging to the batch
+ * The source array is columned-majored of size (max(elem_size, stridex), num_node)
+ * The destination array is columned-majored of size (max(NSHL * BS, stridey), batch_size)
+ * @tparam I The type of the index
+ * @tparam T The type of the value
+ * @tparam NSHL The number of shape functions
+ * @param[in] batch_size The number of elements in the batch
+ * @param[in] elem_size The size of the element
+ * @param[in] batch_index_ptr[:] The index of the elements in the batch
+ * @param[in] ien[NSHL, :] The index of the nodes in the element
+ * @param[in] x[ldx, :] The source array to be loaded
+ * @param[in] stridex The increment of the source array, stridex >= elem_size
+ * @param[out] y[ldy, :] The destination array to be loaded
+ * @param[in] stridey The increment of the destination array, stridey >= BS * NSHL
+ */
+template<typename I, typename T, I NSHL=4>
+__global__ void LoadElementValueKernel(I batch_size, int elem_size,
+																			 const I* batch_index_ptr,
+																			 const I* ien,
+																			 const T* x, int stridex,
+																			 T* y, int stridey) {
 
-	#pragma unroll
-	for(I i = 0; i < NSHL; ++i) {
-		I node_id = ien[iel * NSHL + i];
-		#pragma unroll
-		for(I j = 0; j < bs; ++j) {
-			dst[(idx * NSHL + i) * bs + j] = src[node_id * bs + j];
-		}
+	I idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if(idx >= batch_size * NSHL) return;
+	I i = idx / NSHL, lane = idx % NSHL;
+	I iel = batch_index_ptr[i];
+	I node_id = ien[iel * NSHL + lane];
+
+	y += i * stridey;
+	x += node_id * stridex;
+
+	for (I j = 0; j < elem_size; ++j) {
+		y[j * NSHL + lane] = x[j];
 	}
-	/*
-	while(idx < n) {
-		#pragma unroll
-		for(I i = 0; i < NSHL; ++i) {
-			I node_id = ien[index[idx] * NSHL + i];
-			#pragma unroll
-			for(I j = 0; j < bs; ++j) {
-				dst[idx * bs + j] = src[node_id * bs + j];
-			}
-		}
-		idx += num_thread;
-	}
-	*/
 }
 
 
@@ -98,10 +113,21 @@ __global__ void LoadElementValueAXPYKernel(I n, const I* ien, const I* index, co
 	}
 }
 
+/** Add the elementwise residual vector to the global residual vector
+ * @tparam I The type of the index
+ * @tparam T The type of the value
+ * @tparam NSHL The number of shape functions
+ * @param[in] batch_size The number of elements in the batch
+ * @param[in] batch_index_ptr[:] The index of the elements in the batch
+ * @param[in] ien[NSHL, :] The index of the nodes in the element
+ * @param[in] elem_F[NSHL, :] The elementwise residual vector
+ * @param[out] F[:] The global residual vector
+ * @param[in] bs The block size
+ */
 
-template <typename I, typename T, I bs=1, I NSHL=4>
+template <typename I, typename T, I NSHL=4>
 __global__ void
-ElemRHSLocal2GlobalKernel(I batch_size, const I* batch_index_ptr, const I* ien, const T* elem_F, T* F) {
+ElemRHSLocal2GlobalKernel(I batch_size, const I* batch_index_ptr, const I* ien, const T* elem_F, T* F, I bs) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if(i >= batch_size) {
 		return;
@@ -109,21 +135,13 @@ ElemRHSLocal2GlobalKernel(I batch_size, const I* batch_index_ptr, const I* ien, 
 	int iel = batch_index_ptr[i];
 	ien += iel * NSHL;
 	I vert[NSHL] = {ien[0], ien[1], ien[2], ien[3]};
-	#pragma unroll
-	for(int j = 0; j < NSHL; ++j) {
-		int vertex_id = vert[j];
+	elem_F += i * NSHL * bs;
+	for(I k = 0; k < bs; ++k) {
 		#pragma unroll
-		for(int k = 0; k < bs; ++k) {
-			F[vertex_id * bs + k] += elem_F[(i * NSHL + j) * bs + k];
-		}
+		for(I j = 0; j < NSHL; ++j) {
+			F[vert[j] * bs + k] += elem_F[k * NSHL + j];
+		}	
 	}
-	// for(int j = i; j < num_elem * NSHL; j += blockDim.x * gridDim.x) {
-	// 	int vertex_id = ien[iel[j / NSHL] * NSHL + j % NSHL];
-	// 	#pragma unroll
-	// 	for(int j = 0; j < bs; ++j) {
-	// 		F[vertex_id * bs + j] += elem_F[ * bs + j];
-	// 	}
-	// }
 }
 
 
@@ -187,10 +205,10 @@ __global__ void CopyElemJacobiansKernel(I ne, const T** elemJ, T* elemJ_ptr) {
 
 template<typename I, typename T, I NSHL=4>
 __global__ void
-AssemleWeakFormKernel(I batch_size, const T* elem_invJ,
-											const T* qr_wgalpha, const T* qr_dwgalpha, const T* qr_wggradalpha,
-											const T* shgradl,
-											T* elem_F, T* elem_J) {
+AssemleWeakFormKernelHeat(I batch_size, const T* elem_invJ,
+													const T* qr_wgalpha, const T* qr_dwgalpha, const T* qr_wggradalpha,
+													const T* shgradl,
+													T* elem_F, T* elem_J) {
 
 
 	I idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -252,6 +270,232 @@ AssemleWeakFormKernel(I batch_size, const T* elem_invJ,
 		}
 	}
 }
+template <typename I, typename T>
+__device__ void GetStabTau(const T* elem_invJ, const T* uadv, T rho, T cp, T mu, T kappa, T dt, T* tau) {
+	T Ginv[9] = {0.0, 0.0, 0.0,
+							 0.0, 0.0, 0.0,
+							 0.0, 0.0, 0.0};
+	T tau_tmp[3] = {0.0, 0.0, 0.0};
+
+	/* Ginv = elem_invJ[0:3, 0:3] @ elem_invJ[0:3, 0:3].T */
+	#pragma unroll
+	for(I k = 0; k < 3; ++k) {
+		#pragma unroll
+		for(I i = 0; i < 3; ++i) {
+			#pragma unroll
+			for(I j = 0; j < 3; ++j) {
+				Ginv[i * 3 + j] += elem_invJ[i + k * 3] * elem_invJ[j + k * 3];
+			}
+		}
+	}
+
+	/* tau_tmp[0] = 4.0 / dt^2 */
+	tau_tmp[0] = 4.0 / (dt * dt);
+	/* tau_tmp[1] = uadv[0:3] @ Ginv[0:3, 0:3] @ uadv[0:3] */
+	/* tau_tmp[2] = Ginv[0:3, 0:3] @ Ginv[0:3, 0:3] */
+	#pragma unroll
+	for(I i = 0; i < 3; ++i) {
+		#pragma unroll
+		for(I j = 0; j < 3; ++j) {
+			tau_tmp[1] += Ginv[i * 3 + j] * uadv[i] * uadv[j];
+			tau_tmp[2] += Ginv[i * 3 + j] * Ginv[i * 3 + j];
+		}
+	}
+
+	mu /= rho;
+	kappa /= rho * cp;
+	/* tauM */
+	tau[0] = 1 / rho / sqrt(tau_tmp[0] + tau_tmp[1] + 3.0 * mu * mu * tau_tmp[2]);
+	/* tauC */
+	tau[1] = sqrt(tau_tmp[1] + 3.0 * mu * mu * tau_tmp[2]) / (Ginv[0] + Ginv[4] + Ginv[8]);
+	/* tauPhi */
+	tau[2] = 1.0 / sqrt(tau_tmp[0] + tau_tmp[1]);
+	/* tauT */
+	tau[3] = 1.0 / (rho * cp * sqrt(tau_tmp[0] + tau_tmp[1] + 3.0 * kappa * kappa * tau_tmp[2]));
+}
+
+template<typename I, typename T, I NSHL=4>
+__device__ void GetrLi(const T* du, const T* uadv, const T* gradu, const T* gradp, T rho, T mu, T* rLi) {
+	#pragma unroll
+	for(I i = 0; i < 3; ++i) {
+		rLi[i] = du[i] - fb[i] + uadv[0] * gradu[i*3+0] + uadv[1] * gradu[i*3+1] + uadv[2] * gradu[i*3+2];
+		rLi[i] = rho * rLi[i] + gradp[i];
+	}
+}
+
+
+template<typename I, typename T, I NSHL=4>
+__global__ void
+AssembleWeakFormKernel(I batch_size,
+											 const T* elem_invJ, const T* shgradg,
+											 const T* qr_wgalpha, const T* qr_dwgalpha, const T* qr_wggradalpha,
+											 T* elem_F, T* elem_J) {
+	I iel = blockIdx.x * blockDim.x + threadIdx.x;
+	if(iel >= batch_size) return;
+
+	elem_invJ += iel * 10;
+	T detJ = elem_invJ[9];
+	shgradg += iel * NSHL * 3;
+	/* Column-majored */
+	/* [:, 0:3]: Velocity */
+	/* [:, 3]: Pressure */
+	/* [:, 4]: Phi */
+	/* [:, 5]: Temperature */
+	qr_wgalpha += iel * NQR * BS; /* (NQR, BS) */
+	qr_dwgalpha += iel * NQR * BS; /* (NQR, BS) */
+	qr_wggradalpha += iel * 3 * BS; /* (3, BS) */
+
+	if(elem_F) {
+		elem_F += iel * NSHL * BS;
+	}
+
+	if(elem_J) {
+		elem_J += iel * NSHL * NSHL * BS * BS;
+		for(I i = 0; i < NSHL * NSHL * BS * BS; ++i) {
+			elem_J[i] = 0.0;
+		}
+	}
+
+	T tau[4] = {0.0, 0.0, 0.0, 0.0}; 
+	T divu = qr_wggradalpha[0] + qr_wggradalpha[4] + qr_wggradalpha[8];
+	
+	T rLi[3];
+	T uadv[3];
+	T ufull[3];
+
+	for(I iq = 0; iq < NQR; ++iq) {
+		/* Get uadv */
+		uadv[0] = qr_wgalpha[BS * 0 + iq];
+		uadv[1] = qr_wgalpha[BS * 1 + iq];
+		uadv[2] = qr_wgalpha[BS * 2 + iq];
+
+		/* Get rLi */
+		for(I i = 0; i < 3; ++i) {
+			rLi[i] = qr_dwgalpha[BS * i + iq] - fb[i];
+			rLi[i] += uadv[0] * qr_wggradalpha[BS * i + 0];
+			rLi[i] += uadv[1] * qr_wggradalpha[BS * i + 1];
+			rLi[i] += uadv[2] * qr_wggradalpha[BS * i + 2];
+			rLi[i] = kRHO * rLi[i] + qr_wggradalpha[BS * 3 + iq];
+		}
+
+		/* Get Stab */
+		GetStabTau<I, T>(elem_invJ, uadv, kRHO, kCP, kMU, kKAPPA, kDT, tau);
+
+
+
+		if(elem_F) {
+			T tmp0[3];
+			T tmp1[3 * 3];
+			T tmp2[1];
+			/* Get tmp0 */
+			for(I i = 0; i < 3; ++i) {
+				tmp0[i] = qr_dwgalpha[BS * i + iq] - fb[i];
+				tmp0[i] += (ufull[0] - tau[0] * rLi[0]) * qr_wggradalpha[BS * i + 0];
+				tmp0[i] += (ufull[1] - tau[0] * rLi[1]) * qr_wggradalpha[BS * i + 1];
+				tmp0[i] += (ufull[2] - tau[0] * rLi[2]) * qr_wggradalpha[BS * i + 2];
+				tmp0[i] *= kRHO;
+			}
+
+			/* Get tmp1 */
+			for(I i = 0; i < 3; ++i) {
+				for(I j = 0; j < 3; ++j) {
+					tmp1[i * 3 + j] = 0.0;
+					tmp1[i * 3 + j] += kMU * (qr_wggradalpha[BS * i + j] * qr_wggradalpha[BS * j + i]);
+					tmp1[i * 3 + j] += kRHO * tau[0] * rLi[i] * qr_wgalpha[BS * j + iq];
+					tmp1[i * 3 + j] -= kRHO * tau[0] * tau[0] * rLi[i] * rLi[j];
+				}
+			}
+
+			/* Get tmp2 */
+			tmp2[0] = -qr_wgalpha[BS * 3 + iq] + kRHO * tau[1] * divu;
+
+			/* Momentum */
+			#pragma unroll
+			for(I i = 0; i < 3; ++i) {
+				#pragma unroll
+				for(I aa = 0; aa < NSHL; ++aa) {
+					T bm = 0.0;
+					bm += shlu[aa * NQR + iq] * tmp[i] * gw[iq] * detJ;
+					bm += shgradg[aa * 3 + 0] * tmp1[i * 3 + 0] * gw[iq] * detJ;
+					bm += shgradg[aa * 3 + 1] * tmp1[i * 3 + 1] * gw[iq] * detJ;
+					bm += shgradg[aa * 3 + 2] * tmp1[i * 3 + 2] * gw[iq] * detJ;
+					bm += shgradg[aa * 3 + i] * tmp2[0] * gw[iq] * detJ;
+					elem_F[i * NSHL + aa] = bm;
+				}
+			}
+			/* Continuity */
+			for(I aa = 0; aa < NSHL; ++aa) {
+				T bc = 0.0;
+				bc += shlu[aa * NQR + iq] * divu * gw[iq] * detJ;
+				bc += tau[0] * rLi[0] * shgradg[aa * 3 + 0] * gw[iq] * detJ;
+				bc += tau[0] * rLi[1] * shgradg[aa * 3 + 1] * gw[iq] * detJ;
+				bc += tau[0] * rLi[2] * shgradg[aa * 3 + 2] * gw[iq] * detJ;
+				elem_F[3 * NSHL + aa] = bc;
+			}
+		}
+
+		if(elem_J) {
+			T shconv[NSHL];
+			for(I aa = 0; aa < NSHL; ++aa) {
+				shconv[aa] = qr_wgalpha[BS * 0 + iq] * shgradg[aa * 3 + 0] +
+											qr_wgalpha[BS * 1 + iq] * shgradg[aa * 3 + 1] +
+											qr_wgalpha[BS * 2 + iq] * shgradg[aa * 3 + 2];
+			}
+
+			T tmp[NSHL][NSHL];
+			for(I aa = 0; aa < NSHL; aa++) {
+				for(I bb = 0; bb < NSHL; bb++) {
+					tmp[aa][bb] = 0.0;
+					tmp[aa][bb] += fact1 * rho * shlu[aa * NQR + iq] * shlu[bb * NQR + iq];
+					tmp[aa][bb] += fact1 * rho * tau[0] * shconv[aa] * shlu[bb * NQR + iq];
+					tmp[aa][bb] += fact2 * shlu[aa * NQR + iq] * shconv[bb];
+					tmp[aa][bb] += fact2 * tau[0] * shconv[aa] * shconv[bb];
+					tmp[aa][bb] += fact2 * kMU * (shgradg[aa * 3 + 0] * shgradg[bb * 3 + 0] +
+																				shgradg[aa * 3 + 1] * shgradg[bb * 3 + 1] +
+																				shgradg[aa * 3 + 2] * shgradg[bb * 3 + 2]);
+				}
+			}
+
+#define IDX(aa, bb, ii, jj) \
+	(((aa) * BS + (ii)) * NSHL * BS + (bb) * BS + (jj))
+			for(I aa = 0; aa < NSHL; ++aa) {
+				for(I bb = 0; bb < NSHL; ++bb) {
+					/* dRM/dU */
+					elem_J[IDX(aa, bb, 0, 0)] += tmp[aa][bb] * gw[iq] * detJ;
+					elem_J[IDX(aa, bb, 1, 1)] += tmp[aa][bb] * gw[iq] * detJ;
+					elem_J[IDX(aa, bb, 2, 2)] += tmp[aa][bb] * gw[iq] * detJ;
+					for(I ii = 0; ii < 3; ++ii) {
+						for(I jj = 0; jj < 3; ++jj) {
+							elem_J[IDX(aa, bb, ii, jj)] += fact2 * kMU * shgradg[aa * 3 + jj] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
+							elem_J[IDX(aa, bb, ii, jj)] += fact2 * rho * tau[1] * shgradg[aa * 3 + ii] * shgradg[bb * 3 + jj] * gw[iq] * detJ;
+						}
+					}
+
+					/* dRC/dU */
+					for(I ii = 0; ii < 3; ++ii) {
+						elem_J[IDX(aa, bb, 3, ii)] += fact1 * rho * shgradg[aa * 3 + ii] * shlu[bb * NQR + iq] * gw[iq] * detJ;
+						elem_J[IDX(aa, bb, 3, ii)] += fact2 * shlu[aa * NQR + iq] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
+						elem_J[IDX(aa, bb, 3, ii)] += fact2 * tau[0] * shgradg[aa * 3 + ii] * shconv[bb] * gw[iq] * detJ;
+					}
+
+					/* dRM/dP */
+					for(I ii = 0; ii < 3; ++ii) {
+						elem_J[IDX(aa, bb, ii, 3)] -= fact2 * rho * shgradg[aa * 3 + ii] * shlu[bb * NQR + iq] * gw[iq] * detJ;
+						elem_J[IDX(aa, bb, ii, 3)] -= fact2 * tau[0] * shconv[aa] * shgradg[bb * 3 + ii] * gw[iq] * detJ;
+					}
+
+					/* dRC/dP */
+					elem_J[IDX(aa, bb, 3, 3)] += fact2 * tau[0] * (shgradg[aa * 3 + 0] * shgradg[bb * 3 + 0] +
+																													shgradg[aa * 3 + 1] * shgradg[bb * 3 + 1] +
+																													shgradg[aa * 3 + 2] * shgradg[bb * 3 + 2]) * gw[iq] * detJ;
+				}
+			}
+		}
+	}
+	
+#undef IDX
+
+}
 
 template <typename I, typename T>
 __global__ void GetElemInvJ3DLoadMatrixBatchKernel(I batch_size, T** A, T* elem_metric, I inc) {
@@ -269,10 +513,10 @@ __global__ void IncrementByN(I n, T* a, INC inc) {
 
 
 template <typename I, typename T, I NSHL=4>
-void GetElemInvJ3DFll(I batch_size, const I* ien, const I* batch_index_ptr, const T* xg, T* elem_metric, void* buff, cublasHandle_t handle) {
+void GetElemInvJ3D(I batch_size, const I* ien, const I* batch_index_ptr, const T* xg, T* elem_metric, void* buff, cublasHandle_t handle) {
 	f64 one = 1.0, zero = 0.0;
 	int block_size = 256;
-	int num_block = (batch_size + block_size - 1) / block_size;
+	int num_block = CEIL_DIV(batch_size, block_size);
 
 	cudaStream_t stream[1] = {0};
 	// cudaStreamCreate(stream + 0);
@@ -313,160 +557,8 @@ void GetElemInvJ3DFll(I batch_size, const I* ien, const I* batch_index_ptr, cons
 							elem_metric, 10,
 							elem_metric, 10);
 
-
-
-
-	// CdamFreeDevice(info, batch_size * sizeof(int) * 4);
-
-	// cudaStreamDestroy(stream[0]);
-
 }
 
-
-/**
- * @brief Calculate the inverse of the Jacobian matrix of the element
- * @param[in] ne   The number of elements
- * @param[in] ien  The index of the element in the mesh
- * @param[in] xg   The global coordinates of the nodes
- * @param[out] elem_metric The inverse of the Jacobian matrix of the element
- */
-template<typename I, typename T, I NSHL=4>
-void GetElemInvJ3D(I batch_size, const I* ien, const I* batch_index_ptr, const T* xg, T* elem_metric) {
-	f64 one = 1.0, zero = 0.0;
-	int block_size = 256;
-	int num_block = (batch_size + block_size - 1) / block_size;
-	CUGUARD(cudaGetLastError());
-
-	cudaStream_t stream[1];	
-	cudaStreamCreate(stream + 0);
-
-	cublasHandle_t handle;
-	cublasCreate(&handle);
-
-	/* 0. Load the elements in the batch into elem_metric[0:10, :]  */
-	GetElemJ3DKernel<I, T, NSHL><<<num_block, block_size>>>(batch_size, ien, batch_index_ptr, xg, elem_metric);
-
-
-
-	const int MAX_BATCH_SIZE = 128*8;
-	static int* info = NULL;
-	if(!info) {
-		info = (int*)CdamMallocDevice(MAX_BATCH_SIZE * sizeof(int) * 4);
-	}
-	int* pivot = info + MAX_BATCH_SIZE;
-
-	static T* d_elem_buff = NULL;
-	if(!d_elem_buff) {
-		d_elem_buff = (T*)CdamMallocDevice(MAX_BATCH_SIZE * 10 * sizeof(T));
-	}
-	static T** d_mat_batch = NULL;
-	if (!d_mat_batch)
-		d_mat_batch = (T**)CdamMallocDevice(MAX_BATCH_SIZE * sizeof(T*) * 2);
-	T** d_matinv_batch = d_mat_batch + MAX_BATCH_SIZE;
-
-	/* Set mat_batch */
-	thrust::transform(thrust::device,
-										thrust::make_counting_iterator<u32>(0),
-										thrust::make_counting_iterator<u32>(MAX_BATCH_SIZE),
-										d_matinv_batch,
-										thrust::placeholders::_1 * 10 + d_elem_buff);
-	// thrust::transform(thrust::device,
-	// 									thrust::make_counting_iterator<u32>(0),
-	// 									thrust::make_counting_iterator<u32>(MAX_BATCH_SIZE),
-	// 									d_mat_batch,
-	// 									thrust::placeholders::_1 * 10 + elem_metric);
-
-	cublasSetStream(handle, stream[0]);
-
-	for(int i = 0; i < batch_size; i += MAX_BATCH_SIZE) {
-		int num_elem = (i + MAX_BATCH_SIZE < batch_size) ? MAX_BATCH_SIZE : batch_size - i;
-
-		// printf("ne[%d] = %d out of %d\n", i/MAX_BATCH_SIZE, num_elem, batch_size);
-
-		/* Set matinv_batch */
-		// thrust::transform(thrust::device,
-		// 									thrust::make_counting_iterator<u32>(0),
-		// 									thrust::make_counting_iterator<u32>(num_elem),
-		// 									d_mat_batch,
-		// 									thrust::placeholders::_1 * 10 + i * 10 + elem_metric);
-		GetElemInvJ3DLoadMatrixBatchKernel<I, T><<<num_block, block_size, 0, stream[0]>>>(num_elem, d_mat_batch, elem_metric + i * 10);
-		// IncrementByN<I, T*, I><<<num_block, block_size, 0, stream[0]>>>(MAX_BATCH_SIZE, d_mat_batch, MAX_BATCH_SIZE * 10);
-		// thrust::async::transform(thrust::cuda::par.on(stream[0]),
-		// 												thrust::make_counting_iterator<u32>(0),
-		// 												thrust::make_counting_iterator<u32>(num_elem),
-		// 												d_mat_batch,
-		// 												GetMatBatch<I, T>(elem_metric + i * 10));
-
-
-		/* Invert the Jacobian matrix */
-		cublasDgetrfBatched(handle, 3, d_mat_batch, 3, pivot, info, num_elem);
-		GetElemDetJKernel<<<num_block, block_size, 0, stream[0]>>>(num_elem, elem_metric + i * 10);
-		cublasDgetriBatched(handle, 3, d_mat_batch, 3, pivot, d_matinv_batch, 3, info, num_elem);
-		/* Copy the inverse of the Jacobian matrix to the elem_metric */
-		/* elem_metric[0:9, :] = d_elem_buff[0:9, :] */
-		cublasDgeam(handle,
-								CUBLAS_OP_N, CUBLAS_OP_N,
-								9, num_elem,
-								&one,
-								d_elem_buff, 10,
-								&zero,
-								elem_metric + i * 10, 10,
-								elem_metric + i * 10, 10);
-	}
-	cudaStreamSynchronize(stream[0]);
-
-	cudaStreamDestroy(stream[0]);
-
-	cublasDestroy(handle);
-
-	// CdamFreeDevice(info, MAX_BATCH_SIZE * sizeof(int));
-	// CdamFreeDevice(d_mat_batch, MAX_BATCH_SIZE * sizeof(T*) * 2);
-	// CdamFreeDevice(d_elem_buff, MAX_BATCH_SIZE * 10 * sizeof(T));
-}
-
-
-template <typename I, typename T, I NSHL=4, I BS=1>
-struct LoadBatchFunctor {
-	const I* batch_ptr, *ien;
-	const T* src;
-	T* dst;
-
-	LoadBatchFunctor(const I* batch_ptr, const I* ien, const T* src, T* dst) : batch_ptr(batch_ptr), ien(ien), src(src), dst(dst) {}
-
-	__host__ __device__ void operator()(I index) const {
-		I iel = batch_ptr[index];
-		#pragma unroll
-		for(I i = 0; i < NSHL; ++i) {
-			I node_id = ien[iel * NSHL + i];
-			#pragma unroll
-			for(I j = 0; j < BS; ++j) {
-				dst[(index * NSHL + i)	* BS + j] = src[node_id * BS + j];
-			}
-		}
-	}
-	
-};
-
-template <typename I, typename T, I NSHL=4, I BS=1>
-struct SaveBatchFunctor {
-	const I* batch_ptr, *ien;
-	const T* src;
-	T* dst;
-
-	SaveBatchFunctor(const I* batch_ptr, const I* ien, const T* src, T* dst) : batch_ptr(batch_ptr), ien(ien), src(src), dst(dst) {}
-
-	__host__ __device__ void operator()(I index) const {
-		I iel = batch_ptr[index];
-		#pragma unroll
-		for(I i = 0; i < NSHL; ++i) {
-			I node_id = ien[iel * NSHL + i];
-			#pragma unroll
-			for(I j = 0; j < BS; ++j) {
-				dst[node_id * BS + j] += src[(index * NSHL + i) * BS + j];
-			}
-		}
-	}
-};
 
 template<typename I, typename T>
 __global__ void
@@ -592,7 +684,8 @@ void IntElemAssVec(u32 ne,
 
 
 void AssembleSystemTet(Mesh3D *mesh,
-											 Field *wgold, Field* dwgold, Field* dwg,
+											 /* Field *wgold, Field* dwgold, Field* dwg, */
+											 f64* wgalpha_dptr, f64* dwgalpha_dptr,
 											 f64* F, Matrix* J) {
 
 	const i32 NSHL = 4;
@@ -603,9 +696,9 @@ void AssembleSystemTet(Mesh3D *mesh,
 	const u32* ien = Mesh3DDataTet(dev);
 	const f64* xg = Mesh3DDataCoord(dev);
 
-	f64* wgold_dptr = ArrayData(FieldDevice(wgold));
-	f64* dwgold_dptr = ArrayData(FieldDevice(dwgold));
-	f64* dwg_dptr = ArrayData(FieldDevice(dwg));
+	// f64* wgold_dptr = ArrayData(FieldDevice(wgold));
+	// f64* dwgold_dptr = ArrayData(FieldDevice(dwgold));
+	// f64* dwg_dptr = ArrayData(FieldDevice(dwg));
 
 
 
@@ -633,20 +726,12 @@ void AssembleSystemTet(Mesh3D *mesh,
 
 	cublasCreate(&handle);
 
-	f64 alpha_m = kALPHAM, one_minus_alpha_m = 1.0 - kALPHAM;
-	f64* dwgalpha_dptr = (f64*)CdamMallocDevice(num_node * sizeof(f64));
-	/* dwgalpha_ptr[:] = (1-alpha_m) * dwgold[:] + alpha_m * dwg[:] */
-	cudaMemset(dwgalpha_dptr, 0, num_node * sizeof(f64));
-	cublasDaxpy(handle, num_node, &one_minus_alpha_m, dwgold_dptr, 1, dwgalpha_dptr, 1);
-	cublasDaxpy(handle, num_node, &alpha_m, dwg_dptr, 1, dwgalpha_dptr, 1);
-
-
 	f64 fact1 = kDT * kALPHAF * kGAMMA, fact2 = kDT * kALPHAF * (1.0 - kGAMMA); 
-	f64* wgalpha_dptr = (f64*)CdamMallocDevice(num_node * sizeof(f64));
+	// f64* wgalpha_dptr = (f64*)CdamMallocDevice(num_node * sizeof(f64));
 	/* wgalpha_ptr[:] = wgold[:] + kDT * kALPHAF * (1.0 - kGAMMA) * dwgold[:] + kDT * kALPHAF * kGAMMA * dwg[:] */
-	cublasDcopy(handle, num_node, wgold_dptr, 1, wgalpha_dptr, 1);
-	cublasDaxpy(handle, num_node, &fact1, dwg_dptr, 1, wgalpha_dptr, 1);
-	cublasDaxpy(handle, num_node, &fact2, dwgold_dptr, 1, wgalpha_dptr, 1);
+	// cublasDcopy(handle, num_node, wgold_dptr, 1, wgalpha_dptr, 1);
+	// cublasDaxpy(handle, num_node, &fact1, dwg_dptr, 1, wgalpha_dptr, 1);
+	// cublasDaxpy(handle, num_node, &fact2, dwgold_dptr, 1, wgalpha_dptr, 1);
 
 	/* Zero the RHS and LHS */
 	if(F) {
@@ -667,13 +752,13 @@ void AssembleSystemTet(Mesh3D *mesh,
 
 	// batch_index_ptr = (u32*)CdamMallocDevice(max_batch_size * sizeof(u32));
 
-	f64* buffer = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL);
-	f64* elem_invJ = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * 10);
+	f64* buffer = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL * BS);
+	f64* elem_invJ = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * (3 * 3 + 1));
 	f64* shgradg = (f64*)CdamMallocDevice(max_batch_size * (sizeof(f64) * NSHL * 3 + 4 * sizeof(int)));
 
-	f64* qr_wgalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NQR);
-	f64* qr_dwgalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NQR);
-	f64* qr_wggradalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * 3);
+	f64* qr_wgalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NQR * BS);
+	f64* qr_dwgalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NQR * BS);
+	f64* qr_wggradalpha = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * 3 * BS);
 
 	i32 num_thread = 256;
 	i32 num_block = (max_batch_size + num_thread - 1) / num_thread;
@@ -683,10 +768,10 @@ void AssembleSystemTet(Mesh3D *mesh,
 	f64* elem_J = NULL;
 
 	if(F) {
-		elem_F = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL);
+		elem_F = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL * BS);
 	}
 	if(J) {
-		elem_J = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL * NSHL);
+		elem_J = (f64*)CdamMallocDevice(max_batch_size * sizeof(f64) * NSHL * NSHL * BS * BS);
 	}
 
 	f64 time_len[6] = {0, 0, 0, 0, 0, 0};
@@ -712,13 +797,13 @@ void AssembleSystemTet(Mesh3D *mesh,
 		/* 0.0. Get dxi/dx and det(dxi/dx) */
 
 		start = std::chrono::steady_clock::now();
-		// GetElemInvJ3D(batch_size, ien, batch_index_ptr, xg, elem_invJ);
-		GetElemInvJ3DFll<u32, f64, NSHL>(batch_size, ien, batch_index_ptr, xg, elem_invJ, shgradg, handle);
+		GetElemInvJ3D<u32, f64, NSHL>(batch_size, ien, batch_index_ptr, xg, elem_invJ, shgradg, handle);
 		end = std::chrono::steady_clock::now();
 		time_len[0] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 		/* 0.1. Calculate the gradient of the shape functions */
 		start = std::chrono::steady_clock::now();
-		GetShapeGradKernel<u32, f64><<<(batch_size + num_thread - 1) / num_thread, num_thread>>>(batch_size, elem_invJ, shgradg);
+		GetShapeGradKernel<u32, f64><<<CEIL_DIV(batch_size, num_thread), num_thread>>>(batch_size, elem_invJ, shgradg);
+		/* 0.2. Calculate the metric of the elements */
 		/* shgradg[0:3, 0:NSHL, e] = elem_invJ[0:3, 0:3, e].T @ d_shlgradu[0:3, 0:NSHL, e] for e in range(batch_size) */
 		// cublasDgemmStridedBatched(handle,
 		// 													CUBLAS_OP_T, CUBLAS_OP_N,
@@ -739,10 +824,27 @@ void AssembleSystemTet(Mesh3D *mesh,
 	
 		start = std::chrono::steady_clock::now();
 	
-		/* 1.0. Calculate the field value on the vertices */
-		LoadElementValueKernel<u32, f64><<<(batch_size + num_thread - 1) / num_thread, num_thread>>>(batch_size,
-																																																 ien, batch_index_ptr,
-																																																 wgalpha_dptr, buffer);
+		/* 1.0. Load the field value on the vertices */
+		/* Load velocity */
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 3,
+																																																	 batch_index_ptr, ien,
+																																																	 wgalpha_dptr, 3,
+																																																	 buffer, BS * NSHL);
+		/* Load pressure */
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 1,
+																																																		batch_index_ptr, ien,
+																																																		dwgalpha_dptr + num_node * 3, 1,
+																																																		buffer + 3, BS * NSHL);
+		/* Load phi */
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 1,
+																																																	 batch_index_ptr, ien,
+																																																	 wgalpha_dptr + num_node * 4, 1,
+																																																	 buffer + 4, BS * NSHL);
+		/* Load temperature */
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 1,
+																																																	 batch_index_ptr, ien,
+																																																	 wgalpha_dptr + num_node * 5, 1,
+																																																	 buffer + 5, BS * NSHL);
 		// thrust::for_each(thrust::device,
 		// 								 thrust::make_counting_iterator<u32>(0),
 		// 								 thrust::make_counting_iterator<u32>(batch_size),
@@ -750,22 +852,30 @@ void AssembleSystemTet(Mesh3D *mesh,
 											
 		// CUGUARD(cudaGetLastError());
 		/* 1.1. Calculate the gradient*/
-		/* qr_wggradalpha[0:3, e] = shgradg[0:3, 0:NSHL, e] @ buffer[0:NSHL, e] for e in range(batch_size) */
-		cublasDgemvStridedBatched(handle, CUBLAS_OP_N,
-															3, NSHL,
+		/* qr_wggradalpha[0:3, 0:BS, 0:batch_size] = sum(shgradg[0:3, 0:NSHL, 0:batch_size] * buffer[0:NSHL, 0:BS, 0:batch_size], axis=1) */
+		cublasDgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+															3, NSHL, BS,
 															&one,
 															shgradg, 3, (long long)(NSHL * 3),
-															buffer, 1, (long long)NSHL,
+															buffer, BS, (long long)(NSHL * BS),
 															&zero,
-															qr_wggradalpha, 1, 3ll,
+															qr_wggradalpha, 3, (long long)(BS * 3),
 															batch_size);
+		// cublasDgemvStridedBatched(handle, CUBLAS_OP_N,
+		// 													3, NSHL,
+		// 													&one,
+		// 													shgradg, 3, (long long)(NSHL * 3),
+		// 													buffer, 1, (long long)NSHL,
+		// 													&zero,
+		// 													qr_wggradalpha, 1, 3ll,
+		// 													batch_size);
 		// CUGUARD(cudaGetLastError());
 
 		/* 1.2. Calculate the field value on the quadrature */
-		/* qr_wgalpha[0:NQR, 0:batch_size] = d_shlu[0:NQR, 0:NSHL] @ buffer[0:NSHL, 0:batch_size] */
+		/* qr_wgalpha[0:NQR, 0:BS, 0:batch_size] = d_shlu[0:NQR, 0:NSHL, None] @ buffer[0:NSHL, 0:BS, 0:batch_size] */
 		cublasDgemm(handle,
 								CUBLAS_OP_N, CUBLAS_OP_N,
-								NQR, batch_size, NSHL,
+								NQR, batch_size * BS, NSHL,
 								&one,
 								d_shlu, NQR,
 								buffer, NSHL,
@@ -778,18 +888,31 @@ void AssembleSystemTet(Mesh3D *mesh,
 		/* 1.3. Calculate the field value of qr_dwgalpha */
 		start = std::chrono::steady_clock::now();
 		// cudaMemset(qr_dwgalpha, 0, max_batch_size * sizeof(f64));
-		LoadElementValueKernel<u32, f64><<<(batch_size + num_thread - 1) / num_thread, num_thread>>>(batch_size,
-																																																 ien, batch_index_ptr,
-																																																 dwgalpha_dptr, buffer);
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 3,
+																																																	 batch_index_ptr, ien,
+																																																	 dwgalpha_dptr, 3,
+																																																	 buffer, BS * NSHL);
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 1,
+																																																	 batch_index_ptr, ien,
+																																																	 dwgalpha_dptr + num_node * 3, 1,
+																																																	 buffer + 3, BS * NSHL);
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 1,
+																																																	 batch_index_ptr, ien,
+																																																	 dwgalpha_dptr + num_node * 4, 1,
+																																																	 buffer + 4, BS * NSHL);
+		LoadElementValueKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size * NSHL, num_thread), num_thread>>>(batch_size, 1,
+																																																	 batch_index_ptr, ien,
+																																																	 dwgalpha_dptr + num_node * 5, 1,
+																																																	 buffer + 5, BS * NSHL);
 		// thrust::for_each(thrust::device,
 		// 								 thrust::make_counting_iterator<u32>(0),
 		// 								 thrust::make_counting_iterator<u32>(batch_size),
 		// 								 LoadBatchFunctor<u32, f64, NSHL, 1>(batch_index_ptr, ien, dwgalpha_dptr, buffer));
 		// CUGUARD(cudaGetLastError());
-		/* qr_dwgalpha[0:NQR, 0:batch_size] = d_shlu[0:NQR, 0:NSHL] @ buffer[0:NSHL, 0:batch_size] */
+		/* qr_dwgalpha[0:NQR, 0:BS, 0:batch_size] = d_shlu[0:NQR, 0:NSHL] @ buffer[0:NSHL, 0:BS, 0:batch_size] */
 		cublasDgemm(handle,
 								CUBLAS_OP_N, CUBLAS_OP_N,
-								NQR, batch_size, NSHL,
+								NQR, batch_size * BS, NSHL,
 								&one,
 								d_shlu, NQR,
 								buffer, NSHL,
@@ -802,27 +925,23 @@ void AssembleSystemTet(Mesh3D *mesh,
 
 		/* 2. Calculate the elementwise residual and jacobian */
 		start = std::chrono::steady_clock::now();
-		AssemleWeakFormKernel<u32, f64, NSHL><<<(batch_size * NSHL + num_thread - 1) / num_thread, num_thread>>>(batch_size,
-																																																						 elem_invJ,
-																																																						 qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
-																																																						 shgradg,
-																																																						 elem_F, elem_J);
+		AssemleWeakFormKernel<u32, f64, NSHL><<<CEIL_DIV(batch_size, num_thread), num_thread>>>(batch_size,
+																																													  elem_invJ,
+																																													  qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
+																																													  shgradg,
+																																													  elem_F, elem_J);
 		end = std::chrono::steady_clock::now();
 		time_len[4] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 		/* 3. Assemble the global residual vector */
 		start = std::chrono::steady_clock::now();
 		if(F) {
-			ElemRHSLocal2GlobalKernel<u32, f64><<<(batch_size + num_thread - 1) / num_thread, num_thread>>>(batch_size,
-																																																			batch_index_ptr, ien,
-																																																			elem_F, F);
-			// thrust::for_each(thrust::device,
-			// 								 thrust::make_counting_iterator<u32>(0),
-			// 								 thrust::make_counting_iterator<u32>(batch_size),
-			// 								 SaveBatchFunctor<u32, f64, NSHL, 1>(batch_index_ptr, ien, elem_F, F));
+			ElemRHSLocal2GlobalKernel<u32, f64><<<CEIL_DIV(batch_size, num_thread), num_thread>>>(batch_size,
+																																														batch_index_ptr, ien,
+																																														elem_F, F, BS);
 		}
 		/* 4. Assemble the global residual matrix */
 		if(J) {
-			MatrixAddElementLHS(J, NSHL, 1, batch_size, ien, batch_index_ptr, elem_J);
+			MatrixAddElementLHS(J, NSHL, BS, batch_size, ien, batch_index_ptr, elem_J);
 		}
 		// cudaStreamSynchronize(0);
 		end = std::chrono::steady_clock::now();
@@ -835,18 +954,17 @@ void AssembleSystemTet(Mesh3D *mesh,
 	printf("Time[4]: AssembleWeakForm: %10.4f ms\n", time_len[4]* 1e-6);
 	printf("Time[5]: AssembleGlobal: %10.4f ms\n", time_len[5]* 1e-6);
 
-	CdamFreeDevice(buffer, max_batch_size * sizeof(f64));
+	CdamFreeDevice(buffer, max_batch_size * sizeof(f64) * NSHL * BS);
 	CdamFreeDevice(elem_invJ, max_batch_size * sizeof(f64) * 10);
-	CdamFreeDevice(shgradg, max_batch_size * sizeof(f64) * NSHL * 3);
+	CdamFreeDevice(shgradg, max_batch_size * (sizeof(f64) * NSHL * 3 + 4 * sizeof(int)));
 
 
-	CdamFreeDevice(elem_F, max_batch_size * sizeof(f64) * NSHL);
-	CdamFreeDevice(elem_J, max_batch_size * sizeof(f64) * NSHL * NSHL);
-	// CdamFreeDevice(elem_buff, max_batch_size * sizeof(f64) * NSHL * NSHL);
+	CdamFreeDevice(elem_F, max_batch_size * sizeof(f64) * NSHL * BS);
+	CdamFreeDevice(elem_J, max_batch_size * sizeof(f64) * NSHL * NSHL * BS * BS);
 
-	CdamFreeDevice(qr_wgalpha, num_tet * sizeof(f64));
-	CdamFreeDevice(qr_dwgalpha, num_tet * sizeof(f64));
-	CdamFreeDevice(qr_wggradalpha, num_tet * sizeof(f64) * 3);
+	CdamFreeDevice(qr_wgalpha, max_batch_size * sizeof(f64) * NQR * BS);
+	CdamFreeDevice(qr_dwgalpha, max_batch_size * sizeof(f64) * NQR * BS);
+	CdamFreeDevice(qr_wggradalpha, max_batch_size * sizeof(f64) * 3 * BS);
 	// CdamFreeDevice(batch_index_ptr, max_batch_size * sizeof(u32));
 	cublasDestroy(handle);
 }

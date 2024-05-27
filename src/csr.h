@@ -27,7 +27,7 @@ struct CSRAttr {
 CSRAttr* CSRAttrCreate(const Mesh3D* mesh);
 void CSRAttrDestroy(CSRAttr *attr);
 
-CSRAttr* CSRAttrCreateBlock(const Mesh3D* mesh, csr_index_type block_size[2]);
+CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_index_type block_col);
 
 u32 CSRAttrLength(CSRAttr *attr, csr_index_type row);
 csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row);

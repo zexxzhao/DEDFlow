@@ -187,8 +187,7 @@ CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
 }
 
 
-CSRAttr* CSRCreateBlock(const CSRAttr* attr, csr_index_type block_size[2]) {
-	csr_index_type block_row = block_size[0], block_col = block_size[1];
+CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_index_type block_col) {
 	CSRAttr* new_attr = (CSRAttr*)CdamMallocHost(sizeof(CSRAttr));
 	u32 nnz = CSRAttrNNZ(attr);
 	u32 num_row = CSRAttrNumRow(attr);
@@ -202,6 +201,7 @@ CSRAttr* CSRCreateBlock(const CSRAttr* attr, csr_index_type block_size[2]) {
 	CSRAttrRowPtr(new_attr) = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * (num_row * block_row + 1));
 	CSRAttrColInd(new_attr) = (csr_index_type*)CdamMallocDevice(sizeof(csr_index_type) * nnz * block_row * block_col);
 
+	csr_index_type block_size[2] = {block_row, block_col};
 	ExpandCSRByBlockSize(attr, new_attr, block_size);
 	return new_attr;
 }
