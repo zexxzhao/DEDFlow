@@ -10,7 +10,9 @@ static void MaskVec(value_type* input, value_type* mask, value_type* output, int
 	VecPointwiseMult(input, mask, output, n);
 } 
 
-/* MatrixCSR API */
+/****************************************************
+ * MatrixCSR Operation
+ ****************************************************/
 MatrixCSR* MatrixCSRCreate(const CSRAttr* attr) {
 	MatrixCSR* mat = (MatrixCSR*)CdamMallocHost(sizeof(MatrixCSR));
 	mat->attr = attr;
@@ -187,6 +189,21 @@ static void MatrixCSRGetDiag(Matrix* mat, value_type* diag) {
 	MatrixCSRGetDiagGPU(val, row_ptr, col_idx, diag, num_row);
 }
 
+static void MatrixCSRSetValuesCOO(Matrix* mat, value_type alpha,
+																	index_type n, const index_type* row, const index_type* col,
+																	const value_type* val, value_type beta) {
+	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
+	const CSRAttr* attr = mat_csr->attr;
+	index_type num_row = CSRAttrNumRow(attr);
+	index_type num_col = CSRAttrNumCol(attr);
+	const index_type* row_ptr = CSRAttrRowPtr(attr);
+	const index_type* col_ind = CSRAttrColInd(attr);
+
+	MatrixCSRSetValuesCOOGPU(mat_csr->val, alpha,
+														num_row, num_col, row_ptr, col_ind,
+														n, row, col, val, beta);
+}
+
 static void MatrixCSRAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
 																	 index_type batch_size, const index_type* batch_index_ptr,
 																	 const index_type* ien,
@@ -204,14 +221,54 @@ static void MatrixCSRAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
 														val, lda);
 }
 
+static void MatrixCSRAddValueBatched(Matrix* mat,
+																		 index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
+																		 const value_type* A) {
+	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
+	const CSRAttr* attr = mat_csr->attr;
+	index_type csr_num_row = CSRAttrNumRow(attr);
+	index_type csr_num_col = CSRAttrNumCol(attr);
+	const index_type* csr_row_ptr = CSRAttrRowPtr(attr);
+	const index_type* csr_col_ind = CSRAttrColInd(attr);
 
-/* MatrixNested API */
+	MatrixCSRSetValueBatchedGPU(mat_csr->val, 1.0,
+															csr_num_row, csr_num_col, csr_row_ptr, csr_col_ind, /* CSR */
+															batch_size, batch_row_ind, batch_col_ind, /* Batched */
+															A, 1.0);
+}
+
+static void MatrixCSRAddValueBlockedBatched(Matrix* mat,
+																						index_type batch_size,
+																						const index_type* batch_row_ind, const index_type* batch_col_ind,
+																						index_type block_row, index_type block_col,
+																						const value_type* A, int lda, int stride) {
+	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
+	const CSRAttr* attr = mat_csr->attr;
+	index_type csr_num_row = CSRAttrNumRow(attr);
+	index_type csr_num_col = CSRAttrNumCol(attr);
+	const index_type* csr_row_ptr = CSRAttrRowPtr(attr);
+	const index_type* csr_col_ind = CSRAttrColInd(attr);
+
+	MatrixCSRSetValueBlockedBatchedGPU(mat_csr->val, 1.0,
+																			csr_num_row, csr_num_col, csr_row_ptr, csr_col_ind, /* CSR */
+																			batch_size, batch_row_ind, batch_col_ind, /* Batched */
+																			block_row, block_col, /* Block */
+																			A, 1.0, lda, stride);
+}
+
+
+
+/****************************************************
+ * MatrixNested Operation
+ ****************************************************/
 MatrixNested* MatrixNestedCreate(index_type n_offset, const index_type* offset) {
 	size_t mem_size = sizeof(MatrixNested) + sizeof(Matrix*) * n_offset * n_offset;
 	MatrixNested* mat = (MatrixNested*)CdamMallocHost(mem_size);
 	mat->n_offset = n_offset;
 	mat->offset = offset;
-	memset(mat->mat, 0, sizeof(Matrix*) * n_offset * n_offset);
+	memset(mat->mat, 0, sizeof(Matrix*) * (n_offset + 1) * (n_offset + 1));
+	mat->d_offset = (index_type*)CdamMallocDevice((n_offset + 1) * sizeof(index_type));
+	cudaMemcpy(mat->d_offset, offset, (n_offset + 1) * sizeof(index_type), cudaMemcpyHostToDevice);
 	return mat;
 }
 
@@ -225,6 +282,7 @@ void MatrixNestedDestroy(Matrix* mat) {
 	}
 	CdamFreeHost(mat_nested, sizeof(MatrixNested) + sizeof(Matrix*) * n * n);
 	CdamFreeHost(mat, sizeof(Matrix));
+	CdamFreeDevice(mat_nested->d_offset, (n + 1) * sizeof(index_type));
 }
 
 static void MatrixNestedZero(Matrix* mat) {
@@ -316,21 +374,58 @@ static void MatrixNestedAddElementLHS(Matrix* mat, index_type nshl, index_type b
 	index_type n_offset = mat_nested->n_offset;
 	const index_type* offset = mat_nested->offset;
 	Matrix** mat_list = mat_nested->mat;
+	ASSERT(0 && "Not implemented yet");
 
-	/* Add element to the matrix */
+	// MatrixNestedAddElementLHSGPU(mat_list, n_offset, offset, nshl, bs,
+	// 														 batch_size, batch_index_ptr, ien,
+	// 														 val, lda);
+}
+
+static void MatrixNestedAddValueBatched(Matrix* mat,
+																				index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
+																				const value_type* A, int lda, int stride) {
+
+	ASSERT(0 && "Not implemented yet");
+}
+
+static void MatrixNestedAddValueBlockedBatched(Matrix* mat,
+																							 index_type batch_size,
+																							 const index_type* batch_row_ind, const index_type* batch_col_ind,
+																							 index_type block_row, index_type block_col,
+																							 const value_type* A, int lda, int stride) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	index_type n_offset = mat_nested->n_offset;
+	const index_type* offset = mat_nested->offset;
+	Matrix** mat_list = mat_nested->mat;
+
+	const CSRAttr* attr = mat_nested->csr_auxiliary;
+	ASSERT(attr && "CSRAttr is NULL");
+
+	// index_type* nzind = (index_type*)CdamMallocDevice(batch_size * sizeof(index_type));
+	
+
+	// CSRAttrGetNZIndBatched(attr, batch_size, batch_row_ind, batch_col_ind, nzind);
+
 	for(index_type i = 0; i < n_offset; i++) {
 		for(index_type j = 0; j < n_offset; j++) {
 			if(mat_list[i * n_offset + j] == NULL) {
 				continue;
 			}
-			MatrixAddElementLHS(mat_list[i * n_offset + j], nshl, bs,
-													batch_size, batch_index_ptr, ien,
-													val + offset[i] * lda + offset[j] * nshl, lda);
+			MatrixAddValueBlockedBatched(mat_list[i * n_offset + j],
+																	 batch_size, batch_row_ind, batch_col_ind,
+																	 offset[i + 1] - offset[i], offset[j + 1] - offset[j],
+																	 A + offset[i] * lda + offset[j],
+																	 lda, stride);
 		}
 	}
+
+
+	// CdamFreeDevice(nzind, batch_size * sizeof(index_type));
 }
 
-/* Matrix API */
+/****************************************************
+ * General Matrix Operation
+ ****************************************************/
 Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 	Matrix *mat = (Matrix*)CdamMallocHost(sizeof(Matrix));
 	mat->size[0] = CSRAttrNumRow(attr);
@@ -452,6 +547,28 @@ void MatrixAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
 		mat->op->add_element_lhs(mat, nshl, bs,
 														 batch_size, batch_ptr, ien,
 														 val, lda);
+	}
+}
+
+void MatrixAddValueBatched(Matrix* mat,
+													 index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
+													 const value_type* A) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->add_value_batched) {
+		mat->op->add_value_batched(mat, batch_size, batch_row_ind, batch_col_ind, A);
+	}
+}
+
+void MatrixAddValueBlockedBatched(Matrix* mat,
+																  index_type batch_size,
+																  const index_type* batch_row_ind, const index_type* batch_col_ind,
+																  index_type block_row, index_type block_col,
+																  const value_type* A, int lda, int stride) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->add_value_blocked_batched) {
+		mat->op->add_value_blocked_batched(mat, batch_size, batch_row_ind, batch_col_ind,
+																			 block_row, block_col,
+																			 A, lda, stride);
 	}
 }
 

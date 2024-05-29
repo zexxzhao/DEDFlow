@@ -222,6 +222,11 @@ csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row) {
 	return CSRAttrColInd(attr) + CSRAttrRowPtr(attr)[row];
 }
 
+void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, csr_index_type batch_size,
+																 const index_type* row, const index_type* col,
+																 csr_index_type* ind) {
+	CSRAttrGetNZIndBatched(attr, batch_size, row, col, ind);
+}
 
 __END_DECLS__
 

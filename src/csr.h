@@ -32,7 +32,7 @@ CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_i
 u32 CSRAttrLength(CSRAttr *attr, csr_index_type row);
 csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row);
 
-
+void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, csr_index_type batch_size, const index_type* row, const index_type* col, index_type* ind);
 
 
 __END_DECLS__

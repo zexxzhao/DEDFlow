@@ -174,6 +174,42 @@ void ElemRHSLocal2Global(I batch_size, const I* batch_index_ptr, const I* ien,
 																													 F, ldb);
 }
 
+template <typename I, I NSHL=4>
+__global__ void
+GetElemBatched(I batch_size, const I* batch_index_ptr, const I* ien, I* batch_ind) {
+	extern __shared__ I shared[];
+
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int tid = threadIdx.x;
+	if(idx >= batch_size * NSHL) return;
+
+
+
+	int iel = batch_index_ptr[idx / NSHL];
+
+	shared[tid] = ien[iel * NSHL + idx % NSHL];
+
+	__syncthreads();
+
+
+}
+
+
+template <typename I, typename T, I NSHL=4>
+void ElemLHSLocal2GlobalBlocked(I batch_size, const I* batch_index_ptr, const I* ien,
+															  I block_row, I block_col,
+															  const T* elem_J, int lda, int* stride,
+															  Matrix* J, int ldb) {
+	int block_dim = 256;
+	int grid_dim = CEIL_DIV(batch_size * NSHL * NSHL, block_dim);
+
+	I* batch_ind = (I*)CdamMallocDevice(sizeof(I) * batch_size * NSHL);
+	GetElemBatched<I, NSHL><<<CEIL_DIV(batch_size * NSHL, block_dim), block_dim>>>(batch_size, batch_index_ptr, ien, batch_ind);
+
+
+	CdamFreeDevice(batch_ind);
+
+}
 
 
 template<typename I, typename T, I NSHL=4>

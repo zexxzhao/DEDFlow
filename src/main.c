@@ -219,27 +219,28 @@ int main() {
 	CSRAttr* spy3x1 = CSRAttrCreateBlock(spy1x1, 3, 1);
 	CSRAttr* spy3x3 = CSRAttrCreateBlock(spy1x1, 3, 3);
 	Matrix* J = MatrixCreateTypeNested(n_offset, offset);
-	MatrixNested* mat_nest = (MatrixNested*)J->data;
+	MatrixNested* mat_nested = (MatrixNested*)J->data;
+	mat_nested->csr_auxiliary = spy1x1;
 
-	mat_nest->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3);
-	mat_nest->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1);
-	mat_nest->mat[4*0+2] = MatrixCreateTypeCSR(spy3x1);
-	mat_nest->mat[4*0+3] = MatrixCreateTypeCSR(spy3x1);
+	mat_nested->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3);
+	mat_nested->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1);
+	mat_nested->mat[4*0+2] = MatrixCreateTypeCSR(spy3x1);
+	mat_nested->mat[4*0+3] = MatrixCreateTypeCSR(spy3x1);
 
-	mat_nest->mat[4*1+0] = MatrixCreateTypeCSR(spy1x3);
-	mat_nest->mat[4*1+1] = MatrixCreateTypeCSR(spy1x1);
-	mat_nest->mat[4*1+2] = MatrixCreateTypeCSR(spy1x1);
-	mat_nest->mat[4*1+3] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*1+0] = MatrixCreateTypeCSR(spy1x3);
+	mat_nested->mat[4*1+1] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*1+2] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*1+3] = MatrixCreateTypeCSR(spy1x1);
 
-	mat_nest->mat[4*2+0] = MatrixCreateTypeCSR(spy1x3);
-	mat_nest->mat[4*2+1] = MatrixCreateTypeCSR(spy1x1);
-	mat_nest->mat[4*2+2] = MatrixCreateTypeCSR(spy1x1);
-	mat_nest->mat[4*2+3] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*2+0] = MatrixCreateTypeCSR(spy1x3);
+	mat_nested->mat[4*2+1] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*2+2] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*2+3] = MatrixCreateTypeCSR(spy1x1);
 
-	mat_nest->mat[4*3+0] = MatrixCreateTypeCSR(spy1x3);
-	mat_nest->mat[4*3+1] = MatrixCreateTypeCSR(spy1x1);
-	mat_nest->mat[4*3+2] = MatrixCreateTypeCSR(spy1x1);
-	mat_nest->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*3+0] = MatrixCreateTypeCSR(spy1x3);
+	mat_nested->mat[4*3+1] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*3+2] = MatrixCreateTypeCSR(spy1x1);
+	mat_nested->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
 
 	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-5);
 

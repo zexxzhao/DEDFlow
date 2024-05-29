@@ -14,6 +14,21 @@ void MatrixCSRAddElementLHSGPU(value_type* matval, index_type nshl, index_type b
 															 const value_type* val, int lda);
 
 
+void MatrixCSRSetValueBatchedGPU(value_type* matval, value_type alpha,
+																 index_type csr_num_row, index_type csr_num_col,
+																 const index_type* csr_row_ptr, const index_type* csr_col_ind,
+																 index_type batch_size,
+																 const index_type* batch_row_ind, const index_type* batch_col_ind,
+																 const value_type* A, value_type beta);
+
+void MatrixCSRSetValueBlockedBatchedGPU(value_type* matval, value_type alpha,
+																				index_type csr_num_row, index_type csr_num_col,
+																				const index_type* csr_row_ptr, const index_type* csr_col_ind,
+																				index_type batch_size,
+																				const index_type* batch_row_ind, const index_type* batch_col_ind,
+																				index_type block_row, index_type block_col,
+																				const value_type* A, value_type beta, int lda, int stride);
+
 __END_DECLS__
 
 

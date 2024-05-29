@@ -97,6 +97,24 @@ GenerateV2VMap(Index num_elem, const Index* __restrict__ ien, Index* __restrict_
 }
 */
 
+template <typename I>
+__global__ void
+CSRAttrGetNZIndBatchedKernel(I num_row, I num_col, const I* row_ptr, const I* col_ind,
+														 I batch_size, const I* row, const I* col, I* ind) {
+	I i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i >= batch_size) return;
+
+	I row_start = row_ptr[row[i]];
+	I row_end = row_ptr[row[i] + 1];
+
+	for(I j = row_start; j < row_end; j++) {
+		if(col[j] == col[i]) {
+			ind[i] = j;
+			return;
+		}
+	}
+}
+
 
 __BEGIN_DECLS__
 
@@ -146,5 +164,18 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 
 }
 
+void CSRAttrGetNZIndBatchedGPU(const CSRAttr* attr,
+																 csr_index_type batch_size, const csr_index_type* row, const csr_index_type* col,
+																 csr_index_type* ind) {
+	csr_index_type num_rows = CSRAttrNumRow(attr);
+	csr_index_type num_cols = CSRAttrNumCol(attr);
+	csr_index_type nnz = CSRAttrNNZ(attr);
+	const csr_index_type* row_ptr = CSRAttrRowPtr(attr);
+	const csr_index_type* col_ind = CSRAttrColInd(attr);
+
+	CSRAttrGetNZIndBatchedKernel(num_row, num_col, row_ptr, col_ind, /* csr */
+															 batch_size, row, col, ind);
+
+}
 
 __END_DECLS__
