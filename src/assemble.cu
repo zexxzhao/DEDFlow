@@ -198,16 +198,15 @@ GetElemBatched(I batch_size, const I* batch_index_ptr, const I* ien, I* batch_in
 template <typename I, typename T, I NSHL=4>
 void ElemLHSLocal2GlobalBlocked(I batch_size, const I* batch_index_ptr, const I* ien,
 															  I block_row, I block_col,
-															  const T* elem_J, int lda, int* stride,
-															  Matrix* J, int ldb) {
+															  const T* elem_J,
+															  Matrix* J) {
 	int block_dim = 256;
 	int grid_dim = CEIL_DIV(batch_size * NSHL * NSHL, block_dim);
 
-	I* batch_ind = (I*)CdamMallocDevice(sizeof(I) * batch_size * NSHL);
-	GetElemBatched<I, NSHL><<<CEIL_DIV(batch_size * NSHL, block_dim), block_dim>>>(batch_size, batch_index_ptr, ien, batch_ind);
-
-
-	CdamFreeDevice(batch_ind);
+	MatrixAddElemValueBlockedBatched(J, NSHL,
+																	 batch_size, batch_index_ptr, ien,
+																	 block_row, block_col,
+																	 elem_J, block_col, block_row * block_col);
 
 }
 
@@ -971,10 +970,9 @@ void AssembleSystemTet(Mesh3D *mesh,
 		/* 4. Assemble the global residual matrix */
 		if(J) {
 			// MatrixAddElementLHS(J, NSHL, BS, batch_size, ien, batch_index_ptr, elem_J, BS * NSHL);
-			ElemLHSLocal2Global<u32, f64>(batch_size, batch_index_ptr, ien,
-																		3, 
-																		elem_J, BS * NSHL,
-																		J, 3);
+			ElemLHSLocal2GlobalBlocked<u32, f64>(batch_size, batch_index_ptr, ien,
+																					 BS, BS,
+																					 elem_J, J);
 		}
 		// cudaStreamSynchronize(0);
 		end = std::chrono::steady_clock::now();

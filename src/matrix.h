@@ -105,11 +105,13 @@ void MatrixAMVPBYWithMask(value_type alpha, Matrix* A,  value_type* x, value_typ
 void MatrixMatVec(Matrix *matrix,  value_type *x, value_type *y);
 void MatrixMatVecWithMask(Matrix *matrix,  value_type *x, value_type *y,  value_type *left_mask, value_type* right_mask);
 void MatrixGetDiag(Matrix *matrix, value_type *diag);
+
 void MatrixSetValuesCOO(Matrix* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
 void MatrixSetValuesInd(Matrix* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
+
 void MatrixAddElemValueBatched(Matrix* matrix, index_type nshl,
 															 index_type num_batch, const index_type* batch_ptr, const index_type* ien,
-															 const value_type* val, int lda);
+															 const value_type* val);
 void MatrixAddElemValueBlockedBatched(Matrix* matrix, index_type nshl,
 																			index_type num_batch, const index_type* batch_ptr, const index_type* ien,
 																			index_type block_row_size, index_type block_col_size,

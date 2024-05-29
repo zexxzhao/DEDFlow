@@ -200,8 +200,42 @@ static void MatrixCSRSetValuesCOO(Matrix* mat, value_type alpha,
 	const index_type* col_ind = CSRAttrColInd(attr);
 
 	MatrixCSRSetValuesCOOGPU(mat_csr->val, alpha,
-														num_row, num_col, row_ptr, col_ind,
-														n, row, col, val, beta);
+													 num_row, num_col, row_ptr, col_ind,
+													 n, row, col, val, beta);
+}
+
+static void MatrixCSRAddElemValueBatched(Matrix* matrix, index_type nshl,
+																				 index_type batch_size, const index_type* batch_ptr, const index_type* ien,
+																				 const value_type* val) {
+	MatrixCSR* mat_csr = (MatrixCSR*)matrix->data;
+	const CSRAttr* attr = mat_csr->attr;
+	index_type num_row = CSRAttrNumRow(attr);
+	index_type num_col = CSRAttrNumCol(attr);
+	const index_type* row_ptr = CSRAttrRowPtr(attr);
+	const index_type* col_ind = CSRAttrColInd(attr);
+
+	MatrixCSRAddElemValueBatchedGPU(mat_csr->val, 0.0,
+																	batch_size, batch_ptr, ien, nshl,
+																	num_row, num_col, row_ptr, col_ind,
+																	val, 1.0);
+}
+
+static void MatrixCSRAddElemValueBlockedBatched(Matrix* matrix, index_type nshl,
+																								index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
+																								index_type block_row, index_type block_col,
+																								const value_type* val, int lda, int stride) {
+	MatrixCSR* mat_csr = (MatrixCSR*)matrix->data;
+	const CSRAttr* attr = mat_csr->attr;
+	index_type num_row = CSRAttrNumRow(attr);
+	index_type num_col = CSRAttrNumCol(attr);
+	const index_type* row_ptr = CSRAttrRowPtr(attr);
+	const index_type* col_ind = CSRAttrColInd(attr);
+
+	MatrixCSRAddElemValueBlockedBatchedGPU(mat_csr->val, 0.0, 
+																				 batch_size, batch_index_ptr, ien, nshl,
+																				 num_row, num_col, row_ptr, col_ind,
+																				 block_row, block_col,
+																				 val, lda, stride, 1.0);
 }
 
 static void MatrixCSRAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
@@ -367,6 +401,35 @@ static void MatrixNestedGetDiag(Matrix* mat, value_type* diag) {
 	}
 }
 
+static void MatrixNestedSetValuesCOO(Matrix* mat, value_type alpha,
+																		 index_type n, const index_type* row, const index_type* col,
+																		 const value_type* val, value_type beta) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	ASSERT(0 && "Not implemented");
+}
+static void MatrixNestedSetValuesInd(Matrix* mat, value_type alpha,
+																		 index_type n, const index_type* ind,
+																		 const value_type* val, value_type beta) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	ASSERT(0 && "Not implemented");
+}
+
+static void MatrixNestedAddElemValueBatched(Matrix* mat, index_type nshl,
+																						index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
+																						const value_type* val) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	ASSERT(0 && "Not implemented");
+}
+
+static void MatrixNestedAddElemValueBlockedBatched(Matrix* mat, index_type nshl,
+																									 index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
+																									 index_type block_row, index_type block_col,
+																									 const value_type* val, int lda, int stride) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	ASSERT(0 && "Not implemented");
+}
+																						
+
 static void MatrixNestedAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
 																			index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
 																			const value_type* val, int lda) {
@@ -445,7 +508,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 	mat->op->matvec = MatrixCSRMatVec;
 	mat->op->matvec_mask = MatrixCSRMatVecWithMask;
 	mat->op->get_diag = MatrixCSRGetDiag;
-	mat->op->add_element_lhs = MatrixCSRAddElementLHS;
+	// mat->op->add_element_lhs = MatrixCSRAddElementLHS;
 	mat->op->destroy = MatrixCSRDestroy;
 	return mat;
 }
@@ -471,7 +534,7 @@ Matrix* MatrixCreateTypeNested(index_type n_offset, const index_type* offset) {
 	mat->op->matvec = MatrixNestedMatVec;
 	mat->op->matvec_mask = MatrixNestedMatVecWithMask;
 	mat->op->get_diag = MatrixNestedGetDiag;
-	mat->op->add_element_lhs = MatrixNestedAddElementLHS;
+	// mat->op->add_element_lhs = MatrixNestedAddElementLHS;
 	mat->op->destroy = MatrixNestedDestroy;
 	return mat;
 }
@@ -539,16 +602,59 @@ void MatrixGetDiag(Matrix* mat, value_type* diag) {
 	}
 }
 
-void MatrixAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
-												 index_type batch_size, const index_type* batch_ptr, const index_type* ien,
-												 const value_type* val, int lda) {
+void MatrixSetValuesCOO(Matrix* mat, value_type alpha,
+											  index_type n, const index_type* row, const index_type* col,
+											  const value_type* val, value_type beta) {
 	ASSERT(mat && "Matrix is NULL");
-	if(mat->op->add_element_lhs) {
-		mat->op->add_element_lhs(mat, nshl, bs,
-														 batch_size, batch_ptr, ien,
-														 val, lda);
+	if(mat->op->set_values_coo){
+		mat->op->set_values_coo(mat, alpha, n, row, col, val, beta);
 	}
 }
+
+void MatrixSetValuesInd(Matrix* mat, value_type alpha,
+												index_type n, const index_type* ind,
+												const value_type* val, value_type beta) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->set_values_ind) {
+		mat->op->set_values_ind(mat, alpha, n, ind, val, beta);
+	}
+}
+
+void MatrixAddElemValueBatched(Matrix* mat, index_type nshl,
+															 index_type batch_size, const index_type* batch_index_ptr,
+															 const index_type* ien, const value_type* val) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->add_elem_value_batched) {
+		mat->op->add_elem_value_batched(mat, nshl,
+																		batch_size, batch_index_ptr, ien,
+																		val);
+	}
+}
+
+void MatrixAddElemValueBlockedBatched(Matrix* mat, index_type nshl,
+																			index_type batch_size, const index_type* batch_index_ptr,
+																			const index_type* ien,
+																			index_type block_row, index_type block_col,
+																			const value_type* val, int lda, int stride) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->add_elem_value_blocked_batched) {
+		mat->op->add_elem_value_blocked_batched(mat, nshl,
+																						batch_size, batch_index_ptr, ien,
+																						block_row, block_col,
+																						val, lda, stride);
+	}
+}
+
+// void MatrixAddElementLHS(Matrix* mat, index_type nshl, index_type bs,
+// 												 index_type batch_size, const index_type* batch_ptr, const index_type* ien,
+// 												 const value_type* val, int lda) {
+// 	ASSERT(mat && "Matrix is NULL");
+// 	if(mat->op->add_element_lhs) {
+// 		mat->op->add_element_lhs(mat, nshl, bs,
+// 														 batch_size, batch_ptr, ien,
+// 														 val, lda);
+// 	}
+// }
 
 void MatrixAddValueBatched(Matrix* mat,
 													 index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,

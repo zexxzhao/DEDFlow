@@ -7,6 +7,28 @@ __BEGIN_DECLS__
 
 void MatrixCSRGetDiagGPU(const value_type* val, const index_type* row_ptr, const index_type* col_ind, value_type* diag, index_type num_row); 
 
+void MatrixCSRSetValuesCOOGPU(value_type* matval, value_type alpha,
+															index_type num_row, index_type num_col,
+															const index_type* row_ptr, const index_type* col_ind,
+															index_type n, const index_type* row, const index_type* col,
+															const value_type* val, value_type beta);
+
+void MatrixCSRSetValuesIndGPU(value_type* matval, value_type alpha,
+															index_type n, const index_type* ind,
+															const value_type* val, value_type beta);
+
+
+void MatrixCSRAddElemValueBatchedGPU(value_type* matval, value_type alpha,
+																		 index_type batch_size, const index_type* batch_index_ptr, const index_type* ien, index_type nshl,
+																		 index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
+																		 const value_type* val, value_type beta);
+
+void MatrixCSRAddElemValueBlockedBatchedGPU(value_type* matval, value_type alpha,
+																						index_type batch_size, const index_type* batch_index_ptr, const index_type* ien, index_type nshl,
+																						index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
+																						index_type block_row, index_type block_col,
+																						const value_type* val, int lda, int stride, value_type beta);
+
 void MatrixCSRAddElementLHSGPU(value_type* matval, index_type nshl, index_type bs,
 															 index_type num_row, const index_type* row_ptr,
 															 index_type num_col, const index_type* col_ind,

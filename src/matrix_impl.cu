@@ -24,6 +24,91 @@ MatrixCSRGetDiagKernel(const ValueType* val, const IndexType* row_ptr, const Ind
 }
 
 
+template <typename I, typename T>
+__global__ void
+MatrixCSRSetValuesCOOKernel(T* matval, T alpha,
+													  I num_row, I num_col,
+													  const I* row_ptr, const I* col_ind,
+													  I n, const I* row, const I* col,
+													  const T* val, T beta) {
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i >= n) return;
+	I ir = row[i], ic = col[i];
+	I start = row_ptr[ir], end = row_ptr[ir + 1];
+	for(I k = start; k < end; ++k) {
+		if(col_ind[k] == ic) {
+			matval[k] = alpha * matval[i] + beta * val[i];
+		}
+	}
+}
+
+template <typename I, typename T>
+__global__ void
+MatrixCSRSetValuesIndKernel(T* matval, T alpha,
+														I n, const I* ind,
+														const T* val, T beta) {
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i >= n) return;
+	matval[i] = alpha * matval[i] + beta * val[i];
+}
+
+
+template <typename I, typename T>
+MatrixCSRAddElemValueBatchedKernel(T* matval, T alpha,
+																	 index_type batch_size, const index_type* batch_index_ptr,
+																	 const index_type* ien, index_type nshl,
+																	 index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
+																	 const value_type* val, T beta) {
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i >= batch_size * nshl * nshl) return;
+	I iel = batch_index_ptr[i / (nshl * nshl)];
+	I row = iel % (nshl * nshl) / nshl;
+	I col = iel % nshl;
+	row = ien[iel * nshl + row];
+	col = ien[iel * nshl + col];
+	I k;
+	for(k = row_ptr[row]; k < row_ptr[row + 1]; ++k) {
+		if(col_ind[k] == col) {
+			break;
+		}
+	}
+	matval[k] = alpha * matval[k] + beta * val[i];
+}
+
+template <typename I, typename T>
+__global__ void
+MatrixCSRAddElemValueBlockedBatchedKernel(T* matval, T alpha,
+																					I batch_size, const I* batch_index_ptr, const I* ien, I nshl,
+																					I num_row, I num_col, const I* row_ptr, const I* col_ind,
+																					I block_row, I block_col,
+																					const T* val, int lda, int stride, T beta) {
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i > block_size * nshl * nshl) return;
+	I iel = batch_index_ptr[i / (nshl * nshl)];
+	I row = iel % (nshl * nshl) / nshl;
+	I col = iel % nshl;
+	row = ien[iel * nshl + row];
+	col = ien[iel * nshl + col];
+	I start = row_ptr[row], end = row_ptr[row + 1];
+	I len = end - start;
+	I k;
+	for(k = start; k < end; ++k) {
+		if(col_ind[k] == col) {
+			break;
+		}
+	}
+
+	matval += k * block_row * block_col;
+	val += i * stride;
+
+	for(I ii = 0; ii < block_row; ++ii) {
+		for(I jj = 0; jj < blocl_col; ++jj) {
+			matval[len * block_col * ii + jj] = alpha * matval[len * block_col * ii + jj] 
+																				+ beta * val[ii * lda + jj];
+		}
+	}
+}
+
 template <typename IndexType, typename ValueType>
 __global__ void
 MatrixCSRAddElementLHSKernel(ValueType* matval, IndexType NSHL, IndexType BS,
@@ -132,7 +217,7 @@ MatrixNestedAddElementLHSKernel(MatrixType* mat[], IndexType n_offset, const Ind
 
 template <typename I, typename T>
 __global__ void
-MatrixCSRSetValueBatchedKernel(T* value_type* matval, T alpha,
+MatrixCSRSetValueBatchedKernel(T* matval, T alpha,
 															 I csr_num_row, I csr_num_col,
 															 const I* csr_row_ptr, const I* csr_col_ind,
 															 I batch_size, const I* batch_row_ind, const I* batch_col_ind,
@@ -154,14 +239,15 @@ MatrixCSRSetValueBatchedKernel(T* value_type* matval, T alpha,
 	}
 }
 
+
 template <typename I, typename T>
 __global__ void
-MatrixCSRSetValueBlockedBatchedGPU(T* value_type* matval, T alpha,
-																	 I csr_num_row, I csr_num_col,
-																	 const I* csr_row_ptr, const I* csr_col_ind,
-																	 I batch_size, const I* batch_row_ind, const I* batch_col_ind,
-																	 I block_row, I block_col,
-																	 const T* A, T beta, int lda, int stride) {
+MatrixCSRSetValueBlockedBatchedKernel(T* value_type* matval, T alpha,
+																			I csr_num_row, I csr_num_col,
+																	 		const I* csr_row_ptr, const I* csr_col_ind,
+																	 		I batch_size, const I* batch_row_ind, const I* batch_col_ind,
+																	 		I block_row, I block_col,
+																	 		const T* A, T beta, int lda, int stride) {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if(idx >= batch_size) {
@@ -194,19 +280,41 @@ __BEGIN_DECLS__
 
 
 void MatrixCSRGetDiagGPU(const value_type* val, const index_type* row_ptr, const index_type* col_idx, value_type* diag, const index_type num_row) {
-	const size_t block_dim = 256;
-	const size_t grid_dim = (num_row + block_dim - 1) / block_dim;
+	size_t block_dim = 256;
+	size_t grid_dim = (num_row + block_dim - 1) / block_dim;
 	MatrixCSRGetDiagKernel<value_type, index_type><<<grid_dim, block_dim>>>(val, row_ptr, col_idx, diag, num_row);
 }
 
+void MatrixCSRSetValuesCOOGPU(value_type* matval, value_type alpha,
+															index_type num_row, index_type num_col,
+															const index_type* row_ptr, const index_type* col_ind,
+															index_type n, const index_type* row, const index_type* col,
+															const value_type* val, value_type beta) {
+	size_t block_dim = 256;
+	size_t grid_dim = (n + block_dim - 1) / block_dim;
+	MatrixCSRSetValuesCOOKernel<<<grid_dim, block_dim>>>(matval, alpha,
+																											 num_row, num_col,
+																											 row_ptr, col_ind,
+																											 n, row, col,
+																											 val, beta);
+}
+
+void MatrixCSRSetValuesIndGPU(value_type* matval, value_type alpha,
+															index_type n, const index_type* ind,
+															const value_type* val, value_type beta) {
+	size_t block_dim = 256;
+	size_t grid_dim = (n + block_dim - 1) / block_dim;
+	MatrixCSRSetValuesIndKernel<<<grid_dim, block_dim>>>(matval, alpha,
+																											 n, ind, val, beta);
+}
 
 void MatrixCSRAddElementLHSGPU(value_type* matval, index_type nshl, index_type bs, 
 															 index_type num_row, const index_type* row_ptr,
 															 index_type num_col, const index_type* col_ind,
 															 index_type batch_size, const index_type* batch_ptr, const index_type* ien,
 															 const value_type* val, int lda) {
-	const size_t block_dim = 256 * 4;
-	const size_t grid_dim = (batch_size + block_dim - 1) / block_dim;
+	size_t block_dim = 256 * 4;
+	size_t grid_dim = (batch_size + block_dim - 1) / block_dim;
 
 	MatrixCSRAddElementLHSKernel<index_type, value_type><<<grid_dim, block_dim>>>(matval, nshl, bs,
 																																								num_row, row_ptr,
@@ -243,6 +351,38 @@ void MatrixCSRSetValueBatchedGPU(value_type* matval, value_type alpha,
 																																									csr_row_ptr, csr_col_ind,
 																																									batch_size, batch_row_ind, batch_col_ind,
 																																									A, beta);
+}
+
+
+void MatrixCSRAddElemValueBatchedGPU(value_type* matval, value_type alpha,
+																		 index_type batch_size, const index_type* batch_index_ptr, const index_type* ien, index_type nshl,
+																		 index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
+																		 const value_type* val, value_type beta) {
+	size_t block_dim = 256;
+	size_t grid_dim = (batch_size * nshl * nshl + block_dim - 1) / block_dim;
+
+	MatrixCSRAddElemValueBatchedKernel<<<grid_dim, block_dim>>>(matval, alpha,
+																															batch_size, batch_index_ptr, ien, nshl,
+																															num_row, num_col, row_ptr, col_ind,
+																															val, beta);
+}
+
+void MatrixCSRSetValueBlockedBatchedGPU(value_type* matval, value_type alpha,
+																				index_type batch_size, const index_type* batch_index_ptr, const index_type* ien, index_type nshl,
+																				index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
+																				I block_row, I block_col,
+																				const value_type* val, int lda, int stride, beta) {
+	size_t block_dim = 256;
+	size_t grid_dim = (batch_size * nshl * nshl + block_dim - 1) / block_dim;
+
+	MatrixCSRSetValueBlockedBatchedKernel<<<grid_dim, block_dim>>>(matval, alpha, 
+	MatrixCSRAddElemValueBlockedBatchedKernel<<<grid_dim, block_dim>>>(matval, alpha,
+																																		 batch_size, batch_index_ptr, ien, nshl,
+																																		 num_row, num_col, row_ptr, col_ind,
+																																		 block_row, block_col,
+																																		 val, lda, stride, beta);
+
+																																		
 }
 
 __END_DECLS__
