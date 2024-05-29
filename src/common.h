@@ -76,5 +76,7 @@ GPUAssertPrivate(cudaError_t code, const char *file, int line) {
 		ASSERT(FALSE);
 	}
 }
+
+
 __END_DECLS__
 #endif /* __COMMON_H__ */

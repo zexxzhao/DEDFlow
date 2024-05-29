@@ -30,7 +30,7 @@
 #define BS (6)
 #define M2D(aa, ii) ((aa) * BS + (ii))
 #define M4D(aa, bb, ii, jj) \
-	(((aa) * (NSHL) + ii) * (NSHL) * BS + (bb) * BS + (jj))
+	(((aa) * (NSHL) + bb) * (BS * BS) + (ii) * BS + (jj))
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 

@@ -5,6 +5,10 @@
 
 __BEGIN_DECLS__
 
+void MatrixCSRZeroRowGPU(value_type* matval,
+												 index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
+												 index_type n, const index_type* row, value_type diag);
+
 void MatrixCSRGetDiagGPU(const value_type* val, const index_type* row_ptr, const index_type* col_ind, value_type* diag, index_type num_row); 
 
 void MatrixCSRSetValuesCOOGPU(value_type* matval, value_type alpha,

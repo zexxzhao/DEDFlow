@@ -37,6 +37,7 @@ void AssembleSystem(Mesh3D* mesh, f64* wgalpha, f64* dwgalpha, f64* F, Matrix* J
 
 	if(num_tet) {
 		AssembleSystemTet(mesh, wgalpha, dwgalpha, F, J);
+		AssembleSystemTetFacet(mesh, wgalpha, dwgalpha, F, J);
 	}
 	
 	if(num_prism) {
@@ -335,7 +336,6 @@ int main() {
 
 		H5CloseFile(h5_handler);
 	}
-	return 0;
 
 	f64 fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
 	f64 fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};

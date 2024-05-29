@@ -173,8 +173,10 @@ void CSRAttrGetNZIndBatchedGPU(const CSRAttr* attr,
 	const csr_index_type* row_ptr = CSRAttrRowPtr(attr);
 	const csr_index_type* col_ind = CSRAttrColInd(attr);
 
-	CSRAttrGetNZIndBatchedKernel(num_row, num_col, row_ptr, col_ind, /* csr */
-															 batch_size, row, col, ind);
+	int block_dim = 256;
+	int grid_dim = (batch_size + block_dim - 1) / block_dim;
+	CSRAttrGetNZIndBatchedKernel<index_type><<<grid_dim, block_dim>>>(num_rows, num_cols, row_ptr, col_ind, /* csr */
+																																	  batch_size, row, col, ind);
 
 }
 

@@ -73,9 +73,23 @@ static void MatrixCSRZero(Matrix* mat) {
 	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
 	const CSRAttr* attr = mat_csr->attr;
 	const index_type nnz = CSRAttrNNZ(attr);
-	cudaMemset(mat_csr->val, 0, nnz * sizeof(value_type));
+	cudaMemsetAsync(mat_csr->val, 0, nnz * sizeof(value_type), 0);
 }
 
+/* Zero the rows of the matrix */
+static void MatrixCSRZeroRow(Matrix* mat, index_type n, const index_type* row, value_type diag) {
+	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
+	const CSRAttr* attr = mat_csr->attr;
+	const index_type num_row = CSRAttrNumRow(attr);
+	const index_type num_col = CSRAttrNumCol(attr);
+	const index_type* row_ptr = CSRAttrRowPtr(attr);
+	const index_type* col_idx = CSRAttrColInd(attr);
+	value_type* val = mat_csr->val;
+
+	MatrixCSRZeroRowGPU(val,
+											num_row, num_col, row_ptr, col_idx,
+											n, row, diag);
+}
 
 /* Matrix-vector multiplication */
 /* y = alpha * A * x + beta * y */
@@ -214,7 +228,7 @@ static void MatrixCSRAddElemValueBatched(Matrix* matrix, index_type nshl,
 	const index_type* row_ptr = CSRAttrRowPtr(attr);
 	const index_type* col_ind = CSRAttrColInd(attr);
 
-	MatrixCSRAddElemValueBatchedGPU(mat_csr->val, 0.0,
+	MatrixCSRAddElemValueBatchedGPU(mat_csr->val, 1.0,
 																	batch_size, batch_ptr, ien, nshl,
 																	num_row, num_col, row_ptr, col_ind,
 																	val, 1.0);
@@ -231,7 +245,7 @@ static void MatrixCSRAddElemValueBlockedBatched(Matrix* matrix, index_type nshl,
 	const index_type* row_ptr = CSRAttrRowPtr(attr);
 	const index_type* col_ind = CSRAttrColInd(attr);
 
-	MatrixCSRAddElemValueBlockedBatchedGPU(mat_csr->val, 0.0, 
+	MatrixCSRAddElemValueBlockedBatchedGPU(mat_csr->val, 1.0, 
 																				 batch_size, batch_index_ptr, ien, nshl,
 																				 num_row, num_col, row_ptr, col_ind,
 																				 block_row, block_col,
@@ -336,6 +350,30 @@ static void MatrixNestedZero(Matrix* mat) {
 	}
 }
 
+static void MatrixNestedZeroRow(Matrix* mat, index_type n, const index_type* row, value_type diag) {
+	MatrixNested* mat_nested = (MatrixNested*)mat->data;
+	index_type n_offset = mat_nested->n_offset;
+	const index_type* offset = mat_nested->offset;
+	Matrix** mat_list = mat_nested->mat;
+
+	/* Zero out the matrix */
+	for(index_type i = 0; i < n_offset; i++) {
+		for(index_type j = 0; j < n_offset; j++) {
+			if(mat_list[i * n_offset + j] == NULL) {
+				continue;
+			}
+			if(i == j) {
+				ASSERT(0 && "Not implemented");
+				MatrixZeroRow(mat_list[i * n_offset + j], n, row + offset[j], diag);
+			}
+			else {
+				MatrixZeroRow(mat_list[i * n_offset + j], n, row + offset[j], 0.0);
+			}
+			MatrixZeroRow(mat_list[i * n_offset + j], n, row + offset[j], diag);
+		}
+	}
+}
+
 static void MatrixNestedAMVPBY(value_type alpha, Matrix* A, value_type* x, value_type beta, value_type* y) {
 	MatrixNested* mat_nested = (MatrixNested*)A->data;
 	index_type n_offset = mat_nested->n_offset;
@@ -415,18 +453,33 @@ static void MatrixNestedSetValuesInd(Matrix* mat, value_type alpha,
 }
 
 static void MatrixNestedAddElemValueBatched(Matrix* mat, index_type nshl,
-																						index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
-																						const value_type* val) {
-	MatrixNested* mat_nested = (MatrixNested*)mat->data;
-	ASSERT(0 && "Not implemented");
+																						index_type batch_size, const index_type* batch_index_ptr,
+																						const index_type* ien, const value_type* val) {
+	ASSERT(0 && "Not supported yet");
+
 }
 
 static void MatrixNestedAddElemValueBlockedBatched(Matrix* mat, index_type nshl,
-																									 index_type batch_size, const index_type* batch_index_ptr, const index_type* ien,
+																									 index_type batch_size, const index_type* batch_index_ptr,
+																									 const index_type* ien,
 																									 index_type block_row, index_type block_col,
 																									 const value_type* val, int lda, int stride) {
 	MatrixNested* mat_nested = (MatrixNested*)mat->data;
-	ASSERT(0 && "Not implemented");
+	index_type n_offset = mat_nested->n_offset;
+	const index_type* offset = mat_nested->offset;
+	Matrix** mat_list = mat_nested->mat;
+	
+	for(index_type i = 0; i < n_offset; i++) {
+		for(index_type j = 0; j < n_offset; j++) {
+			if(mat_list[i * n_offset + j] == NULL) {
+				continue;
+			}
+			MatrixAddElemValueBlockedBatched(mat_list[i * n_offset + j], nshl,
+																			 batch_size, batch_index_ptr, ien,
+																			 offset[i + 1] - offset[i], offset[j + 1] - offset[j],
+																			 val + i * lda + offset[j], lda, stride);
+		}
+	}
 }
 																						
 
@@ -503,6 +556,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 	/* Set up the matrix operation */
 	// mat->op = &mat->_op_private;
 	mat->op->zero = MatrixCSRZero;
+	mat->op->zero_row = MatrixCSRZeroRow;
 	mat->op->amvpby = MatrixCSRAMVPBY;
 	mat->op->amvpby_mask = MatrixCSRAMVPBYWithMask;
 	mat->op->matvec = MatrixCSRMatVec;
@@ -529,6 +583,7 @@ Matrix* MatrixCreateTypeNested(index_type n_offset, const index_type* offset) {
 	/* Set up the matrix operation */
 	// mat->op = &mat->_op_private;
 	mat->op->zero = MatrixNestedZero;	
+	mat->op->zero_row = MatrixNestedZeroRow;
 	mat->op->amvpby = MatrixNestedAMVPBY;
 	mat->op->amvpby_mask = MatrixNestedAMVPBYWithMask;
 	mat->op->matvec = MatrixNestedMatVec;
@@ -555,6 +610,12 @@ void MatrixZero(Matrix* mat) {
 	}
 }
 
+void MatrixZeroRow(Matrix* mat, index_type n, const index_type* row, value_type diag) {
+	ASSERT(mat && "Matrix is NULL");
+	if(mat->op->zero_row) {
+		mat->op->zero_row(mat, n, row, diag);
+	}
+}
 
 void MatrixAMVPBY(value_type alpha, Matrix* A, value_type* x, value_type beta, value_type* y) {
 	ASSERT(A && "Matrix is NULL");
