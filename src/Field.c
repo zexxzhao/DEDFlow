@@ -18,7 +18,7 @@ Field* FieldCreate3D(const Mesh3D* mesh, i32 num_nodal_dof) {
 
 	field = (Field*)CdamMallocHost(sizeof(Field));
 	memset(field, 0, sizeof(Field));
-	u32 num_node = Mesh3DNumNode(mesh);
+	index_type num_node = Mesh3DNumNode(mesh);
 	field->shape[0] = num_node;
 	field->shape[1] = num_nodal_dof;
 	

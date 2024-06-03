@@ -11,7 +11,7 @@ typedef struct Array Array;
 
 typedef struct Field Field;
 struct Field {
-	u32 shape[2];
+	index_type shape[2];
 	Array* host;
 	Array* device;
 };

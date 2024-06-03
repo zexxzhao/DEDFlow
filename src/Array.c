@@ -10,28 +10,28 @@
 
 __BEGIN_DECLS__
 
-Array* ArrayCreateHost(u32 len) {
+Array* ArrayCreateHost(index_type len) {
 	Array *a;
 	ASSERT(len > 0 && "ArrayCreateHost: Invalid length");
-	a = (Array*)CdamMallocHost(sizeof(Array));
-	memset(a, 0, sizeof(Array));
+	a = (Array*)CdamMallocHost(SIZE_OF(Array));
+	memset(a, 0, SIZE_OF(Array));
 
 	a->is_host = TRUE;
 	ArrayLen(a) = len;
-	ArrayData(a) = (f64*)CdamMallocHost(sizeof(f64) * len);
+	ArrayData(a) = (f64*)CdamMallocHost(SIZE_OF(f64) * len);
 
 	return a;
 }
 
-Array* ArrayCreateDevice(u32 len) {
+Array* ArrayCreateDevice(index_type len) {
 	Array *a;
 	ASSERT(len > 0 && "ArrayCreateDevice: Invalid length");
-	a = (Array*)CdamMallocHost(sizeof(Array));
-	memset(a, 0, sizeof(Array));
+	a = (Array*)CdamMallocHost(SIZE_OF(Array));
+	memset(a, 0, SIZE_OF(Array));
 
 	a->is_host = FALSE;
 	ArrayLen(a) = len;
-	ArrayData(a) = (f64*)CdamMallocDevice(sizeof(f64) * len);
+	ArrayData(a) = (f64*)CdamMallocDevice(SIZE_OF(f64) * len);
 
 	return a;
 }
@@ -40,15 +40,15 @@ void ArrayDestroy(Array* a) {
 	ASSERT(a && "ArrayDestroy: NULL pointer");
 	if (a) {
 		if (a->is_host) {
-			CdamFreeHost(ArrayData(a), ArrayLen(a) * sizeof(f64));
+			CdamFreeHost(ArrayData(a), ArrayLen(a) * SIZE_OF(f64));
 			ArrayData(a) = NULL;
 		}
 		else {
-			CdamFreeDevice(ArrayData(a), ArrayLen(a) * sizeof(f64));
+			CdamFreeDevice(ArrayData(a), ArrayLen(a) * SIZE_OF(f64));
 			ArrayData(a) = NULL;
 		}
 	}
-	CdamFreeHost(a, sizeof(Array));
+	CdamFreeHost(a, SIZE_OF(Array));
 	a = NULL;
 }
 
@@ -72,10 +72,10 @@ void ArrayCopy(Array* dst, const Array* src, MemCopyKind kind) {
 	}
 
 	if (kind == H2H) {
-		memcpy(dst->data, src->data, sizeof(f64) * src->len);
+		memcpy(dst->data, src->data, SIZE_OF(f64) * src->len);
 	}
 	else {
-		CUGUARD(cudaMemcpy(dst->data, src->data, sizeof(f64) * src->len, kind));
+		CUGUARD(cudaMemcpy(dst->data, src->data, SIZE_OF(f64) * src->len, kind));
 	}
 }
 
@@ -84,16 +84,16 @@ void ArraySet(Array* a, f64 val) {
 	ASSERT(a && "ArraySet: NULL pointer");
 
 	if (a->is_host) {
-		for (u32 i = 0; i < ArrayLen(a); i++) {
+		for (index_type i = 0; i < ArrayLen(a); i++) {
 			ArrayData(a)[i] = val;
 		}
 	}
 	else {
-		d_data = (f64*)CdamMallocHost(sizeof(f64) * ArrayLen(a));
-		for (u32 i = 0; i < ArrayLen(a); i++) {
+		d_data = (f64*)CdamMallocHost(SIZE_OF(f64) * ArrayLen(a));
+		for (index_type i = 0; i < ArrayLen(a); i++) {
 			d_data[i] = val;
 		}
-		CUGUARD(cudaMemcpy(ArrayData(a), d_data, sizeof(f64) * ArrayLen(a), cudaMemcpyHostToDevice));
+		CUGUARD(cudaMemcpy(ArrayData(a), d_data, SIZE_OF(f64) * ArrayLen(a), cudaMemcpyHostToDevice));
 		free(d_data);
 	}
 }
@@ -102,37 +102,37 @@ void ArrayZero(Array* a) {
 	ArrayScale(a, 0.0);
 }
 
-void ArraySetAt(Array* a, u32 n, const u32* idx, const f64* val) {
+void ArraySetAt(Array* a, index_type n, const index_type* idx, const f64* val) {
 	ASSERT(a && idx && val && "ArraySetAt: NULL pointer");
 
 	if (a->is_host) {
-		for(u32 i = 0; i < n; ++i) {
+		for(index_type i = 0; i < n; ++i) {
 			ArrayData(a)[idx[i]] = val[i];
 		}
 	}
 	else {
-		f64* d_data = (f64*)malloc(sizeof(f64) * ArrayLen(a));
-		CUGUARD(cudaMemcpy(d_data, ArrayData(a), sizeof(f64) * ArrayLen(a), cudaMemcpyDeviceToHost));
-		for(u32 i = 0; i < n; i++) {
+		f64* d_data = (f64*)malloc(SIZE_OF(f64) * ArrayLen(a));
+		CUGUARD(cudaMemcpy(d_data, ArrayData(a), SIZE_OF(f64) * ArrayLen(a), cudaMemcpyDeviceToHost));
+		for(index_type i = 0; i < n; i++) {
 			d_data[idx[i]] = val[i];
 		}
-		CUGUARD(cudaMemcpy(ArrayData(a), d_data, sizeof(f64) * ArrayLen(a), cudaMemcpyHostToDevice));
+		CUGUARD(cudaMemcpy(ArrayData(a), d_data, SIZE_OF(f64) * ArrayLen(a), cudaMemcpyHostToDevice));
 		free(d_data);
 	}
 }
 
-void ArrayAt(const Array* a, u32 n, const u32* idx, f64* val) {
+void ArrayAt(const Array* a, index_type n, const index_type* idx, f64* val) {
 	ASSERT(a && idx && val && "ArrayAt: NULL pointer");
 
 	if (a->is_host) {
-		for (u32 i = 0; i < n; i++) {
+		for (index_type i = 0; i < n; i++) {
 			val[i] = ArrayData(a)[idx[i]];
 		}
 	}
 	else {
-		f64* d_data = (f64*)malloc(sizeof(f64) * ArrayLen(a));
-		CUGUARD(cudaMemcpy(d_data, ArrayData(a), sizeof(f64) * ArrayLen(a), cudaMemcpyDeviceToHost));
-		for (u32 i = 0; i < n; i++) {
+		f64* d_data = (f64*)malloc(SIZE_OF(f64) * ArrayLen(a));
+		CUGUARD(cudaMemcpy(d_data, ArrayData(a), SIZE_OF(f64) * ArrayLen(a), cudaMemcpyDeviceToHost));
+		for (index_type i = 0; i < n; i++) {
 			val[i] = d_data[idx[i]];
 		}
 		free(d_data);
@@ -143,7 +143,7 @@ void ArrayScale(Array* a, f64 val) {
 	ASSERT(a && "ArrayScale: NULL pointer");
 
 	if (a->is_host) {
-		for (u32 i = 0; i < ArrayLen(a); i++) {
+		for (index_type i = 0; i < ArrayLen(a); i++) {
 			ArrayData(a)[i] *= val;
 		}
 	}
@@ -168,7 +168,7 @@ void ArrayDot(f64* result, const Array* a, const Array* b) {
 
 	if (a->is_host) {
 		*result = 0.0;
-		for (u32 i = 0; i < ArrayLen(a); i++) {
+		for (index_type i = 0; i < ArrayLen(a); i++) {
 			*result += ArrayData(a)[i] * ArrayData(b)[i];
 		}
 	}
@@ -187,7 +187,7 @@ void ArrayNorm2(f64* result, const Array* a) {
 
 	if(a->is_host) {
 		*result = 0.0;
-		for (u32 i = 0; i < ArrayLen(a); i++) {
+		for (index_type i = 0; i < ArrayLen(a); i++) {
 			*result += ArrayData(a)[i] * ArrayData(a)[i];
 		}
 		*result = sqrt(*result);
@@ -208,7 +208,7 @@ void ArrayAXPY(Array* y, f64 a, const Array* x) {
 	ASSERT(y->is_host == x->is_host && "ArrayAXPY: Array type mismatch");
 
 	if (y->is_host) {
-		for (u32 i = 0; i < ArrayLen(y); i++) {
+		for (index_type i = 0; i < ArrayLen(y); i++) {
 			ArrayData(y)[i] += a * ArrayData(x)[i];
 		}
 	}
@@ -228,7 +228,7 @@ void ArrayAXPBY(Array* y, f64 a, const Array* x, f64 b) {
 	ASSERT(y->is_host == x->is_host && "ArrayAXPBY: Array type mismatch");
 
 	if (y->is_host) {
-		for (u32 i = 0; i < ArrayLen(y); i++) {
+		for (index_type i = 0; i < ArrayLen(y); i++) {
 			ArrayData(y)[i] = a * ArrayData(x)[i] + b * ArrayData(y)[i];
 		}
 	}
@@ -245,7 +245,7 @@ void ArrayLoad(Array* a, H5FileInfo* h5f, const char* dataset_name) {
 	ASSERT(H5FileIsReadable(h5f) && "ArrayLoad: File is not readable");
 	ASSERT(H5DatasetExist(h5f, dataset_name) && "ArrayLoad: Dataset does not exist");
 
-	u32 len;
+	index_type len;
 	H5GetDatasetSize(h5f, dataset_name, &len);
 	ASSERT(len == ArrayLen(a) && "ArrayLoad: Array length mismatch");
 

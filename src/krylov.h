@@ -12,7 +12,7 @@ typedef void (*KSPSolveFunc)(Matrix*, value_type*, value_type*, void*);
 
 typedef struct Krylov Krylov;
 struct Krylov {
-	u32 max_iter;
+	index_type max_iter;
 	f64 atol, rtol;
 	PCApplyFunc pc_apply;
 	KSPSolveFunc ksp_solve;
@@ -21,8 +21,8 @@ struct Krylov {
 	void* pc_ctx;
 };
 
-Krylov* KrylovCreateCG(u32, f64, f64);
-Krylov* KrylovCreateGMRES(u32, f64, f64);
+Krylov* KrylovCreateCG(index_type, f64, f64);
+Krylov* KrylovCreateGMRES(index_type, f64, f64);
 void KrylovDestroy(Krylov* krylov);
 
 void KrylovSolve(Krylov* krylov, Matrix* A, f64* b, f64* x);

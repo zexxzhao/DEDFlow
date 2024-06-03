@@ -56,15 +56,6 @@ SetColIndex(Index nnz, Index num_rows,
 			}
 		}
 	}
-	// while(i < nnz * block_row * block_col) {
-	// 	Index row = find_row[i / block_row];
-
-	// 	Index col = col_ind[i / (block_row* block_col)];
-	// 	
-	// 	new_col_ind[i] = col * block_col + i % block_col;
-
-	// 	i += blockDim.x * gridDim.x;
-	// }
 }
 
 /*
@@ -123,13 +114,13 @@ void GenerateCSRFromMesh(const Mesh3D* mesh, CSRAttr* attr) {
 	index_t num_node = Mesh3DNumNode(mesh);
 	index_t num_elem = Mesh3DNumTet(mesh);
 	const Mesh3DData* device = Mesh3DDevice(mesh);
-	u32* ien = device->ien;
-	index_t* buffer = (index_t*)CdamMallocDevice(sizeof(index_t) * num_node * MAX_ROW_LENGTH);
+	index_type* ien = device->ien;
+	index_t* buffer = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 	/* Generate a vertex-to-vetex mapping */
-	cudaMemset(buffer, 0, sizeof(index_t) * num_node * MAX_ROW_LENGTH);
+	cudaMemset(buffer, 0, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 	fprintf(stderr, "Not implemented\n");
 
-	CdamFreeDevice(buffer, sizeof(index_t) * num_node * MAX_ROW_LENGTH);
+	CdamFreeDevice(buffer, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 }
 
 void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_size[2]) {
@@ -148,17 +139,17 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 	CSRAttrNumCol(new_attr) = num_cols * block_col;
 	CSRAttrNNZ(new_attr) = nnz * block_row * block_col;
 
-	CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(sizeof(index_t) * (CSRAttrNumRow(new_attr) + 1));
-	CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(sizeof(index_t) * CSRAttrNNZ(new_attr));
-	// index_t* find_row = (index_t*)CdamMallocDevice(sizeof(index_t) * nnz);
+	CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * (CSRAttrNumRow(new_attr) + 1));
+	CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * CSRAttrNNZ(new_attr));
+	// index_t* find_row = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * nnz);
 
 	int block_dim = 256;
 	int block_num = (num_rows + block_dim - 1) / block_dim;
 	// GetFindRowKernel<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, find_row);
-	SetRowLength<<<block_num, block_dim, 0, stream>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
-	SetColIndex<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
+	SetRowLength<<<CEIL_DIV(num_rows, block_dim), block_dim, 0, stream>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
+	SetColIndex<<<CEIL_DIV(num_rows, block_dim), block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
 
-	// CdamFreeDevice(find_row, sizeof(index_t) * nnz);
+	// CdamFreeDevice(find_row, SIZE_OF(index_t) * nnz);
 	cudaStreamSynchronize(stream);
 	cudaStreamDestroy(stream);
 

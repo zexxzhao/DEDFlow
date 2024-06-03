@@ -36,8 +36,9 @@ FLAGS=-O3 \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			-Wno-deprecated-declarations
+DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE
 CC=gcc
-CFLAGS=-std=c99 -g3 $(FLAGS) -fsanitize=undefined # -fno-omit-frame-pointer
+CFLAGS=-std=c99 -g3 $(FLAGS) $(DEFINES) -fsanitize=undefined # -fno-omit-frame-pointer
 
 INC=-I$(CUDA_DIR)/include
 LIB=-lm
@@ -53,8 +54,9 @@ LIB+=-L$(MK_METIS_DIR)/lib -lmetis
 endif
 
 NVCC=nvcc
-NVCCFLAGS=-O3 -g -G -std=c++17  -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
-NVCCFLAGS+= --generate-code arch=compute_75,code=sm_75
+NVCCFLAGS=-O3 -g -G -std=c++17 $(DEFINES) -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
+NVCCFLAGS+= --generate-code arch=compute_75,code=sm_75 # RTX 2080 Ti
+NVCCFLAGS+= --generate-code arch=compute_86,code=sm_86 # RTX 3090
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand
 

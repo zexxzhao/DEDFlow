@@ -29,7 +29,7 @@ void CSRAttrDestroy(CSRAttr *attr);
 
 CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_index_type block_col);
 
-u32 CSRAttrLength(CSRAttr *attr, csr_index_type row);
+index_type CSRAttrLength(CSRAttr *attr, csr_index_type row);
 csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row);
 
 void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, csr_index_type batch_size, const index_type* row, const index_type* col, index_type* ind);

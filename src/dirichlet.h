@@ -5,13 +5,13 @@
 
 __BEGIN_DECLS__
 
-typedef enum BCType BCType;
 enum BCType {
 	BC_NONE = 0,
 	BC_STRONG = 1,
 	BC_WEAK = 2,
 	BC_OUTFLOW = 4
 };
+typedef enum BCType BCType;
 
 typedef struct Mesh3D Mesh3D;
 typedef struct Matrix Matrix;
@@ -20,10 +20,10 @@ typedef struct Dirichlet Dirichlet;
 struct Dirichlet {
 	const Mesh3D* mesh;
 	index_type face_ind;
-	index_type bnode_size;
-	index_type* bnode;
 	index_type shape;
-	BCType* bctype;
+	size_t buffer_size;
+	void* buffer;
+	BCType bctype[0];
 };
 
 Dirichlet* DirichletCreate(const Mesh3D* mesh, index_type face_ind, index_type shape);

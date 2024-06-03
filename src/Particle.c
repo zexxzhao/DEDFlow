@@ -5,9 +5,9 @@
 __BEGIN_DECLS__
 int sprintf(char *str, const char *format, ...);
 
-ParticleContext* ParticleContextCreate(u32 num_particle) {
+ParticleContext* ParticleContextCreate(index_type num_particle) {
 	ParticleContext* ctx;
-	ctx = (ParticleContext*)CdamMallocHost(sizeof(ParticleContext));
+	ctx = (ParticleContext*)CdamMallocHost(SIZE_OF(ParticleContext));
 	ParticleCTXNumParticle(ctx) = num_particle;
 	ctx->num_pointwise_dof = 9;
 
@@ -41,7 +41,7 @@ void ParticleContextDestroy(ParticleContext* ctx) {
 	ParticleCTXDeviceVel(ctx) = NULL;
 	ParticleCTXDeviceAcc(ctx) = NULL;
 
-	CdamFreeHost(ctx, sizeof(ParticleContext));
+	CdamFreeHost(ctx, SIZE_OF(ParticleContext));
 	ctx = NULL;
 }
 

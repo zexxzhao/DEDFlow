@@ -8,8 +8,8 @@ __BEGIN_DECLS__
 
 
 
-void PCJacobiDevice(u32 n, u32 nnz, f64* data, u32* row_ptr, u32* col_idx, f64* x, f64* y);
-void PCJacobiInplaceDevice(u32 n, u32 nnz, f64* data, u32* row_ptr, u32* col_idx, f64* x);
+void PCJacobiDevice(index_type n, index_type nnz, f64* data, index_type* row_ptr, index_type* col_idx, f64* x, f64* y);
+void PCJacobiInplaceDevice(index_type n, index_type nnz, f64* data, index_type* row_ptr, index_type* col_idx, f64* x);
 
 
 

@@ -78,7 +78,7 @@ b32 H5DatasetExist(H5FileInfo* h5file, const char* dataset_name) {
 	return status >= 0 && obj_info.type == H5O_TYPE_DATASET;
 }
 
-void H5GetDatasetSize(H5FileInfo* h5file, const char* dataset_name, u32* size) {
+void H5GetDatasetSize(H5FileInfo* h5file, const char* dataset_name, index_type* size) {
 	if(!H5DatasetExist(h5file, dataset_name)) {
 		*size = 0;
 		return;
@@ -92,8 +92,8 @@ void H5GetDatasetSize(H5FileInfo* h5file, const char* dataset_name, u32* size) {
 	ASSERT(ndims == 1 && "All arraies are flattened into 1D.\n");
 
 	H5Sget_simple_extent_dims(dataspace_id, &dataset_size, NULL);
-	ASSERT(dataset_size < UINT_MAX && "H5GetDatasetSize: Dataset size exceeds the limit of u32.\n");
-	*size = (u32)dataset_size;
+	ASSERT(dataset_size < UINT_MAX && "H5GetDatasetSize: Dataset size exceeds the limit of index_type.\n");
+	*size = (index_type)dataset_size;
 
 	H5Sclose(dataspace_id);
 	H5Dclose(dataset_id);
@@ -139,11 +139,35 @@ void H5ReadDatasetf64(H5FileInfo* h5file, const char* dataset_name, f64* data) {
 	H5ReadDataset(h5file, dataset_name, H5T_NATIVE_DOUBLE, (void*)data);
 }
 
+void H5ReadDatasetInd(H5FileInfo* h5file, const char* dataset_name, index_type* data) {
+#if defined(USE_U32_INDEX)
+	H5ReadDatasetu32(h5file, dataset_name, data);
+#elif defined(USE_I32_INDEX)
+	H5ReadDataseti32(h5file, dataset_name, data);
+#elif defined(USE_U64_INDEX)
+#error "H5ReadDatasetInd: U64 index is not supported yet!"
+#elif defined(USE_I64_INDEX)
+#error "H5ReadDatasetInd: I64 index is not supported yet!"
+#else
+#error "H5ReadDatasetInd: No index type is defined!"
+#endif
+}
+
+void H5ReadDatasetVal(H5FileInfo* h5file, const char* dataset_name, value_type* data) {
+#if defined(USE_F32_VALUE)
+	H5ReadDatasetf32(h5file, dataset_name, data);
+#elif defined(USE_F64_VALUE)
+	H5ReadDatasetf64(h5file, dataset_name, data);
+#else
+#error "H5ReadDatasetVal: No value type is defined!"
+#endif
+}
+
 
 /* Write a dataset to an HDF5 file */
 static void
 H5WriteDataset(H5FileInfo* h5file, const char *dataset_name,
-							 hid_t mem_type_id, u32 len, const void* data) {
+							 hid_t mem_type_id, index_type len, const void* data) {
 	hid_t group_id;
 	i32 index = 0;
 	char buff[256];
@@ -177,20 +201,43 @@ H5WriteDataset(H5FileInfo* h5file, const char *dataset_name,
 }
 
 
-void H5WriteDataseti32(H5FileInfo* h5file, const char *dataset_name, u32 len, const i32* data) {
+void H5WriteDataseti32(H5FileInfo* h5file, const char *dataset_name, index_type len, const i32* data) {
 	H5WriteDataset(h5file, dataset_name, H5T_NATIVE_INT32, len, (const void*)data);
 }
 
-void H5WriteDatasetu32(H5FileInfo* h5file, const char *dataset_name, u32 len, const u32* data) {
+void H5WriteDatasetu32(H5FileInfo* h5file, const char *dataset_name, index_type len, const u32* data) {
 	H5WriteDataset(h5file, dataset_name, H5T_NATIVE_UINT32, len, (const void*)data);
 }
 
-void H5WriteDatasetf32(H5FileInfo* h5file, const char *dataset_name, u32 len, const f32* data) {
+void H5WriteDatasetf32(H5FileInfo* h5file, const char *dataset_name, index_type len, const f32* data) {
 	H5WriteDataset(h5file, dataset_name, H5T_NATIVE_FLOAT, len, (const void*)data);
 }
 
-void H5WriteDatasetf64(H5FileInfo* h5file, const char *dataset_name, u32 len, const f64* data) {
+void H5WriteDatasetf64(H5FileInfo* h5file, const char *dataset_name, index_type len, const f64* data) {
 	H5WriteDataset(h5file, dataset_name, H5T_NATIVE_DOUBLE, len, (const void*)data);
 }
 
+void H5WriteDatasetInd(H5FileInfo* h5file, const char *dataset_name, index_type len, const index_type* data) {
+#if defined(USE_U32_INDEX)
+	H5WriteDatasetu32(h5file, dataset_name, len, data);
+#elif defined(USE_I32_INDEX)
+	H5WriteDataseti32(h5file, dataset_name, len, data);
+#elif defined(USE_U64_INDEX)
+#error "H5WriteDatasetInd: U64 index is not supported yet!"
+#elif defined(USE_I64_INDEX)
+#error "H5WriteDatasetInd: I64 index is not supported yet!"
+#else
+#error "H5WriteDatasetInd: No index type is defined!"
+#endif
+}
+
+void H5WriteDatasetVal(H5FileInfo* h5file, const char *dataset_name, index_type len, const value_type* data) {
+#if defined(USE_F32_VALUE)
+	H5WriteDatasetf32(h5file, dataset_name, len, (const f32*)data);
+#elif defined(USE_F64_VALUE)
+	H5WriteDatasetf64(h5file, dataset_name, len, (const f64*)data);
+#else
+#error "H5WriteDatasetVal: No value type is defined!"
+#endif
+}
 __END_DECLS__

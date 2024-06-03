@@ -34,9 +34,29 @@ typedef float f32;
 typedef double f64;
 
 typedef char byte;
+typedef ptrdiff_t size;
 
+#ifdef USE_F64_VALUE
 typedef f64 value_type;
+#elif defined(USE_F32_VALUE)
+typedef f32 value_type;
+#else
+#warning "No value type specified, using f64"
+typedef f64 value_type;
+#endif
+
+#if defined(USE_U32_INDEX)
 typedef u32 index_type;
+#elif defined(USE_U64_INDEX)
+typedef u64 index_type;
+#elif defined(USE_I32_INDEX)
+typedef i32 index_type;
+#elif defined(USE_I64_INDEX)
+typedef i64 index_type;
+#else
+#warning "No index type specified, using i32"
+typedef i32 index_type;
+#endif
 
 /* Boolean */
 typedef int32_t b32;
@@ -44,7 +64,7 @@ typedef int32_t b32;
 #define FALSE (1==0)
 #define BOOL_C(x) (!!(x))
 
-typedef ptrdiff_t size;
+#define SIZE_OF(x) ((index_type)sizeof(x))
 
 #if defined(NDEBUG)
 #	define ASSERT(expr) /* empty */
@@ -77,6 +97,7 @@ GPUAssertPrivate(cudaError_t code, const char *file, int line) {
 	}
 }
 
+#define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
 __END_DECLS__
 #endif /* __COMMON_H__ */

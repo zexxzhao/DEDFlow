@@ -19,40 +19,41 @@ void ColorMeshTet(const Mesh3D* mesh, index_type max_color_len, color_t* color) 
 	index_type num_node = Mesh3DDataNumNode(device_data);
 	u32 color_count[MAX_COLOR];
 
-	// memset(color, UNCOLORED, num_elem * sizeof(index_type));
-	cudaMemset(color, UNCOLORED, num_elem * sizeof(index_type));
-	memset(color_count, 0, MAX_COLOR * sizeof(u32));
+	// memset(color, UNCOLORED, num_elem * SIZE_OF(index_type));
+	cudaMemset(color, UNCOLORED, num_elem * SIZE_OF(index_type));
+	memset(color_count, 0, MAX_COLOR * SIZE_OF(u32));
 	
 	/* Build a vertex2element graph */	
-	index_type* v2e_row_ptr = (index_type*)CdamMallocDevice((num_node + 1) * sizeof(index_type));
+	index_type* v2e_row_ptr = (index_type*)CdamMallocDevice((num_node + 1) * SIZE_OF(index_type));
 	GenerateV2EMapRowTetGPU(ien, num_elem, num_node, v2e_row_ptr);
 	index_type v2e_nnz;
-	cublasGetVector(1, sizeof(index_type), v2e_row_ptr + num_node, 1, &v2e_nnz, 1);
-	index_type* v2e_col_ind = (index_type*)CdamMallocDevice(v2e_nnz * sizeof(index_type));
+	cublasGetVector(1, SIZE_OF(index_type), v2e_row_ptr + num_node, 1, &v2e_nnz, 1);
+	index_type* v2e_col_ind = (index_type*)CdamMallocDevice(v2e_nnz * SIZE_OF(index_type));
 	GenerateV2EMapColTetGPU(ien, num_elem, num_node, v2e_row_ptr, v2e_col_ind);
 
 	if (0) {
 		FILE* fp_row = fopen("v2e_row_ptr.txt", "w");
-		index_type* v2e_row_ptr_host = (index_type*)CdamMallocHost((num_node + 1) * sizeof(index_type));
-		cudaMemcpy(v2e_row_ptr_host, v2e_row_ptr, (num_node + 1) * sizeof(index_type), cudaMemcpyDeviceToHost);
+		index_type* v2e_row_ptr_host = (index_type*)CdamMallocHost((num_node + 1) * SIZE_OF(index_type));
+		cudaMemcpy(v2e_row_ptr_host, v2e_row_ptr, (num_node + 1) * SIZE_OF(index_type), cudaMemcpyDeviceToHost);
 		for (index_type i = 0; i < num_node + 1; i++) {
 			fprintf(fp_row, "%d\n", v2e_row_ptr_host[i]);
 		}
-		CdamFreeHost(v2e_row_ptr_host, (num_node + 1) * sizeof(index_type));
+		CdamFreeHost(v2e_row_ptr_host, (num_node + 1) * SIZE_OF(index_type));
 
 		fclose(fp_row);
 		FILE* fp_col = fopen("v2e_col_ind.txt", "w");
-		index_type* v2e_col_ind_host = (index_type*)CdamMallocHost(v2e_nnz * sizeof(index_type));
-		cudaMemcpy(v2e_col_ind_host, v2e_col_ind, v2e_nnz * sizeof(index_type), cudaMemcpyDeviceToHost);
+		index_type* v2e_col_ind_host = (index_type*)CdamMallocHost(v2e_nnz * SIZE_OF(index_type));
+		cudaMemcpy(v2e_col_ind_host, v2e_col_ind, v2e_nnz * SIZE_OF(index_type), cudaMemcpyDeviceToHost);
 		for (index_type i = 0; i < v2e_nnz; i++) {
 			fprintf(fp_col, "%d\n", v2e_col_ind_host[i]);
 		}
-		CdamFreeHost(v2e_col_ind_host, v2e_nnz * sizeof(index_type));
+		CdamFreeHost(v2e_col_ind_host, v2e_nnz * SIZE_OF(index_type));
 		fclose(fp_col);
 	}
 	/* Jones-Plassman-Luby algorithm */
 	ColorElementJPLTetGPU(ien, v2e_row_ptr, v2e_col_ind, MAX_COLOR, color, num_elem);
-
+	CdamFreeDevice(v2e_row_ptr, (num_node + 1) * SIZE_OF(index_type));
+	CdamFreeDevice(v2e_col_ind, v2e_nnz * SIZE_OF(index_type));
 }
 
 

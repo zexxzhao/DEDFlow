@@ -15,40 +15,70 @@
 #include "Mesh.h"
 #include "Field.h"
 #include "Particle.h"
+#include "dirichlet.h"
 #include "csr.h"
 #include "krylov.h"
 #include "assemble.h"
 
 #define kRHOC (0.5)
-#define kDT (1e-1)
+#define kDT (1e-3)
 #define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
 #define BS (6)
 
-void AssembleSystem(Mesh3D* mesh, f64* wgalpha, f64* dwgalpha, f64* F, Matrix* J) {
-	// u32 i, j, k;
-	// u32 num_node = (u32)Mesh3DDataNumNode(Mesh3DHost(mesh));
-	u32 num_tet = (u32)Mesh3DDataNumTet(Mesh3DHost(mesh));
-	u32 num_prism = (u32)Mesh3DDataNumPrism(Mesh3DHost(mesh));
-	u32 num_hex = (u32)Mesh3DDataNumHex(Mesh3DHost(mesh));
+void AssembleSystem(Mesh3D* mesh,
+										f64* wgalpha, f64* dwgalpha,
+										f64* F, Matrix* J,
+										Dirichlet** bcs, index_type nbc) {
+	// index_type i, j, k;
+	index_type num_node = (index_type)Mesh3DNumNode(mesh);
+	index_type num_tet = (index_type)Mesh3DNumTet(mesh);
+	index_type num_prism = (index_type)Mesh3DNumPrism(mesh);
+	index_type num_hex = (index_type)Mesh3DDataNumHex(mesh);
 	// f64* xg = Mesh3DDataCoord(Mesh3DHost(mesh));
+
+	/* Zero the RHS and LHS */
+	if(F) {
+		cudaMemset(F, 0, num_node * SIZE_OF(f64) * BS);
+	}
+	if(J) {
+		MatrixZero(J);
+	}
 
 	if(num_tet) {
 		AssembleSystemTet(mesh, wgalpha, dwgalpha, F, J);
-		AssembleSystemTetFacet(mesh, wgalpha, dwgalpha, F, J);
+		AssembleSystemTetFace(mesh, wgalpha, dwgalpha, F, J);
 	}
+	CUGUARD(cudaGetLastError());
 	
 	if(num_prism) {
 	}
 
 	if(num_hex) {
 	}
+
+	if(F) {
+		cudaMemset(F + 4 * num_node, 0, num_node * SIZE_OF(f64) * 2);
+		CUGUARD(cudaGetLastError());
+	}
+	for(index_type ibc = 0; ibc < nbc; ++ibc) {
+		if(F) {
+			DirichletApplyVec(bcs[ibc], F);
+		}
+		if(J) {
+			DirichletApplyMat(bcs[ibc], J);
+		}
+	}
 }
 
-void SolveFlowSystem(Mesh3D* mesh, f64* wgold, f64* dwgold, f64* dwg, Matrix* J, f64* F, f64* dx, Krylov* ksp) {
-	u32 maxit = 4, iter = 0;
+void SolveFlowSystem(Mesh3D* mesh,
+										 f64* wgold, f64* dwgold, f64* dwg,
+										 Matrix* J, f64* F, f64* dx,
+										 Krylov* ksp,
+										 Dirichlet** bcs, index_type nbc) {
+	index_type maxit = 4, iter = 0;
 	f64 tol = 1.0e-5;
 	b32 converged = FALSE;
 	f64 rnorm, rnorm_init;
@@ -62,30 +92,44 @@ void SolveFlowSystem(Mesh3D* mesh, f64* wgold, f64* dwgold, f64* dwg, Matrix* J,
 	cublasHandle_t handle;
 	cublasCreate(&handle);
 
-	u32 num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
+	index_type num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
 
-	f64* wgalpha = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
-	f64* dwgalpha = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
+	f64* wgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
+	f64* dwgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
+
+	f64* h_F = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
 
 	/* dwgalpha = fact1[0] * dwgold + fact[1] * dwg */ 
-	cudaMemset(dwgalpha, 0, num_node * sizeof(f64) * BS);
+	cudaMemset(dwgalpha, 0, num_node * SIZE_OF(f64) * BS);
 	cublasDaxpy(handle, num_node * BS, fact1 + 0, dwgold, 1, dwgalpha, 1);
 	cublasDaxpy(handle, num_node * BS, fact1 + 1, dwg, 1, dwgalpha, 1);
+	/* dwgalpha[3, :] = -dwgold[3, :] */
 	cublasDcopy(handle, num_node, dwg + num_node * 3, 1, dwgalpha + num_node * 3, 1);
 
 	/* wgalpha = wgold + fact2[0] * dwgold + fact2[1] * dwg */
 	cublasDcopy(handle, num_node * BS, wgold, 1, wgalpha, 1);
 	cublasDaxpy(handle, num_node * BS, fact2 + 0, dwgold, 1, wgalpha, 1);
 	cublasDaxpy(handle, num_node * BS, fact2 + 1, dwg, 1, wgalpha, 1);
-	cudaMemset(wgalpha + num_node * 3, 0, num_node * sizeof(f64));
+	cudaMemset(wgalpha + num_node * 3, 0, num_node * SIZE_OF(f64));
 
 	/* Construct the right-hand side */
 	
 	start = clock();
-	AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL);
+	AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
 	end = clock();
 	fprintf(stdout, "Assemble time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 	cublasDnrm2(handle, num_node * BS, F, 1, &rnorm_init);
+
+	if(0 && F) {
+		cudaMemcpy(h_F, F, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
+		FILE* fp = fopen("F.txt", "w");
+		for(index_type i = 0; i < num_node * BS; i++) {
+			fprintf(fp, "%g\n", h_F[i]);
+		}
+		fclose(fp);
+		printf("F norm: %g\n", rnorm_init);
+		exit(0);
+	}
 
 
 	CUGUARD(cudaGetLastError());
@@ -96,14 +140,17 @@ void SolveFlowSystem(Mesh3D* mesh, f64* wgold, f64* dwgold, f64* dwg, Matrix* J,
 	while(!converged && iter < maxit) {
 		/* Construct the Jacobian matrix */
 		start = clock();
-		AssembleSystem(mesh, wgalpha, dwgalpha, NULL, J);
+		AssembleSystem(mesh, wgalpha, dwgalpha, NULL, J, bcs, nbc);
 		end = clock();
 		fprintf(stdout, "Assemble J time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		CUGUARD(cudaGetLastError());
 		
 	
 		/* Solve the linear system */
-		cudaMemset(dx, 0, num_node * sizeof(f64));
+		cudaMemset(dx, 0, num_node * SIZE_OF(f64) * BS);
+		for(index_type ibc = 0; ibc < nbc; ++ibc) {
+			DirichletApplyVec(bcs[ibc], dx);
+		}
 		start = clock();
 		KrylovSolve(ksp, J, dx, F);
 		end = clock();
@@ -126,7 +173,7 @@ void SolveFlowSystem(Mesh3D* mesh, f64* wgold, f64* dwgold, f64* dwg, Matrix* J,
 
 
 		start = clock();
-		AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL);
+		AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
 		end = clock();
 		fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		cublasDnrm2(handle, num_node * BS, F, 1, &rnorm);
@@ -139,8 +186,8 @@ void SolveFlowSystem(Mesh3D* mesh, f64* wgold, f64* dwgold, f64* dwg, Matrix* J,
 
 	}
 
-	CdamFreeDevice(dwgalpha, num_node * sizeof(f64) * BS);
-	CdamFreeDevice(wgalpha, num_node * sizeof(f64) * BS);
+	CdamFreeDevice(dwgalpha, num_node * SIZE_OF(f64) * BS);
+	CdamFreeDevice(wgalpha, num_node * SIZE_OF(f64) * BS);
 	cublasDestroy(handle);
 }
 
@@ -150,14 +197,14 @@ void MyFieldInit(f64* value, void* ctx) {
 	double z, h;
 	Mesh3D* mesh = (Mesh3D*)ctx;
 	Mesh3DData* data = Mesh3DHost(mesh);
-	u32 i;
-	u32 num_node = Mesh3DDataNumNode(data);
+	index_type i;
+	index_type num_node = Mesh3DDataNumNode(data);
 	f64* coord = Mesh3DDataCoord(data);
 
 	for(i = 0; i < num_node; i++) {
-		value[i * 3 + 0] = coord[i * 3 + 0];
-		value[i * 3 + 1] = coord[i * 3 + 1];
-		value[i * 3 + 2] = coord[i * 3 + 2];
+		value[i * 3 + 0] = 1.0; // coord[i * 3 + 0];
+		value[i * 3 + 1] = 0.0; // coord[i * 3 + 1];
+		value[i * 3 + 2] = 0.0; // coord[i * 3 + 2];
 	}
 	for(i = 0; i < num_node; ++i) {
 		z = 2e-4 - coord[i * 3 + 2];
@@ -171,8 +218,8 @@ void MyFieldInit(f64* value, void* ctx) {
 			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
 		}
 		value[num_node * 3 + i] = 0.0;
-		value[num_node * 4 + i] = h;
-		value[num_node * 5 + i] = h;
+		value[num_node * 4 + i] = coord[i * 3 + 0];
+		value[num_node * 5 + i] = -coord[i * 3 + 0];
 	}
 }
 
@@ -204,24 +251,24 @@ int main() {
 		printf("==================================================\n");
 	}
 
-	H5FileInfo* h5_handler = H5OpenFile("cube.h5", "r");
+	H5FileInfo* h5_handler = H5OpenFile("box.h5", "r");
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);
 
 	cublasHandle_t handle;
 	cublasCreate(&handle);
-	u32 num_node = Mesh3DNumNode(mesh);
+	index_type num_node = Mesh3DNumNode(mesh);
 
-	index_type n_offset = 5;
+	index_type n_offset = 4;
 	index_type offset[] = {0, 3, 4, 5, 6};
 
 	CSRAttr* spy1x1 = CSRAttrCreate(mesh);
 	CSRAttr* spy1x3 = CSRAttrCreateBlock(spy1x1, 1, 3);
 	CSRAttr* spy3x1 = CSRAttrCreateBlock(spy1x1, 3, 1);
 	CSRAttr* spy3x3 = CSRAttrCreateBlock(spy1x1, 3, 3);
-	Matrix* J = MatrixCreateTypeNested(n_offset, offset);
-	MatrixNested* mat_nested = (MatrixNested*)J->data;
-	mat_nested->csr_auxiliary = spy1x1;
+	Matrix* J = MatrixCreateTypeFS(n_offset, offset);
+	MatrixFS* mat_nested = (MatrixFS*)J->data;
+	mat_nested->spy1x1 = spy1x1;
 
 	mat_nested->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3);
 	mat_nested->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1);
@@ -242,6 +289,7 @@ int main() {
 	mat_nested->mat[4*3+1] = MatrixCreateTypeCSR(spy1x1);
 	mat_nested->mat[4*3+2] = MatrixCreateTypeCSR(spy1x1);
 	mat_nested->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
+	MatrixSetup(J);
 
 	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-5);
 
@@ -250,19 +298,20 @@ int main() {
 	start = time(NULL);
 	Mesh3DGenerateColorBatch(mesh);
 	end = time(NULL);
-	fprintf(stdout, "Coloring time: %f s\n", difftime(end, start));
+	fprintf(stdout, "Coloring time: %f ms\n", difftime(end, start) * 1000.0);
 	if(0){
 		// Mesh3DData* dev = Mesh3DHost(mesh);
-		// u32 num_elem = dev->num_tet;
-		// color_t* h_color = (color_t*)CdamMallocHost(num_elem * sizeof(color_t));
+		// index_type num_elem = dev->num_tet;
+		// color_t* h_color = (color_t*)CdamMallocHost(num_elem * SIZE_OF(color_t));
 		// color_t* d_color = mesh->color;
-		// cudaMemcpy(h_color, d_color, num_elem * sizeof(color_t), D2H);
+		// cudaMemcpy(h_color, d_color, num_elem * SIZE_OF(color_t), D2H);
 		// FILE* fp = fopen("color.txt", "w");
-		// for (u32 i = 0; i < num_elem; i++) {
+		// for (index_type i = 0; i < num_elem; i++) {
 		// 	fprintf(fp, "%d\n", h_color[i]);
 		// }
 		// return 0;
 	}
+
 
 
 	// Field* wgold = FieldCreate3D(mesh, 1);
@@ -271,42 +320,58 @@ int main() {
 	// FieldUpdateDevice(wgold);
 	// FieldUpdateDevice(dwgold);
 	// FieldUpdateDevice(dwg);
-	f64* wgold = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
-	f64* dwgold = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
-	f64* dwg = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
-	f64* buffer = (f64*)CdamMallocHost(num_node * sizeof(f64) * BS);
+	f64* wgold = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
+	f64* dwgold = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
+	f64* dwg = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
+	f64* buffer = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
 
-	f64* F = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
-	f64* dx = (f64*)CdamMallocDevice(num_node * sizeof(f64) * BS);
+	f64* F = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
+	f64* dx = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
 
-	cudaMemset(wgold, 0, num_node * sizeof(f64) * BS);
-	cudaMemset(dwgold, 0, num_node * sizeof(f64) * BS);
-	cudaMemset(dwg, 0, num_node * sizeof(f64) * BS);
-	memset(buffer, 0, num_node * sizeof(f64) * BS);
+	cudaMemset(wgold, 0, num_node * SIZE_OF(f64) * BS);
+	cudaMemset(dwgold, 0, num_node * SIZE_OF(f64) * BS);
+	cudaMemset(dwg, 0, num_node * SIZE_OF(f64) * BS);
+	memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
 
 	ParticleContext* pctx = ParticleContextCreate(100);
 	ParticleContextUpdateDevice(pctx);
+
+	Dirichlet* bcs[] = {DirichletCreate(mesh, 0, 3),
+											DirichletCreate(mesh, 2, 3),
+											DirichletCreate(mesh, 3, 3)};
+
+	bcs[0]->bctype[0] = BC_STRONG;
+	bcs[0]->bctype[1] = BC_STRONG;
+	bcs[0]->bctype[2] = BC_STRONG;
+	// bcs[0]->bctype[4] = BC_STRONG;
+	// bcs[0]->bctype[5] = BC_STRONG;
+
+	bcs[1]->bctype[1] = BC_STRONG;
+
+	bcs[2]->bctype[2] = BC_STRONG;
+
+
 	if (step) {
 		sprintf(filename_buffer, "sol.%d.h5", step);
 		h5_handler = H5OpenFile(filename_buffer, "r");
 		// FieldLoad(wgold, h5_handler, "w");
 		// FieldLoad(dwgold, h5_handler, "dw");
-		memset(buffer, 0, num_node * sizeof(f64) * BS);
+		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
 		H5ReadDatasetf64(h5_handler, "u", buffer);
 		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
 		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
-		cudaMemcpy(wgold, buffer, num_node * sizeof(f64) * 3, cudaMemcpyHostToDevice);
+		cudaMemcpy(wgold, buffer, num_node * SIZE_OF(f64) * 3, cudaMemcpyHostToDevice);
 
-		memset(buffer, 0, num_node * sizeof(f64) * BS);
+		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
 		H5ReadDatasetf64(h5_handler, "du", buffer);
 		H5ReadDatasetf64(h5_handler, "p", buffer + num_node * 3);
 		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
 		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
-		cudaMemcpy(dwgold, buffer, num_node * sizeof(f64) * BS, cudaMemcpyHostToDevice);
+		cudaMemcpy(dwgold, buffer, num_node * SIZE_OF(f64) * BS, cudaMemcpyHostToDevice);
 
 		// ParticleContextLoad(pctx, h5_handler, "ptc/test/group/context");
 		
-		cudaMemcpy(dwg, dwgold, num_node * sizeof(f64) * BS, cudaMemcpyDeviceToDevice);
+		cudaMemcpy(dwg, dwgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToDevice);
 
 		H5CloseFile(h5_handler);
 	}
@@ -319,16 +384,16 @@ int main() {
 		/* dwgold[0:3*N] = 0 */
 		/* dwgold[4*N:5*N] = buffer[4*N:5*N] */
 		/* dwgold[5*N:6*N] = 0 */
-		cudaMemcpy(wgold, buffer, num_node * sizeof(f64) * BS, cudaMemcpyHostToDevice);
-		cudaMemset(wgold + num_node * 3, 0, num_node * sizeof(f64));
-		cudaMemcpy(dwgold + num_node * 3, buffer + num_node * 3, num_node * sizeof(f64), cudaMemcpyHostToDevice);
+		cudaMemcpy(wgold, buffer, num_node * SIZE_OF(f64) * BS, cudaMemcpyHostToDevice);
+		cudaMemset(wgold + num_node * 3, 0, num_node * SIZE_OF(f64));
+		cudaMemcpy(dwgold + num_node * 3, buffer + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyHostToDevice);
 	
 		h5_handler = H5OpenFile("sol.0.h5", "w");
 		H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
 		H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
 		H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
 
-		memset(buffer, 0, num_node * sizeof(f64) * BS);
+		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
 		H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
 		H5WriteDatasetf64(h5_handler, "p", num_node * 3, buffer + num_node * 3);
 		H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
@@ -351,7 +416,7 @@ int main() {
 		/* Newton-Raphson iteration */
 		converged = FALSE;
 		while(!converged) {
-			SolveFlowSystem(mesh, wgold, dwgold, dwg, J, F, dx, ksp);
+			SolveFlowSystem(mesh, wgold, dwgold, dwg, J, F, dx, ksp, bcs, 3);
 #ifdef DEBUG
 			SolveParticleSystem(pctx);
 #endif
@@ -373,16 +438,16 @@ int main() {
 			sprintf(filename_buffer, "sol.%d.h5", step);
 			h5_handler = H5OpenFile(filename_buffer, "w");
 		
-			cudaMemcpy(buffer, wgold, num_node * sizeof(f64) * BS, cudaMemcpyDeviceToHost);
+			cudaMemcpy(buffer, wgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
 			H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
 			H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
 			H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
 
-			cudaMemcpy(buffer, dwgold, num_node * sizeof(f64) * BS, cudaMemcpyDeviceToHost);
+			cudaMemcpy(buffer, dwgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
 			H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
 			H5WriteDatasetf64(h5_handler, "p", num_node, buffer + num_node * 3);
-			H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
-			H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
+			H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
+			H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
 			
 			// ParticleContextUpdateHost(pctx);
 			// ParticleContextSave(pctx, h5_handler, "ptc/test/group/context");
@@ -392,14 +457,25 @@ int main() {
 
 
 	ParticleContextDestroy(pctx);
-	CdamFreeDevice(wgold, num_node * sizeof(f64) * BS);
-	CdamFreeDevice(dwgold, num_node * sizeof(f64) * BS);
-	CdamFreeDevice(dwg, num_node * sizeof(f64) * BS);
+	for(index_type ibc = 0; ibc < 3; ++ibc) {
+		DirichletDestroy(bcs[ibc]);
+	}
+	CdamFreeDevice(F, num_node * SIZE_OF(f64) * BS);
+	CdamFreeDevice(dx, num_node * SIZE_OF(f64) * BS);
+	CdamFreeDevice(wgold, num_node * SIZE_OF(f64) * BS);
+	CdamFreeDevice(dwgold, num_node * SIZE_OF(f64) * BS);
+	CdamFreeDevice(dwg, num_node * SIZE_OF(f64) * BS);
+	CdamFreeHost(buffer, num_node * SIZE_OF(f64) * BS);
 	cublasDestroy(handle);
 	MatrixDestroy(J);
+	KrylovDestroy(ksp);
 	// FieldDestroy(wgold);
 	// FieldDestroy(dwgold);
 	// FieldDestroy(dwg);
+	CSRAttrDestroy(spy1x1);
+	CSRAttrDestroy(spy1x3);
+	CSRAttrDestroy(spy3x1);
+	CSRAttrDestroy(spy3x3);
 	Mesh3DDestroy(mesh);
 	return 0;
 }

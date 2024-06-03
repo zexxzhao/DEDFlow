@@ -7,7 +7,7 @@
 #include "Mesh.h"
 __BEGIN_DECLS__
 
-void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part);
+void PartitionMesh3DMETIS(Mesh3D* mesh, index_type num_part);
 
 __END_DECLS__
 
