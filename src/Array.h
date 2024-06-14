@@ -10,13 +10,13 @@ typedef struct H5FileInfo H5FileInfo;
 typedef struct Array Array;
 struct Array {
 	b32 is_host;
-	u32 len;
+	index_type len;
 	f64 *data;
 };
 
 
-Array* ArrayCreateHost(u32 len);
-Array* ArrayCreateDevice(u32 len);
+Array* ArrayCreateHost(index_type len);
+Array* ArrayCreateDevice(index_type len);
 void ArrayDestroy(Array* a);
 
 void ArrayCopy(Array* dst, const Array* src, MemCopyKind kind);
@@ -24,8 +24,8 @@ void ArrayCopy(Array* dst, const Array* src, MemCopyKind kind);
 void ArraySet(Array* a, f64 val);
 void ArrayZero(Array* a);
 
-void ArraySetAt(Array* a, u32 n, const u32* idx, const f64* val);
-void ArrayGetAt(const Array* a, u32 n, const u32* idx, f64* val);
+void ArraySetAt(Array* a, index_type n, const index_type* idx, const f64* val);
+void ArrayGetAt(const Array* a, index_type n, const index_type* idx, f64* val);
 
 void ArrayScale(Array* a, f64 val);
 void ArrayDot(f64* result, const Array* a, const Array* b);

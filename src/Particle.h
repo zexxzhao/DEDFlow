@@ -11,7 +11,7 @@ typedef struct H5FileInfo H5FileInfo;
 
 typedef struct ParticleContext ParticleContext;
 struct ParticleContext {
-	u32 num_particle;
+	index_type num_particle;
 	i32 num_pointwise_dof; /* number of pointwise degrees of freedom (=9) */
 	Array* h_arr[3]; /* host array */
 	Array* d_arr[3]; /* device array */
@@ -19,7 +19,7 @@ struct ParticleContext {
 };
 
 
-ParticleContext* ParticleContextCreate(u32 num_particle);
+ParticleContext* ParticleContextCreate(index_type num_particle);
 void ParticleContextDestroy(ParticleContext* ctx);
 
 void ParticleContextCopy(ParticleContext* dst, const ParticleContext* src);

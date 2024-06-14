@@ -27,31 +27,34 @@ SetRowLength(Index num_rows, const Index* __restrict__ row_ptr,
 						 Index block_row, Index block_col,
 						 Index* __restrict__ new_row_ptr) {
 	Index i = blockIdx.x * blockDim.x + threadIdx.x;
-	Index row = i / num_rows;
-	Index lane = i % num_rows;
-	
-	if (i < num_rows) {
-		Index start = row_ptr[i];
-		Index len = row_ptr[i + 1] - start;
-		new_row_ptr[i + 1] = start * block_row * block_col + lane * block_col * len;
+	if (i >= num_rows) return;
+	Index start = row_ptr[i];
+	Index len = row_ptr[i + 1] - start;
+	for(Index j = 0; j < block_row; j++) {
+		new_row_ptr[i * block_row + j] = start * block_row * block_col + j * block_col * len;
 	}
 }
 
 template<typename Index>
 __global__ void
-SetColIndex(Index nnz, Index num_rows, const Index* __restrict__ row_ptr, const Index* __restrict__ col_ind,
+SetColIndex(Index nnz, Index num_rows, 
+						const Index* __restrict__ row_ptr, const Index* __restrict__ col_ind,
 						Index block_row, Index block_col,
-						const Index* __restrict__ find_row,
 						const Index* __restrict__ new_row_ptr, Index* __restrict__ new_col_ind) {
+
 	Index i = blockIdx.x * blockDim.x + threadIdx.x;
-	while(i < nnz * block_row * block_col) {
-		Index row = find_row[i / block_row];
+	if (i >= num_rows) return;
+	Index start = row_ptr[i], end = row_ptr[i + 1];
+	Index len = end - start;
 
-		Index col = col_ind[i / (block_row* block_col)];
-		
-		new_col_ind[i] = col * block_col + i % block_col;
-
-		i += blockDim.x * gridDim.x;
+	for (Index j = 0; j < block_row; j++) {
+		Index row = i * block_row + j;
+		for(Index k = 0; k < len; k++) {
+			Index col = col_ind[start + k];
+			for(Index l = 0; l < block_col; l++) {
+				new_col_ind[new_row_ptr[row] + k * block_col + l] = col * block_col + l;
+			}
+		}
 	}
 }
 
@@ -85,6 +88,24 @@ GenerateV2VMap(Index num_elem, const Index* __restrict__ ien, Index* __restrict_
 }
 */
 
+template <typename I>
+__global__ void
+CSRAttrGetNZIndBatchedKernel(I num_row, I num_col, const I* row_ptr, const I* col_ind,
+														 I batch_size, const I* row, const I* col, I* ind) {
+	I i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i >= batch_size) return;
+
+	I row_start = row_ptr[row[i]];
+	I row_end = row_ptr[row[i] + 1];
+
+	for(I j = row_start; j < row_end; j++) {
+		if(col[j] == col[i]) {
+			ind[i] = j;
+			return;
+		}
+	}
+}
+
 
 __BEGIN_DECLS__
 
@@ -93,13 +114,13 @@ void GenerateCSRFromMesh(const Mesh3D* mesh, CSRAttr* attr) {
 	index_t num_node = Mesh3DNumNode(mesh);
 	index_t num_elem = Mesh3DNumTet(mesh);
 	const Mesh3DData* device = Mesh3DDevice(mesh);
-	u32* ien = device->ien;
-	index_t* buffer = (index_t*)CdamMallocDevice(sizeof(index_t) * num_node * MAX_ROW_LENGTH);
+	index_type* ien = device->ien;
+	index_t* buffer = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 	/* Generate a vertex-to-vetex mapping */
-	cudaMemset(buffer, 0, sizeof(index_t) * num_node * MAX_ROW_LENGTH);
+	cudaMemset(buffer, 0, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 	fprintf(stderr, "Not implemented\n");
 
-	CdamFreeDevice(buffer, sizeof(index_t) * num_node * MAX_ROW_LENGTH);
+	CdamFreeDevice(buffer, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 }
 
 void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_size[2]) {
@@ -118,21 +139,36 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 	CSRAttrNumCol(new_attr) = num_cols * block_col;
 	CSRAttrNNZ(new_attr) = nnz * block_row * block_col;
 
-	CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(sizeof(index_t) * (CSRAttrNumRow(new_attr) + 1));
-	CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(sizeof(index_t) * CSRAttrNNZ(new_attr));
-	index_t* find_row = (index_t*)CdamMallocDevice(sizeof(index_t) * nnz);
+	CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * (CSRAttrNumRow(new_attr) + 1));
+	CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * CSRAttrNNZ(new_attr));
+	// index_t* find_row = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * nnz);
 
 	int block_dim = 256;
 	int block_num = (num_rows + block_dim - 1) / block_dim;
-	GetFindRowKernel<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, find_row);
-	SetRowLength<<<block_num, block_dim, 0, stream>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
-	SetColIndex<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, find_row, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
+	// GetFindRowKernel<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, find_row);
+	SetRowLength<<<CEIL_DIV(num_rows, block_dim), block_dim, 0, stream>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
+	SetColIndex<<<CEIL_DIV(num_rows, block_dim), block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
 
-	CdamFreeDevice(find_row, sizeof(index_t) * nnz);
+	// CdamFreeDevice(find_row, SIZE_OF(index_t) * nnz);
 	cudaStreamSynchronize(stream);
 	cudaStreamDestroy(stream);
 
 }
 
+void CSRAttrGetNZIndBatchedGPU(const CSRAttr* attr,
+																 csr_index_type batch_size, const csr_index_type* row, const csr_index_type* col,
+																 csr_index_type* ind) {
+	csr_index_type num_rows = CSRAttrNumRow(attr);
+	csr_index_type num_cols = CSRAttrNumCol(attr);
+	csr_index_type nnz = CSRAttrNNZ(attr);
+	const csr_index_type* row_ptr = CSRAttrRowPtr(attr);
+	const csr_index_type* col_ind = CSRAttrColInd(attr);
+
+	int block_dim = 256;
+	int grid_dim = (batch_size + block_dim - 1) / block_dim;
+	CSRAttrGetNZIndBatchedKernel<index_type><<<grid_dim, block_dim>>>(num_rows, num_cols, row_ptr, col_ind, /* csr */
+																																	  batch_size, row, col, ind);
+
+}
 
 __END_DECLS__

@@ -13,10 +13,10 @@ typedef int idx_t;
 
 __BEGIN_DECLS__
 
-void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
+void PartitionMesh3DMETIS(Mesh3D* mesh, index_type num_part) {
 #ifdef USE_METIS
 	Mesh3DData* host = Mesh3DHost(mesh);
-	u32* ien = Mesh3DDataIEN(host);
+	index_type* ien = Mesh3DDataIEN(host);
 	idx_t num_node = Mesh3DNumNode(mesh);
 	idx_t num_tet = Mesh3DNumTet(mesh);
 	idx_t num_prism = Mesh3DNumPrism(mesh);
@@ -25,15 +25,15 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
 	idx_t* eptr;
 	idx_t* epart;
 	idx_t* npart;
-	u32* epart_u32;
+	index_type* epart_index_type;
 
 	i32 i;
 
 	/* Generate the element array */
-	idx_t* eind = (idx_t*)CdamMallocHost(sizeof(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
-	memcpy(eind, ien, sizeof(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
+	idx_t* eind = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
+	memcpy(eind, ien, SIZE_OF(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
 	/* Generate the offset array */
-	eptr = (idx_t*)CdamMallocHost(sizeof(idx_t) * (num_tet + num_prism + num_hex + 1));
+	eptr = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * (num_tet + num_prism + num_hex + 1));
 	eptr[0] = 0;
 	for (i = 0; i < num_tet; i++) {
 		eptr[i + 1] = eptr[i] + 4;
@@ -46,8 +46,8 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
 	}
 
 	/* Allocate the element and node partition arrays */
-	epart = (idx_t*)CdamMallocHost(sizeof(idx_t) * (num_tet + num_prism + num_hex));
-	npart = (idx_t*)CdamMallocHost(sizeof(idx_t) * num_node);
+	epart = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * (num_tet + num_prism + num_hex));
+	npart = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * num_node);
 
 	/* Prepare the METIS input */
 	idx_t objval;
@@ -60,19 +60,19 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, u32 num_part) {
 
 	/* Call METIS */
 	METIS_PartMeshNodal(&num_tet, &num_node, eptr, eind, NULL, NULL, &nparts, NULL, options, &objval, epart, npart);
-	epart_u32 = (u32*)CdamMallocHost(sizeof(u32) * (num_tet + num_prism + num_hex));
+	epart_index_type = (index_type*)CdamMallocHost(SIZE_OF(index_type) * (num_tet + num_prism + num_hex));
 	for (i = 0; i < num_tet + num_prism + num_hex; i++) {
-		epart_u32[i] = (u32)epart[i];
+		epart_index_type[i] = (index_type)epart[i];
 	}
 
 	/* Copy the partitioning result */
-	cudaMemcpy(mesh->epart, epart_u32, sizeof(u32) * (num_tet + num_prism + num_hex), cudaMemcpyHostToDevice);
+	cudaMemcpy(mesh->epart, epart_index_type, SIZE_OF(index_type) * (num_tet + num_prism + num_hex), cudaMemcpyHostToDevice);
 
-	CdamFreeHost(epart_u32, sizeof(u32) * (num_tet + num_prism + num_hex));
-	CdamFreeHost(eind, sizeof(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
-	CdamFreeHost(eptr, sizeof(u32) * (num_tet + num_prism + num_hex + 1));
-	CdamFreeHost(epart, sizeof(idx_t) * (num_tet + num_prism + num_hex));
-	CdamFreeHost(npart, sizeof(idx_t) * num_node);
+	CdamFreeHost(epart_index_type, SIZE_OF(index_type) * (num_tet + num_prism + num_hex));
+	CdamFreeHost(eind, SIZE_OF(idx_t) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
+	CdamFreeHost(eptr, SIZE_OF(index_type) * (num_tet + num_prism + num_hex + 1));
+	CdamFreeHost(epart, SIZE_OF(idx_t) * (num_tet + num_prism + num_hex));
+	CdamFreeHost(npart, SIZE_OF(idx_t) * num_node);
 #endif
 }
 

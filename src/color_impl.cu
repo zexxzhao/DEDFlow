@@ -26,7 +26,7 @@ __global__ void GenerateV2EMapRowCountKernel(const IndexType* ien, IndexType num
 
 template <typename IndexType, int NSHL>
 void GenerateV2EMapRowGPU(const IndexType* ien, IndexType num_elem, IndexType num_node, IndexType* row_ptr) {
-	cudaMemset(row_ptr, 0, sizeof(IndexType) * (num_node + 1));
+	cudaMemset(row_ptr, 0, SIZE_OF(IndexType) * (num_node + 1));
 	int block_dim = 256;
 	int grid_dim = (num_elem + block_dim - 1) / block_dim;
 
@@ -52,12 +52,12 @@ void GenerateV2EMapColGPU(const IndexType* ien, IndexType num_elem, IndexType nu
 	int block_dim = 256;
 	int grid_dim = (num_elem + block_dim - 1) / block_dim;
 
-	IndexType* row_counter = (IndexType*)CdamMallocDevice(sizeof(IndexType) * num_node);
-	cudaMemset(row_counter, 0, sizeof(IndexType) * num_node);
+	IndexType* row_counter = (IndexType*)CdamMallocDevice(SIZE_OF(IndexType) * num_node);
+	cudaMemset(row_counter, 0, SIZE_OF(IndexType) * num_node);
 
 	GenerateV2EMapColKernel<IndexType, NSHL><<<grid_dim, block_dim>>>(ien, num_elem, num_node, row_ptr, col_idx, row_counter);
 
-	CdamFreeDevice(row_counter, sizeof(IndexType) * num_node);
+	CdamFreeDevice(row_counter, SIZE_OF(IndexType) * num_node);
 }
 
 /* Jones-Plassman-Luby Algorithm */
@@ -116,6 +116,30 @@ struct ColorElementJPLUncoloredFunctor {
 	}
 };
 
+
+template <typename ColorType>
+__global__ void ReverseColorKernel(ColorType* color, ColorType c, ColorType num_elem) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i >= num_elem) return;
+	if(color[i] == COLOR_MARKED) {
+		color[i] = c;
+	}
+}
+
+template <typename ColorType, typename FlagType>
+__global__ void SetUpFlagKernel(ColorType* color, FlagType* flag, ColorType num_elem) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i >= num_elem) return;
+	flag[i] = static_cast<FlagType>(color[i] >= 0);
+}
+
+template <typename ColorType>
+__global__ void RecoverColorKernel(ColorType* color, ColorType num_elem) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i >= num_elem) return;
+	color[i] = color[i] * (-1) - 1;
+}
+
 template <typename IndexType, typename ColorType, int NSHL>
 IndexType ColorElementJPLGPU(const IndexType* ien, /* Element to Vertex */
 						const IndexType* row_ptr, const IndexType* col_ind, /* Vertex to Element */
@@ -128,17 +152,33 @@ IndexType ColorElementJPLGPU(const IndexType* ien, /* Element to Vertex */
 
 	GenerateRandomColor(color, num_elem, max_color);
 
+	u8* flag = (u8*)CdamMallocDevice(SIZE_OF(u8) * (num_elem + 1));
+	u8 h_flag;
+
+	u8* cub_reduce_buffer = NULL;
+	size_t cub_reduce_buffer_size = 0;
+	cub::DeviceReduce::Max(cub_reduce_buffer, cub_reduce_buffer_size, flag, flag + num_elem, num_elem);
+	cub_reduce_buffer = (u8*)CdamMallocDevice(cub_reduce_buffer_size);
+
 	for(; c < max_color && left; c++) {
 		ColorType reverse_color = -1 - ColorType(c);
 		ColorElementJPLKernel<IndexType, ColorType, NSHL><<<grid_dim, block_dim>>>(ien, row_ptr, col_ind, max_color, color, num_elem);
 		// printf("c=%d, left = %d\n", c, left);
-		thrust::transform(thrust::device, color, color + num_elem, color,
-											ColorElementJPLReverseColorFunctor<ColorType>(reverse_color));
+		ReverseColorKernel<ColorType><<<grid_dim, block_dim>>>(color, reverse_color, num_elem);
+		SetUpFlagKernel<<<grid_dim, block_dim>>>(color, flag, num_elem);
+		// thrust::transform(thrust::device, color, color + num_elem, color,
+		// 									ColorElementJPLReverseColorFunctor<ColorType>(reverse_color));
 		// left = thrust::count_if(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
-		left = thrust::any_of(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
+		// left = thrust::any_of(thrust::device, color, color + num_elem, thrust::placeholders::_1 >= 0);
+		cub::DeviceReduce::Max(cub_reduce_buffer, cub_reduce_buffer_size, flag, flag + num_elem, num_elem);
 		// cudaDeviceSynchronize();
+		cudaMemcpyAsync(&h_flag, flag + num_elem, SIZE_OF(u8), cudaMemcpyDeviceToHost);
+		left = !!h_flag;
 	}
-	thrust::transform(thrust::device, color, color + num_elem, color, thrust::placeholders::_1 * (-1) - 1);
+	// thrust::transform(thrust::device, color, color + num_elem, color, thrust::placeholders::_1 * (-1) - 1);
+	RecoverColorKernel<ColorType><<<grid_dim, block_dim>>>(color, num_elem);
+	CdamFreeDevice(flag, SIZE_OF(u8) * num_elem);
+	CdamFreeDevice(cub_reduce_buffer, cub_reduce_buffer_size);
 	return c;
 }
 
@@ -198,8 +238,19 @@ void GenerateRandomColor(color_t* color, index_type n, color_t max_color) {
 
 
 void GetMaxColorGPU(const color_t* color, index_type n, color_t* max_color) {
-	thrust::device_ptr<const color_t> ptr(color);
-	thrust::device_ptr<const color_t> max_ptr = thrust::max_element(ptr, ptr + n);
-	*max_color = *max_ptr;
+	// thrust::device_ptr<const color_t> ptr(color);
+	// thrust::device_ptr<const color_t> max_ptr = thrust::max_element(ptr, ptr + n);
+	// *max_color = *max_ptr;
+	color_t* output = (color_t*)CdamMallocDevice(SIZE_OF(color_t));
+	color_t* color_temp_buff = NULL;
+	size_t color_temp_buff_size = 0;
+	cub::DeviceReduce::Max(color_temp_buff, color_temp_buff_size, color, output, n);
+	color_temp_buff = (color_t*)CdamMallocDevice(color_temp_buff_size);
+
+	cub::DeviceReduce::Max(color_temp_buff, color_temp_buff_size, color, output, n);
+	cudaMemcpy(max_color, output, SIZE_OF(color_t), cudaMemcpyDeviceToHost);
+
+	CdamFreeDevice(output, SIZE_OF(color_t));
+	CdamFreeDevice(color_temp_buff, color_temp_buff_size);
 }
 __END_DECLS__

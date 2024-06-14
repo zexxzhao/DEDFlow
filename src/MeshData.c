@@ -4,16 +4,16 @@
 #include "h5util.h"
 #include "MeshData.h"
 
-Mesh3DData* Mesh3DDataCreateHost(u32 num_node,
-																 u32 num_tet,
-																 u32 num_prism,
-																 u32 num_hex) {
-	Mesh3DData* data = (Mesh3DData*)CdamMallocHost(sizeof(Mesh3DData));
-	u32 elem_buff_size = num_tet * 4 + num_prism * 6 + num_hex * 8;
+Mesh3DData* Mesh3DDataCreateHost(index_type num_node,
+																 index_type num_tet,
+																 index_type num_prism,
+																 index_type num_hex) {
+	Mesh3DData* data = (Mesh3DData*)CdamMallocHost(SIZE_OF(Mesh3DData));
+	index_type elem_buff_size = num_tet * 4 + num_prism * 6 + num_hex * 8;
 
 	ASSERT(num_node >= 4 && "Invalid number of nodes");
 	ASSERT(num_tet + num_prism + num_hex && "Invalid number of elements");
-	memset(data, 0, sizeof(Mesh3DData));
+	memset(data, 0, SIZE_OF(Mesh3DData));
 
 	data->is_host = TRUE;
 	Mesh3DDataNumNode(data) = num_node;
@@ -22,22 +22,22 @@ Mesh3DData* Mesh3DDataCreateHost(u32 num_node,
 	Mesh3DDataNumHex(data) = num_hex;
 
 	if (num_node) {
-		Mesh3DDataCoord(data) = (f64*)CdamMallocHost(sizeof(f64) * num_node * 3);
-		memset(Mesh3DDataCoord(data), 0, num_node * 3 * sizeof(f64));
+		Mesh3DDataCoord(data) = (f64*)CdamMallocHost(SIZE_OF(f64) * num_node * 3);
+		memset(Mesh3DDataCoord(data), 0, num_node * 3 * SIZE_OF(f64));
 	}
-	data->ien = (u32*)CdamMallocHost(sizeof(u32) * elem_buff_size);
-	memset(data->ien, 0, elem_buff_size * sizeof(u32));
+	data->ien = (index_type*)CdamMallocHost(SIZE_OF(index_type) * elem_buff_size);
+	memset(data->ien, 0, elem_buff_size * SIZE_OF(index_type));
 	return data;
 }
 
-Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex) {
+Mesh3DData* Mesh3DDataCreateDevice(index_type num_node, index_type num_tet, index_type num_prism, index_type num_hex) {
 
-	Mesh3DData* data = (Mesh3DData*)CdamMallocHost(sizeof(Mesh3DData));
-	u32 elem_buff_size = num_tet * 4 + num_prism * 6 + num_hex * 8;
+	Mesh3DData* data = (Mesh3DData*)CdamMallocHost(SIZE_OF(Mesh3DData));
+	index_type elem_buff_size = num_tet * 4 + num_prism * 6 + num_hex * 8;
 
 	ASSERT(num_node >= 4 && "Invalid number of nodes");
 	ASSERT(num_tet + num_prism + num_hex && "Invalid number of elements");
-	memset(data, 0, sizeof(Mesh3DData));
+	memset(data, 0, SIZE_OF(Mesh3DData));
 
 	data->is_host = FALSE;
 	Mesh3DDataNumNode(data) = num_node;
@@ -46,18 +46,18 @@ Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32
 	Mesh3DDataNumHex(data) = num_hex;
 
 	if (num_node) {
-		Mesh3DDataCoord(data) = (f64*)CdamMallocDevice(sizeof(f64) * num_node * 3);
-		CUGUARD(cudaMemset(Mesh3DDataCoord(data), 0, num_node * 3 * sizeof(f64)));
+		Mesh3DDataCoord(data) = (f64*)CdamMallocDevice(SIZE_OF(f64) * num_node * 3);
+		CUGUARD(cudaMemset(Mesh3DDataCoord(data), 0, num_node * 3 * SIZE_OF(f64)));
 	}
-	data->ien = (u32*)CdamMallocDevice(sizeof(u32) * elem_buff_size);
-	CUGUARD(cudaMemset(data->ien, 0, elem_buff_size * sizeof(u32)));
+	data->ien = (index_type*)CdamMallocDevice(SIZE_OF(index_type) * elem_buff_size);
+	CUGUARD(cudaMemset(data->ien, 0, elem_buff_size * SIZE_OF(index_type)));
 	return data;
 }
 
 Mesh3DData* Mesh3DDataCreateH5(H5FileInfo* h5f, const char* group_name) {
 	char buff[256];
 	Mesh3DData* data;
-	u32 num_node, num_tet, num_prism, num_hex;
+	index_type num_node, num_tet, num_prism, num_hex;
 
 	ASSERT(H5FileIsReadable(h5f) && "Mesh3DDataCreateH5: Invalid file");
 	ASSERT(strlen(group_name) < 192 && "Mesh3DDateCreateH5: Invalid group name.");
@@ -91,17 +91,17 @@ Mesh3DData* Mesh3DDataCreateH5(H5FileInfo* h5f, const char* group_name) {
 
 	if (num_tet) {
 		sprintf(buff, "%s/ien/tet", group_name);
-		H5ReadDatasetu32(h5f, buff, Mesh3DDataTet(data));
+		H5ReadDatasetInd(h5f, buff, Mesh3DDataTet(data));
 	}
 
 	if (num_prism) {
 		sprintf(buff, "%s/ien/prism", group_name);
-		H5ReadDatasetu32(h5f, buff, Mesh3DDataPrism(data));
+		H5ReadDatasetInd(h5f, buff, Mesh3DDataPrism(data));
 	}
 
 	if (num_hex) {
 		sprintf(buff, "%s/ien/hex", group_name);
-		H5ReadDatasetu32(h5f, buff, Mesh3DDataHex(data));
+		H5ReadDatasetInd(h5f, buff, Mesh3DDataHex(data));
 	}
 
 	return data;
@@ -109,14 +109,14 @@ Mesh3DData* Mesh3DDataCreateH5(H5FileInfo* h5f, const char* group_name) {
 }
 
 void Mesh3DDataDestroy(Mesh3DData* data) {
-	u32 elem_buff_size = Mesh3DDataNumTet(data) * 4 + Mesh3DDataNumPrism(data) * 6 + Mesh3DDataNumHex(data) * 8;
+	index_type elem_buff_size = Mesh3DDataNumTet(data) * 4 + Mesh3DDataNumPrism(data) * 6 + Mesh3DDataNumHex(data) * 8;
 	if (data->is_host) {
-		CdamFreeHost(Mesh3DDataCoord(data), sizeof(f64) * Mesh3DDataNumNode(data) * 3);
-		CdamFreeHost(data->ien, sizeof(u32) * elem_buff_size);
+		CdamFreeHost(Mesh3DDataCoord(data), SIZE_OF(f64) * Mesh3DDataNumNode(data) * 3);
+		CdamFreeHost(data->ien, SIZE_OF(index_type) * elem_buff_size);
 	}
 	else {
-		CdamFreeDevice(Mesh3DDataCoord(data), sizeof(f64) * Mesh3DDataNumNode(data) * 3);
-		CdamFreeDevice(data->ien, sizeof(u32) * elem_buff_size);
+		CdamFreeDevice(Mesh3DDataCoord(data), SIZE_OF(f64) * Mesh3DDataNumNode(data) * 3);
+		CdamFreeDevice(data->ien, SIZE_OF(index_type) * elem_buff_size);
 	}
 	Mesh3DDataNumNode(data) = 0;
 	Mesh3DDataNumTet(data) = 0;
@@ -126,7 +126,7 @@ void Mesh3DDataDestroy(Mesh3DData* data) {
 	Mesh3DDataCoord(data) = NULL;
 	data->ien = NULL;
 
-	CdamFreeHost(data, sizeof(Mesh3DData));
+	CdamFreeHost(data, SIZE_OF(Mesh3DData));
 }
 
 static b32
@@ -152,11 +152,11 @@ CheckMemCompatibility(Mesh3DData* dst, Mesh3DData* src, MemCopyKind kind) {
 void Mesh3DDataCopy(Mesh3DData* dst, Mesh3DData* src, MemCopyKind kind) {
 
 	f64 *dst_xg, *src_xg;
-	u32 *dst_tet, *src_tet;
-	u32 *dst_prism, *src_prism;
-	u32 *dst_hex, *src_hex;
+	index_type *dst_tet, *src_tet;
+	index_type *dst_prism, *src_prism;
+	index_type *dst_hex, *src_hex;
 
-	u32 len_buff_node, len_buff_tet, len_buff_prism, len_buff_hex;
+	index_type len_buff_node, len_buff_tet, len_buff_prism, len_buff_hex;
 
 	ASSERT(dst && src && "Invalid data");
 	if (src == dst) {
@@ -180,10 +180,10 @@ void Mesh3DDataCopy(Mesh3DData* dst, Mesh3DData* src, MemCopyKind kind) {
 	src_prism = Mesh3DDataPrism(src);
 	src_hex = Mesh3DDataHex(src);
 
-	len_buff_node = Mesh3DDataNumNode(src) * 3 * sizeof(f64);
-	len_buff_tet = Mesh3DDataNumTet(src) * 4 * sizeof(u32);
-	len_buff_prism = Mesh3DDataNumPrism(src) * 6 * sizeof(u32);
-	len_buff_hex = Mesh3DDataNumHex(src) * 8 * sizeof(u32);
+	len_buff_node = Mesh3DDataNumNode(src) * 3 * SIZE_OF(f64);
+	len_buff_tet = Mesh3DDataNumTet(src) * 4 * SIZE_OF(index_type);
+	len_buff_prism = Mesh3DDataNumPrism(src) * 6 * SIZE_OF(index_type);
+	len_buff_hex = Mesh3DDataNumHex(src) * 8 * SIZE_OF(index_type);
 
 	ASSERT(!!dst_xg == !!len_buff_node && "Invalid buffer");
 	ASSERT(!!dst_tet == !!len_buff_tet && "Invalid buffer");

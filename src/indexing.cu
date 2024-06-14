@@ -29,17 +29,17 @@ IndexType CountValue(const ValueType* data, IndexType n, ValueType value, void* 
 	size_t buffer_size_used = 0;
 	IndexType init = 0;
 	if(buffer == NULL) {
-		IndexType* output = (IndexType*)CdamMallocDevice(sizeof(IndexType) * 1024);
+		IndexType* output = (IndexType*)CdamMallocDevice(SIZE_OF(IndexType) * 1024);
 		cub::DeviceReduce::Reduce(NULL, buffer_size_used, data, output, n, CountingFunctor<IndexType, ValueType>(value), init);
-		CdamFreeDevice(output, sizeof(IndexType) * 1024);
+		CdamFreeDevice(output, SIZE_OF(IndexType) * 1024);
 		return (IndexType)buffer_size_used;
 	}
 	
-	IndexType* output = (IndexType*)CdamMallocDevice(sizeof(IndexType) * 1024);
+	IndexType* output = (IndexType*)CdamMallocDevice(SIZE_OF(IndexType) * 1024);
 	cub::DeviceReduce::Reduce(buffer, buffer_size_used, data, output, n, CountingFunctor<IndexType, ValueType>(value), init);
 	int sum;
-	cudaMemcpy(&sum, output, sizeof(int), cudaMemcpyDeviceToHost);
-	CdamFreeDevice(output, sizeof(IndexType) * 1024);
+	cudaMemcpy(&sum, output, SIZE_OF(int), cudaMemcpyDeviceToHost);
+	CdamFreeDevice(output, SIZE_OF(IndexType) * 1024);
 	return (IndexType)sum;
 }
 

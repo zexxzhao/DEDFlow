@@ -10,7 +10,8 @@ typedef struct Mesh3D Mesh3D;
 typedef struct Field Field;
 typedef struct Matrix Matrix;
 
-void AssembleSystemTet(Mesh3D* mesh, Field* wgold, Field* dwgold, Field* dwg, f64* F, Matrix* J);
+void AssembleSystemTet(Mesh3D* mesh, f64* wgalpha, f64* dwgalpha, f64* F, Matrix* J);
+void AssembleSystemTetFace(Mesh3D* mesh, f64* wgalpha, f64* dwgalpha, f64* F, Matrix* J);
 
 
 __END_DECLS__

@@ -36,19 +36,23 @@ b32 H5GroupExist(H5FileInfo* h5file, const char *group_name);
 b32 H5DatasetExist(H5FileInfo* h5file, const char *dataset_name);
 
 /* Get the size of the dataset */
-void H5GetDatasetSize(H5FileInfo* h5file, const char* dataset_name, u32* size);
+void H5GetDatasetSize(H5FileInfo* h5file, const char* dataset_name, index_type* size);
 
 /* Read the dataset */
 void H5ReadDataseti32(H5FileInfo* h5file, const char *dataset_name, i32* data);
 void H5ReadDatasetu32(H5FileInfo* h5file, const char *dataset_name, u32* data);
 void H5ReadDatasetf32(H5FileInfo* h5file, const char *dataset_name, f32* data);
 void H5ReadDatasetf64(H5FileInfo* h5file, const char *dataset_name, f64* data);
+void H5ReadDatasetInd(H5FileInfo* h5file, const char *dataset_name, index_type* data);
+void H5ReadDatasetVal(H5FileInfo* h5file, const char *dataset_name, value_type* data);
 
 /* Write h5 file */
-void H5WriteDataseti32(H5FileInfo* h5file, const char *dataset_name, u32 len, const i32* data);
-void H5WriteDatasetu32(H5FileInfo* h5file, const char *dataset_name, u32 len, const u32* data);
-void H5WriteDatasetf32(H5FileInfo* h5file, const char *dataset_name, u32 len, const f32* data);
-void H5WriteDatasetf64(H5FileInfo* h5file, const char *dataset_name, u32 len, const f64* data);
+void H5WriteDataseti32(H5FileInfo* h5file, const char *dataset_name, index_type len, const i32* data);
+void H5WriteDatasetu32(H5FileInfo* h5file, const char *dataset_name, index_type len, const u32* data);
+void H5WriteDatasetf32(H5FileInfo* h5file, const char *dataset_name, index_type len, const f32* data);
+void H5WriteDatasetf64(H5FileInfo* h5file, const char *dataset_name, index_type len, const f64* data);
+void H5WriteDatasetInd(H5FileInfo* h5file, const char *dataset_name, index_type len, const index_type* data);
+void H5WriteDatasetVal(H5FileInfo* h5file, const char *dataset_name, index_type len, const value_type* data);
 
 __END_DECLS__
 

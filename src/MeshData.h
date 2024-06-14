@@ -9,13 +9,13 @@ typedef struct H5FileInfo H5FileInfo;
 typedef struct Mesh3DData Mesh3DData;
 struct Mesh3DData {
 	b32 is_host;
-	u32 num_node;
-	u32 num_tet;
-	u32 num_prism;
-	u32 num_hex;
+	index_type num_node;
+	index_type num_tet;
+	index_type num_prism;
+	index_type num_hex;
 
 	f64* xg; /* xg[3*num_node] */
-	u32* ien; /* ien[4*num_tet+6*num_prism+8*num_hex] */
+	index_type* ien; /* ien[4*num_tet+6*num_prism+8*num_hex] */
 };
 
 #define Mesh3DDataNumNode(data) ((data)->num_node)
@@ -28,8 +28,8 @@ struct Mesh3DData {
 #define Mesh3DDataPrism(data) (Mesh3DDataNumPrism(data) ? (data)->ien + 4 * Mesh3DDataNumTet(data): NULL)
 #define Mesh3DDataHex(data) (Mesh3DDataNumHex(data) ? (data)->ien + 4 * Mesh3DDataNumTet(data) + 6 * Mesh3DDataNumPrism(data) : NULL)
 
-Mesh3DData* Mesh3DDataCreateHost(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex);
-Mesh3DData* Mesh3DDataCreateDevice(u32 num_node, u32 num_tet, u32 num_prism, u32 num_hex);
+Mesh3DData* Mesh3DDataCreateHost(index_type num_node, index_type num_tet, index_type num_prism, index_type num_hex);
+Mesh3DData* Mesh3DDataCreateDevice(index_type num_node, index_type num_tet, index_type num_prism, index_type num_hex);
 Mesh3DData* Mesh3DDataCreateH5(H5FileInfo* h5f, const char* group_name);
 void Mesh3DDataDestroy(Mesh3DData* data);
 
