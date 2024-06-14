@@ -2,6 +2,7 @@
 #define __MATRIX_H__
 
 
+#include <cublas_v2.h>
 #include "csr.h"
 
 __BEGIN_DECLS__
@@ -62,6 +63,7 @@ struct Matrix {
 	index_type size[2];
 	MatType type;
 	void *data;
+	cudaStream_t stream_ref;
 	MatrixOp op[1];
 };
 
@@ -91,6 +93,10 @@ struct MatrixFS {
 	index_type n_offset;
 	index_type *offset;
 	index_type *d_offset;
+
+	cublasHandle_t handle;
+	cudaStream_t* stream;
+
 	const CSRAttr* spy1x1;
 	value_type** d_matval;
 	Matrix** mat;

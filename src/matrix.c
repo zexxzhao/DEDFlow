@@ -130,6 +130,8 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 		mat_csr->buffer_size = (index_type)buffer_size;
 		mat_csr->buffer = (void*)CdamMallocDevice(mat_csr->buffer_size);
 	}
+	cusparseSetStream(handle, A->stream_ref);
+	
 	cusparseSpMV(
 		handle,
 		CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -142,9 +144,9 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 		CUSPARSE_SPMV_ALG_DEFAULT,
 		mat_csr->buffer
 	);
-	cusparseDestroy(handle);
 	cusparseDestroyDnVec(x_desc);
 	cusparseDestroyDnVec(y_desc);
+	cusparseDestroy(handle);
 }
 
 /* y = left_mask(alpha*A*right_mask(x)+beta*y) */
@@ -332,6 +334,12 @@ MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset) {
 
 	mat->mat = (Matrix**)CdamMallocHost(SIZE_OF(Matrix*) * n_offset * n_offset);
 	memset(mat->mat, 0, SIZE_OF(Matrix*) * n_offset * n_offset);
+
+	cublasCreate(&mat->handle);
+	mat->stream = (cudaStream_t*)CdamMallocHost(SIZE_OF(cudaStream_t) * n_offset);
+	for(index_type i = 0; i < n_offset; i++) {
+		cudaStreamCreate(mat->stream + i);
+	}
 	
 	return mat;
 }
@@ -350,6 +358,12 @@ void MatrixFSDestroy(Matrix* mat) {
 	CdamFreeHost(mat_fs->mat, n * n * SIZE_OF(Matrix*));
 	CdamFreeHost(mat_fs, SIZE_OF(MatrixFS));
 	CdamFreeHost(mat, SIZE_OF(Matrix));
+
+	cublasDestroy(mat_fs->handle);
+	for(index_type i = 0; i < n; i++) {
+		cudaStreamDestroy(mat_fs->stream[i]);
+	}
+	CdamFreeHost(mat_fs->stream, SIZE_OF(cudaStream_t) * n);
 }
 
 static void MatrixFSSetup(Matrix* mat) {
@@ -433,9 +447,8 @@ static void MatrixFSAMVPBY(Matrix* A, value_type alpha, value_type* x, value_typ
 	index_type num_col = mat_fs->spy1x1->num_col;
 	Matrix** mat_list = mat_fs->mat;
 
-	cublasHandle_t handle;
-	cublasCreate(&handle);
-	cublasDscal(handle, n_offset * num_row, &beta, y, 1);
+	cublasDscal(mat_fs->handle, n_offset * num_row, &beta, y, 1);
+
 
 	/* Perform matrix-vector multiplication */
 	for(index_type i = 0; i < n_offset; i++) {
@@ -443,12 +456,12 @@ static void MatrixFSAMVPBY(Matrix* A, value_type alpha, value_type* x, value_typ
 			if(mat_list[i * n_offset + j] == NULL) {
 				continue;
 			}
-			// printf("MatrixFSAMVPBY: %d %d\n", i, j);
+			mat_list[i * n_offset + j]->stream_ref = NULL; //mat_fs->stream[i];
 			MatrixAMVPBY(mat_list[i * n_offset + j], alpha, x + offset[j] * num_col, 1.0, y + offset[i] * num_row);
+			mat_list[i * n_offset + j]->stream_ref = NULL;
 		}
 	}
 
-	cublasDestroy(handle);
 }
 
 static void MatrixFSAMVPBYWithMask(Matrix* A, value_type alpha, value_type* x, value_type beta, value_type* y,

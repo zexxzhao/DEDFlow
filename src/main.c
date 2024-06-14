@@ -97,7 +97,6 @@ void SolveFlowSystem(Mesh3D* mesh,
 	f64* wgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
 	f64* dwgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
 
-	f64* h_F = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
 
 	/* dwgalpha = fact1[0] * dwgold + fact[1] * dwg */ 
 	cudaMemset(dwgalpha, 0, num_node * SIZE_OF(f64) * BS);
@@ -121,12 +120,14 @@ void SolveFlowSystem(Mesh3D* mesh,
 	cublasDnrm2(handle, num_node * BS, F, 1, &rnorm_init);
 
 	if(0 && F) {
+		f64* h_F = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
 		cudaMemcpy(h_F, F, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
 		FILE* fp = fopen("F.txt", "w");
 		for(index_type i = 0; i < num_node * BS; i++) {
-			fprintf(fp, "%g\n", h_F[i]);
+			fprintf(fp, "%.17g\n", h_F[i]);
 		}
 		fclose(fp);
+		CdamFreeHost(h_F, num_node * SIZE_OF(f64) * BS);
 		printf("F norm: %g\n", rnorm_init);
 		exit(0);
 	}
@@ -202,7 +203,7 @@ void MyFieldInit(f64* value, void* ctx) {
 	f64* coord = Mesh3DDataCoord(data);
 
 	for(i = 0; i < num_node; i++) {
-		value[i * 3 + 0] = 1.0; // coord[i * 3 + 0];
+		value[i * 3 + 0] = 0.0 * coord[i * 3 + 0] * coord[i * 3 + 0] + 1.0;
 		value[i * 3 + 1] = 0.0; // coord[i * 3 + 1];
 		value[i * 3 + 2] = 0.0; // coord[i * 3 + 2];
 	}
@@ -272,22 +273,22 @@ int main() {
 
 	mat_nested->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3);
 	mat_nested->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1);
-	mat_nested->mat[4*0+2] = MatrixCreateTypeCSR(spy3x1);
-	mat_nested->mat[4*0+3] = MatrixCreateTypeCSR(spy3x1);
+	// mat_nested->mat[4*0+2] = MatrixCreateTypeCSR(spy3x1);
+	// mat_nested->mat[4*0+3] = MatrixCreateTypeCSR(spy3x1);
 
 	mat_nested->mat[4*1+0] = MatrixCreateTypeCSR(spy1x3);
 	mat_nested->mat[4*1+1] = MatrixCreateTypeCSR(spy1x1);
-	mat_nested->mat[4*1+2] = MatrixCreateTypeCSR(spy1x1);
-	mat_nested->mat[4*1+3] = MatrixCreateTypeCSR(spy1x1);
+	// mat_nested->mat[4*1+2] = MatrixCreateTypeCSR(spy1x1);
+	// mat_nested->mat[4*1+3] = MatrixCreateTypeCSR(spy1x1);
 
-	mat_nested->mat[4*2+0] = MatrixCreateTypeCSR(spy1x3);
-	mat_nested->mat[4*2+1] = MatrixCreateTypeCSR(spy1x1);
+	// mat_nested->mat[4*2+0] = MatrixCreateTypeCSR(spy1x3);
+	// mat_nested->mat[4*2+1] = MatrixCreateTypeCSR(spy1x1);
 	mat_nested->mat[4*2+2] = MatrixCreateTypeCSR(spy1x1);
-	mat_nested->mat[4*2+3] = MatrixCreateTypeCSR(spy1x1);
+	// mat_nested->mat[4*2+3] = MatrixCreateTypeCSR(spy1x1);
 
-	mat_nested->mat[4*3+0] = MatrixCreateTypeCSR(spy1x3);
-	mat_nested->mat[4*3+1] = MatrixCreateTypeCSR(spy1x1);
-	mat_nested->mat[4*3+2] = MatrixCreateTypeCSR(spy1x1);
+	// mat_nested->mat[4*3+0] = MatrixCreateTypeCSR(spy1x3);
+	// mat_nested->mat[4*3+1] = MatrixCreateTypeCSR(spy1x1);
+	// mat_nested->mat[4*3+2] = MatrixCreateTypeCSR(spy1x1);
 	mat_nested->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
 	MatrixSetup(J);
 
