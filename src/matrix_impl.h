@@ -5,6 +5,8 @@
 
 __BEGIN_DECLS__
 
+void SetValGPU(value_type* val, index_type n, value_type alpha);
+
 void MatrixCSRZeroRowGPU(value_type* matval,
 												 index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
 												 index_type n, const index_type* row, index_type shift, value_type diag);
@@ -62,6 +64,12 @@ void SetBlockValueToSubmatGPU(value_type** matval, value_type alpha,
 															const index_type* row_ptr, const index_type* col_ind,
 															const value_type* val, int lda, int stride, value_type beta, const index_type* mask);
 
+
+void MatrixGetDiagBlockGPU(const value_type* matval,
+													 index_type block_size,
+													 index_type num_row, index_type num_col,
+													 const index_type* row_ptr, const index_type* col_idx,
+													 value_type* diag_block, int lda, int stride); 
 __END_DECLS__
 
 

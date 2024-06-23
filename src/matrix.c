@@ -14,12 +14,14 @@ static void MaskVec(value_type* input, value_type* mask, value_type* output, int
 /****************************************************
  * MatrixCSR Operation
  ****************************************************/
-MatrixCSR* MatrixCSRCreate(const CSRAttr* attr) {
+MatrixCSR* MatrixCSRCreate(const CSRAttr* attr, void* handle) {
 	MatrixCSR* mat = (MatrixCSR*)CdamMallocHost(SIZE_OF(MatrixCSR));
 	mat->attr = attr;
 	mat->val = (value_type*)CdamMallocDevice(CSRAttrNNZ(attr) * SIZE_OF(value_type));
-	cusparseHandle_t handle;
-	cusparseCreate(&handle);
+	CUGUARD(cudaGetLastError());
+	mat->handle = *(cusparseHandle_t*)handle;
+	cudaMemset(mat->val, 0, CSRAttrNNZ(attr) * SIZE_OF(value_type));
+	CUGUARD(cudaGetLastError());
 
 	mat->buffer_size = 0;
 	mat->buffer = NULL;
@@ -56,7 +58,6 @@ MatrixCSR* MatrixCSRCreate(const CSRAttr* attr) {
 	else {
 		ASSERT((SIZE_OF(value_type) == SIZE_OF(f64) || SIZE_OF(value_type) == SIZE_OF(f32)) && "Unsupported value_type");
 	}
-	cusparseDestroy(handle);
 	return mat;
 }
 
@@ -107,16 +108,16 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 	const index_type num_row = CSRAttrNumRow(attr);
 	const index_type num_col = CSRAttrNumCol(attr);
 
-	cusparseHandle_t handle;
-	cusparseCreate(&handle);
 	cusparseDnVecDescr_t x_desc, y_desc;
 	cusparseCreateDnVec(&x_desc, num_col, x, CUDA_R_64F);
 	cusparseCreateDnVec(&y_desc, num_row, y, CUDA_R_64F);
 
+	cusparseSpMVAlg_t alg =  CUSPARSE_SPMV_CSR_ALG2;
+
 	if(mat_csr->buffer_size == 0) {
 		size_t buffer_size = 0;
 		cusparseSpMV_bufferSize(
-			handle,
+			mat_csr->handle,
 			CUSPARSE_OPERATION_NON_TRANSPOSE,
 			&alpha,
 			mat_csr->descr,
@@ -124,16 +125,31 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 			&beta,
 			y_desc,
 			CUDA_R_64F,
-			CUSPARSE_SPMV_ALG_DEFAULT,
+			alg,
 			&buffer_size
 		);
 		mat_csr->buffer_size = (index_type)buffer_size;
 		mat_csr->buffer = (void*)CdamMallocDevice(mat_csr->buffer_size);
+		/* If cuda version is 12.4 or higher, use cusparseSpMV_preprocess */ 
+#if CUDART_VERSION >= 12040
+		cusparseSpMV_preprocess(
+			mat_csr->handle,
+			CUSPARSE_OPERATION_NON_TRANSPOSE,
+			&alpha,
+			mat_csr->descr,
+			x_desc,
+			&beta,
+			y_desc,
+			CUDA_R_64F,
+			alg,
+			mat_csr->buffer
+		);
+#endif
 	}
-	cusparseSetStream(handle, A->stream_ref);
+	// cusparseSetStream(mat_csr->handle, A->stream_ref);
 	
 	cusparseSpMV(
-		handle,
+		mat_csr->handle,
 		CUSPARSE_OPERATION_NON_TRANSPOSE,
 		&alpha,
 		mat_csr->descr,
@@ -141,12 +157,11 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 		&beta,
 		y_desc,
 		CUDA_R_64F,
-		CUSPARSE_SPMV_ALG_DEFAULT,
+		alg,
 		mat_csr->buffer
 	);
 	cusparseDestroyDnVec(x_desc);
 	cusparseDestroyDnVec(y_desc);
-	cusparseDestroy(handle);
 }
 
 /* y = left_mask(alpha*A*right_mask(x)+beta*y) */
@@ -198,7 +213,7 @@ static void MatrixCSRMatVecWithMask(Matrix* mat, value_type* x, value_type* y,
 }
 
 /* diag = diag(A) */
-static void MatrixCSRGetDiag(Matrix* mat, value_type* diag) {
+static void MatrixCSRGetDiag(Matrix* mat, value_type* diag, index_type bs) {
 	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
 	const CSRAttr* attr = mat_csr->attr;
 	const index_type num_row = CSRAttrNumRow(attr);
@@ -206,8 +221,24 @@ static void MatrixCSRGetDiag(Matrix* mat, value_type* diag) {
 	const index_type* row_ptr = CSRAttrRowPtr(attr);
 	const index_type* col_idx = CSRAttrColInd(attr);
 	const value_type* val = mat_csr->val;
+	ASSERT(num_row == num_col && "Matrix is not square");
 
-	MatrixCSRGetDiagGPU(val, row_ptr, col_idx, diag, num_row);
+	if(bs == 1) {
+		MatrixCSRGetDiagGPU(val, row_ptr, col_idx, diag, num_row);
+	}
+	else if(bs > 1) {
+		if(attr->num_row != attr->parent->num_row * bs) {
+			ASSERT(0 && "Block size is not compatible with the matrix size");
+		}	
+		attr = attr->parent;
+		MatrixGetDiagBlockGPU(mat_csr->val, bs,
+													attr->num_row, attr->num_col, attr->row_ptr, attr->col_ind,
+													diag, bs, bs * bs);
+													
+	}
+	else {
+		ASSERT(0 && "Block size should be greater than 0");
+	}
 }
 
 static void MatrixCSRSetValuesCOO(Matrix* mat, value_type alpha,
@@ -317,7 +348,7 @@ static void MatrixCSRAddValueBlockedBatched(Matrix* mat,
  * MatrixFS Operation
  ****************************************************/
 
-MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset) {
+MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset, void* handle) {
 	MatrixFS* mat = (MatrixFS*)CdamMallocHost(SIZE_OF(MatrixFS));
 	memset(mat, 0, SIZE_OF(MatrixFS));
 
@@ -335,7 +366,7 @@ MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset) {
 	mat->mat = (Matrix**)CdamMallocHost(SIZE_OF(Matrix*) * n_offset * n_offset);
 	memset(mat->mat, 0, SIZE_OF(Matrix*) * n_offset * n_offset);
 
-	cublasCreate(&mat->handle);
+	mat->handle = *(cublasHandle_t*)handle;
 	mat->stream = (cudaStream_t*)CdamMallocHost(SIZE_OF(cudaStream_t) * n_offset);
 	for(index_type i = 0; i < n_offset; i++) {
 		cudaStreamCreate(mat->stream + i);
@@ -359,7 +390,6 @@ void MatrixFSDestroy(Matrix* mat) {
 	CdamFreeHost(mat_fs, SIZE_OF(MatrixFS));
 	CdamFreeHost(mat, SIZE_OF(Matrix));
 
-	cublasDestroy(mat_fs->handle);
 	for(index_type i = 0; i < n; i++) {
 		cudaStreamDestroy(mat_fs->stream[i]);
 	}
@@ -457,7 +487,9 @@ static void MatrixFSAMVPBY(Matrix* A, value_type alpha, value_type* x, value_typ
 				continue;
 			}
 			mat_list[i * n_offset + j]->stream_ref = NULL; //mat_fs->stream[i];
+			cudaStreamSynchronize(0);
 			MatrixAMVPBY(mat_list[i * n_offset + j], alpha, x + offset[j] * num_col, 1.0, y + offset[i] * num_row);
+			cudaStreamSynchronize(0);
 			mat_list[i * n_offset + j]->stream_ref = NULL;
 		}
 	}
@@ -497,7 +529,7 @@ static void MatrixFSMatVecWithMask(Matrix* mat, value_type* x, value_type* y,
 	MatrixFSAMVPBYWithMask(mat, alpha, x, beta, y, left_mask, right_mask);
 }
 
-static void MatrixFSGetDiag(Matrix* mat, value_type* diag) {
+static void MatrixFSGetDiag(Matrix* mat, value_type* diag, index_type bs) {
 	MatrixFS* mat_fs = (MatrixFS*)mat->data;
 	index_type n_offset = mat_fs->n_offset;
 	const index_type* offset = mat_fs->offset;
@@ -511,7 +543,7 @@ static void MatrixFSGetDiag(Matrix* mat, value_type* diag) {
 		if(mat_list[i * n_offset + i] == NULL) {
 			continue;
 		}
-		MatrixGetDiag(mat_list[i * n_offset + i], diag + offset[i] * num_row);
+		MatrixGetDiag(mat_list[i * n_offset + i], diag + offset[i] * num_row, 1);
 	}
 }
 
@@ -616,7 +648,7 @@ static void MatrixFSAddValueBlockedBatched(Matrix* mat,
 /****************************************************
  * General Matrix Operation
  ****************************************************/
-Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
+Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void* handle) {
 	Matrix *mat = (Matrix*)CdamMallocHost(SIZE_OF(Matrix));
 	mat->size[0] = CSRAttrNumRow(attr);
 	mat->size[1] = CSRAttrNumCol(attr);
@@ -625,7 +657,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 	mat->type = MAT_TYPE_CSR;
 
 	/* Set up the matrix data */	
-	mat->data = MatrixCSRCreate(attr);
+	mat->data = MatrixCSRCreate(attr, handle);
 
 	/* Set up the matrix operation */
 	mat->op->setup = MatrixCSRSetup;
@@ -655,7 +687,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr) {
 
 
 
-Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset) {
+Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void* handle) {
 	Matrix* mat = (Matrix*)CdamMallocHost(SIZE_OF(Matrix));
 	mat->size[0] = offset[n_offset];
 	mat->size[1] = offset[n_offset];
@@ -664,7 +696,7 @@ Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset) {
 	mat->type = MAT_TYPE_FS;
 
 	/* Set up the matrix data */
-	mat->data = MatrixFSCreate(n_offset, offset);
+	mat->data = MatrixFSCreate(n_offset, offset, handle);
 
 	/* Set up the matrix operation */
 	mat->op->setup = MatrixFSSetup;
@@ -754,10 +786,10 @@ void MatrixMatVecWithMask(Matrix* mat, value_type* x, value_type* y, value_type*
 	MATRIX_CALL(mat, matvec_mask, x, y, left_mask, right_mask);
 }
 
-void MatrixGetDiag(Matrix* mat, value_type* diag) {
+void MatrixGetDiag(Matrix* mat, value_type* diag, index_type bs) {
 	ASSERT(mat && "Matrix is NULL");
 	ASSERT(diag && "diag is NULL");
-	MATRIX_CALL(mat, get_diag, diag);
+	MATRIX_CALL(mat, get_diag, diag, bs);
 }
 
 void MatrixSetValuesCOO(Matrix* mat, value_type alpha,

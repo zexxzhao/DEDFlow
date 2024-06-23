@@ -139,8 +139,8 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 	CSRAttrNumCol(new_attr) = num_cols * block_col;
 	CSRAttrNNZ(new_attr) = nnz * block_row * block_col;
 
-	CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * (CSRAttrNumRow(new_attr) + 1));
-	CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * CSRAttrNNZ(new_attr));
+	// CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * (CSRAttrNumRow(new_attr) + 1));
+	// CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * CSRAttrNNZ(new_attr));
 	// index_t* find_row = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * nnz);
 
 	int block_dim = 256;

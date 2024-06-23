@@ -1,7 +1,7 @@
 
 #include "common.h"
 
-#include "pc.h"
+// #include "pc.h"
 
 __BEGIN_DECLS__
 
