@@ -111,6 +111,7 @@ void SolveFlowSystem(Mesh3D* mesh,
 	cublasDaxpy(handle, num_node * BS, fact2 + 1, dwg, 1, wgalpha, 1);
 	cudaMemset(wgalpha + num_node * 3, 0, num_node * SIZE_OF(f64));
 
+
 	/* Construct the right-hand side */
 	
 	start = clock();

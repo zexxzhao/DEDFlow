@@ -184,6 +184,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	index_type ldh = CEIL_DIV(maxit + 1, 32) * 32;
 
 
+
 	// cusparseHandle_t cusparse_handle = ksp->handle;
 	// cusparseDnVecDescr_t vec_r, vec_x, vec_tmp;
 	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);

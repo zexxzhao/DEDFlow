@@ -628,7 +628,6 @@ AssembleWeakFormLHSKernel(I batch_size,
 		for(I ii = 0; ii < 3; ++ii) {
 			elem_J_buffer[ii * 4 + 3] -= shgradl[te][aa * 3 + ii] * shlu[bb * NQR + iq] * detJgw;
 			elem_J_buffer[ii * 4 + 3] -= kRHO * tau[0] * shconv[te][aa] * shgradl[te][bb * 3 + ii] * detJgw;
-			/* bug: shconv not so sure */
 		}
 
 		/* dRC/dP */
@@ -1593,7 +1592,6 @@ void AssembleSystemTet(Mesh3D *mesh,
 															elem_F, elem_J, 0);
 		end = std::chrono::steady_clock::now();
 		time_len[4] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-		// cudaStreamSynchronize(0);
 		/* 3. Assemble the global residual vector */
 		start = std::chrono::steady_clock::now();
 		if(F) {
@@ -1622,7 +1620,6 @@ void AssembleSystemTet(Mesh3D *mesh,
 																 BS, BS,
 																 elem_J, J, (const index_type*)NULL);
 
-			
 		}
 		// cudaStreamSynchronize(0);
 		end = std::chrono::steady_clock::now();

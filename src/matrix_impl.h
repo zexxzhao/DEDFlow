@@ -64,7 +64,6 @@ void SetBlockValueToSubmatGPU(value_type** matval, value_type alpha,
 															const index_type* row_ptr, const index_type* col_ind,
 															const value_type* val, int lda, int stride, value_type beta, const index_type* mask);
 
-
 void MatrixGetDiagBlockGPU(const value_type* matval,
 													 index_type block_size,
 													 index_type num_row, index_type num_col,

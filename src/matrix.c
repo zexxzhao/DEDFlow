@@ -545,6 +545,9 @@ static void MatrixFSGetDiag(Matrix* mat, value_type* diag, index_type bs) {
 		}
 		MatrixGetDiag(mat_list[i * n_offset + i], diag + offset[i] * num_row, 1);
 	}
+
+
+	// CdamFreeDevice(nzind, batch_size * SIZE_OF(index_type));
 }
 
 static void MatrixFSSetValuesCOO(Matrix* mat, value_type alpha,
