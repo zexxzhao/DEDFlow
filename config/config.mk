@@ -19,6 +19,10 @@ else
 CUDA_DIR=$(CUDA_ROOT)
 endif
 
+ifeq ($(origin AMGX_DIR), undefined)
+$(warning AMGX_DIR is not set)
+endif
+
 ifeq ($(origin METIS_DIR), undefined)
 $(warning METIS_DIR is not set)
 $(warning METIS will not be used)
@@ -31,14 +35,22 @@ endif
 ###############################################################################
 # Compiler and flags
 ###############################################################################
-FLAGS=-O3 \
-			-Wall -Wextra \
+# DEBUG=1
+ifdef DEBUG
+	C_OPT=-O0 -g3 -fsanitize=undefined
+	CU_OPT=-O0 -g -G
+else
+	COPT=-O3 -g -DNDEBUG
+	CU_OPT=-O3 -g -DNDEBUG
+endif
+
+FLAGS=-Wall -Wextra \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			-Wno-deprecated-declarations
 DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE
 CC=gcc
-CFLAGS=-std=c99 -g3 $(FLAGS) $(DEFINES) -fsanitize=undefined # -fno-omit-frame-pointer
+CFLAGS=-std=c99 $(FLAGS) $(DEFINES) $(C_OPT) # -fno-omit-frame-pointer
 
 INC=-I$(CUDA_DIR)/include
 LIB=-lm
@@ -48,17 +60,23 @@ LIB+=-L$(MK_HDF5_DIR)/lib -lhdf5
 
 # if MK_METIS_DIR is not set, then METIS will not be used
 ifneq ($(MK_METIS_DIR),)
-CLFAGS+= -DUSE_METIS
+DEFINES+= -DUSE_METIS
 INC+=-I$(MK_METIS_DIR)/include
 LIB+=-L$(MK_METIS_DIR)/lib -lmetis
 endif
 
+ifneq ($(AMGX_DIR),)
+DEFINES+= -DUSE_AMGX
+INC+=-I$(AMGX_DIR)/include
+LIB+=-L$(AMGX_DIR)/lib -lamgx -lcusolver -lnvToolsExt
+endif
+
 NVCC=nvcc
-NVCCFLAGS=-O3 -g -G -std=c++17 $(DEFINES) -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
+NVCCFLAGS=-std=c++17 $(CU_OPT) $(DEFINES) -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
 NVCCFLAGS+= --generate-code arch=compute_75,code=sm_75 # RTX 2080 Ti
 NVCCFLAGS+= --generate-code arch=compute_86,code=sm_86 # RTX 3090
 CU_INC=
-CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand
+CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand 
 
 LINKER=g++
 

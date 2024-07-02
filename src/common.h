@@ -99,5 +99,16 @@ GPUAssertPrivate(cudaError_t code, const char *file, int line) {
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
+// extern void* global_ctx;
+void Init(int argc, char** argv);
+void Finalize();
+enum GlobalContextType {
+	GLOBAL_CONTEXT_CUSPARSE_HANDLE = 0,
+	GLOBAL_CONTEXT_CUBLAS_HANDLE = 1
+};
+typedef enum GlobalContextType GlobalContextType;
+
+void* GlobalContextGet(GlobalContextType type); 
+
 __END_DECLS__
 #endif /* __COMMON_H__ */

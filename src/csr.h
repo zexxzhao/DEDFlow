@@ -16,6 +16,7 @@ struct CSRAttr {
 	index_type nnz;
 	index_type *row_ptr;
 	index_type *col_ind;
+	const CSRAttr *parent;
 };
 
 #define CSRAttrNumRow(attr) ((attr)->num_row)

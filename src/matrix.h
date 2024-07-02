@@ -3,6 +3,7 @@
 
 
 #include <cublas_v2.h>
+#include <cusparse.h>
 #include "csr.h"
 
 __BEGIN_DECLS__
@@ -36,7 +37,7 @@ struct MatrixOp {
 	void (*matvec_mask)(Matrix *matrix,  value_type *x, value_type *y,\
 											value_type* left_mask,  value_type *right_mask);
 
-	void (*get_diag)(Matrix *matrix, value_type *diag);
+	void (*get_diag)(Matrix *matrix, value_type *diag, index_type bs);
 
 	void (*set_values_coo)(Matrix* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
 	void (*set_values_ind)(Matrix* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
@@ -94,7 +95,6 @@ struct MatrixFS {
 	index_type *offset;
 	index_type *d_offset;
 
-	cublasHandle_t handle;
 	cudaStream_t* stream;
 
 	const CSRAttr* spy1x1;
@@ -104,8 +104,8 @@ struct MatrixFS {
 
 
 /* API for Matrix */
-Matrix* MatrixCreateTypeCSR(const CSRAttr* attr);
-Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset);
+Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void*);
+Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void*);
 void MatrixDestroy(Matrix *matrix);
 void MatrixSetup(Matrix *matrix);
 void MatrixZero(Matrix *matrix);
@@ -115,7 +115,7 @@ void MatrixAMVPBYWithMask(Matrix* A,  value_type alpha, value_type* x, value_typ
 													 value_type* left_mask,  value_type* right_mask);
 void MatrixMatVec(Matrix *matrix,  value_type *x, value_type *y);
 void MatrixMatVecWithMask(Matrix *matrix,  value_type *x, value_type *y,  value_type *left_mask, value_type* right_mask);
-void MatrixGetDiag(Matrix *matrix, value_type *diag);
+void MatrixGetDiag(Matrix *matrix, value_type *diag, index_type bs);
 
 void MatrixSetValuesCOO(Matrix* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
 void MatrixSetValuesInd(Matrix* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
@@ -138,12 +138,12 @@ void MatrixAddValueBlockedBatched(Matrix* matrix,
 
 
 /* API for Type CSR */
-MatrixCSR* MatrixCSRCreate(const CSRAttr *attr);
+MatrixCSR* MatrixCSRCreate(const CSRAttr *attr, void*);
 void MatrixCSRDestroy(Matrix *matrix);
 
 
 /* API for Type FS */
-MatrixFS* MatrixFSCreate(index_type n_offset, const index_type *offset);
+MatrixFS* MatrixFSCreate(index_type n_offset, const index_type *offset, void*);
 void MatrixFSDestroy(Matrix *matrix);
 
 

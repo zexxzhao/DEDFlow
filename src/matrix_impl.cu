@@ -424,6 +424,10 @@ SetBlockValueToSubmatKernel(T* matval[], T alpha, I n_offset, const I* offset, I
 			if(m == NULL) {
 				continue;
 			}
+			found = FALSE;
+			// if(i == 0 && j == 1) {
+			// 	found = TRUE;
+			// }
 			m += start * block_row * block_col + (k - start) * block_col;
 			for(I ii = 0; ii < block_row; ii++) {
 				for(I jj = 0; jj < block_col; jj++) {
@@ -432,7 +436,7 @@ SetBlockValueToSubmatKernel(T* matval[], T alpha, I n_offset, const I* offset, I
 					}
 					a = m[ii * len * block_col + jj];
 					b = val[(offset[i] + ii) * lda + (offset[j] + jj)];
-					if(found) {
+					if(found && b != 0.0) {
 						printf("(m[%d][%d])[%d*%d*%d+%d*%d*%d+%d] = %g \n",
 									 i, j,
 									 k, block_row, block_col,
@@ -441,15 +445,30 @@ SetBlockValueToSubmatKernel(T* matval[], T alpha, I n_offset, const I* offset, I
 						printf("val[%d*%d+%d] = %g\n", offset[i] + ii, lda, offset[j] + jj, b);
 					}
 					m[ii * len * block_col + jj] = alpha * a + beta * b;
+					// atomicAdd(&m[ii * len * block_col + jj], b);
 				}
 			}
 		}
 	}
 }
 
+template <typename I, typename T>
+__global__ void
+SetValKernel(T* val, I n, T alpha) {
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i >= n) {
+		return;
+	}
+	val[i] = alpha;
+}
 
 __BEGIN_DECLS__
 
+void SetValGPU(value_type* val, index_type n, value_type alpha) {
+	dim3 block(256);
+	dim3 grid((n + block.x - 1) / block.x);
+	SetValKernel<<<grid, block>>>(val, n, alpha);
+}
 void MatrixCSRZeroRowGPU(value_type* matval,
 												 index_type num_row, index_type num_col, const index_type* row_ptr, const index_type* col_ind,
 												 index_type n, const index_type* row, index_type shift, value_type diag) {
@@ -619,5 +638,59 @@ void SetBlockValueToSubmatGPU(value_type** matval, value_type alpha,
 																											 row_ptr, col_ind,
 																											 val, lda, stride, beta, mask);
 }
+
+static __global__ void
+MatrixGetDiagBlockKernel(const value_type* matval,
+												 index_type block_size,
+												 index_type num_row, index_type num_col,
+												 const index_type* row_ptr, const index_type* col_idx,
+												 value_type* diag_block, int lda, int stride) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if(idx >= num_row) return;
+
+	index_type k, i, j;
+	index_type row_start, row_end, len;
+
+	row_start = row_ptr[idx];
+	row_end = row_ptr[idx + 1];
+	len = row_end - row_start;
+	for(k = row_start; k < row_end; k++) {
+		if(col_idx[k] == idx) {
+			break;
+		}
+	}
+
+	matval += row_start * block_size * block_size + (k - row_start) * block_size;
+	diag_block += idx * stride;
+	for(i = 0; i < block_size; i++) {
+		for(j = 0; j < block_size; j++) {
+			// if(stride <= i * lda + j) {
+			// 	printf("idx = %d, i = %d, j = %d, lda = %d, stride = %d\n", idx, i, j, lda, stride);
+			// }
+			diag_block[i * lda + j] = matval[i * len * block_size + j];
+			// diag_block[i * lda + j] = idx;
+		}
+	}
+	// if(idx == 6 && diag_block[6] == 0 && diag_block[7] == 0 && diag_block[8] == 0) {
+	// 	printf("idx = %d\n", idx);
+	// 	for(i = 0; i < block_size; i++) {
+	// 		for(j = 0; j < block_size; j++) {
+	// 			printf("%f ", matval[i * len * block_size + j]);
+	// 		}
+	// 		printf("\n");
+	// 	}
+	// }
+}
+
+void MatrixGetDiagBlockGPU(const value_type* matval,
+													 index_type block_size,
+													 index_type num_row, index_type num_col,
+													 const index_type* row_ptr, const index_type* col_idx,
+													 value_type* diag_block, int lda, int stride) {
+	int num_thread = 256;
+	int num_block = (num_row + num_thread - 1) / num_thread;
+	MatrixGetDiagBlockKernel<<<num_block, num_thread>>>(matval, block_size, num_row, num_col, row_ptr, col_idx, diag_block, lda, stride);
+}
+
 
 __END_DECLS__

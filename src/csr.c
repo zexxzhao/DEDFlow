@@ -204,6 +204,7 @@ CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_i
 
 	CSRAttrRowPtr(new_attr) = (csr_index_type*)CdamMallocDevice(SIZE_OF(csr_index_type) * (num_row * block_row + 1));
 	CSRAttrColInd(new_attr) = (csr_index_type*)CdamMallocDevice(SIZE_OF(csr_index_type) * nnz * block_row * block_col);
+	new_attr->parent = attr;
 
 	if(block_row == 1 && block_col == 1) {
 		cudaMemcpy(CSRAttrRowPtr(new_attr), CSRAttrRowPtr(attr), SIZE_OF(csr_index_type) * (num_row + 1), cudaMemcpyDeviceToDevice);
