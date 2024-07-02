@@ -76,7 +76,6 @@ struct MatrixCSR {
 	b32 external_attr;
 	const CSRAttr *attr;
 	value_type *val;
-	cusparseHandle_t handle;
 	cusparseSpMatDescr_t descr;
 	index_type buffer_size;
 	void* buffer;
@@ -96,7 +95,6 @@ struct MatrixFS {
 	index_type *offset;
 	index_type *d_offset;
 
-	cublasHandle_t handle;
 	cudaStream_t* stream;
 
 	const CSRAttr* spy1x1;

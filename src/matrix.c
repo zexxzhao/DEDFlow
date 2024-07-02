@@ -14,12 +14,11 @@ static void MaskVec(value_type* input, value_type* mask, value_type* output, int
 /****************************************************
  * MatrixCSR Operation
  ****************************************************/
-MatrixCSR* MatrixCSRCreate(const CSRAttr* attr, void* handle) {
+MatrixCSR* MatrixCSRCreate(const CSRAttr* attr, void* ctx) {
 	MatrixCSR* mat = (MatrixCSR*)CdamMallocHost(SIZE_OF(MatrixCSR));
 	mat->attr = attr;
 	mat->val = (value_type*)CdamMallocDevice(CSRAttrNNZ(attr) * SIZE_OF(value_type));
 	CUGUARD(cudaGetLastError());
-	mat->handle = *(cusparseHandle_t*)handle;
 	cudaMemset(mat->val, 0, CSRAttrNNZ(attr) * SIZE_OF(value_type));
 	CUGUARD(cudaGetLastError());
 
@@ -113,11 +112,12 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 	cusparseCreateDnVec(&y_desc, num_row, y, CUDA_R_64F);
 
 	cusparseSpMVAlg_t alg =  CUSPARSE_SPMV_CSR_ALG2;
+	cusparseHandle_t handle = *(cusparseHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUSPARSE_HANDLE);
 
 	if(mat_csr->buffer_size == 0) {
 		size_t buffer_size = 0;
 		cusparseSpMV_bufferSize(
-			mat_csr->handle,
+			handle,
 			CUSPARSE_OPERATION_NON_TRANSPOSE,
 			&alpha,
 			mat_csr->descr,
@@ -133,7 +133,7 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 		/* If cuda version is 12.4 or higher, use cusparseSpMV_preprocess */ 
 #if CUDART_VERSION >= 12040
 		cusparseSpMV_preprocess(
-			mat_csr->handle,
+			handle,
 			CUSPARSE_OPERATION_NON_TRANSPOSE,
 			&alpha,
 			mat_csr->descr,
@@ -149,7 +149,7 @@ static void MatrixCSRAMVPBY(Matrix* A, value_type alpha, value_type* x, value_ty
 	// cusparseSetStream(mat_csr->handle, A->stream_ref);
 	
 	cusparseSpMV(
-		mat_csr->handle,
+		handle,
 		CUSPARSE_OPERATION_NON_TRANSPOSE,
 		&alpha,
 		mat_csr->descr,
@@ -348,7 +348,7 @@ static void MatrixCSRAddValueBlockedBatched(Matrix* mat,
  * MatrixFS Operation
  ****************************************************/
 
-MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset, void* handle) {
+MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset, void* ctx) {
 	MatrixFS* mat = (MatrixFS*)CdamMallocHost(SIZE_OF(MatrixFS));
 	memset(mat, 0, SIZE_OF(MatrixFS));
 
@@ -366,7 +366,6 @@ MatrixFS* MatrixFSCreate(index_type n_offset, const index_type* offset, void* ha
 	mat->mat = (Matrix**)CdamMallocHost(SIZE_OF(Matrix*) * n_offset * n_offset);
 	memset(mat->mat, 0, SIZE_OF(Matrix*) * n_offset * n_offset);
 
-	mat->handle = *(cublasHandle_t*)handle;
 	mat->stream = (cudaStream_t*)CdamMallocHost(SIZE_OF(cudaStream_t) * n_offset);
 	for(index_type i = 0; i < n_offset; i++) {
 		cudaStreamCreate(mat->stream + i);
@@ -477,7 +476,8 @@ static void MatrixFSAMVPBY(Matrix* A, value_type alpha, value_type* x, value_typ
 	index_type num_col = mat_fs->spy1x1->num_col;
 	Matrix** mat_list = mat_fs->mat;
 
-	cublasDscal(mat_fs->handle, n_offset * num_row, &beta, y, 1);
+	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
+	cublasDscal(handle, n_offset * num_row, &beta, y, 1);
 
 
 	/* Perform matrix-vector multiplication */
@@ -651,7 +651,7 @@ static void MatrixFSAddValueBlockedBatched(Matrix* mat,
 /****************************************************
  * General Matrix Operation
  ****************************************************/
-Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void* handle) {
+Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void* ctx) {
 	Matrix *mat = (Matrix*)CdamMallocHost(SIZE_OF(Matrix));
 	mat->size[0] = CSRAttrNumRow(attr);
 	mat->size[1] = CSRAttrNumCol(attr);
@@ -660,7 +660,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void* handle) {
 	mat->type = MAT_TYPE_CSR;
 
 	/* Set up the matrix data */	
-	mat->data = MatrixCSRCreate(attr, handle);
+	mat->data = MatrixCSRCreate(attr, ctx);
 
 	/* Set up the matrix operation */
 	mat->op->setup = MatrixCSRSetup;
@@ -690,7 +690,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void* handle) {
 
 
 
-Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void* handle) {
+Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void* ctx) {
 	Matrix* mat = (Matrix*)CdamMallocHost(SIZE_OF(Matrix));
 	mat->size[0] = offset[n_offset];
 	mat->size[1] = offset[n_offset];
@@ -699,7 +699,7 @@ Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void* 
 	mat->type = MAT_TYPE_FS;
 
 	/* Set up the matrix data */
-	mat->data = MatrixFSCreate(n_offset, offset, handle);
+	mat->data = MatrixFSCreate(n_offset, offset, ctx);
 
 	/* Set up the matrix operation */
 	mat->op->setup = MatrixFSSetup;

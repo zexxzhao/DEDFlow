@@ -31,8 +31,7 @@
 void AssembleSystem(Mesh3D* mesh,
 										f64* wgalpha, f64* dwgalpha,
 										f64* F, Matrix* J,
-										Dirichlet** bcs, index_type nbc,
-										void* cublas_handle) {
+										Dirichlet** bcs, index_type nbc) {
 	// index_type i, j, k;
 	index_type num_node = (index_type)Mesh3DNumNode(mesh);
 	index_type num_tet = (index_type)Mesh3DNumTet(mesh);
@@ -49,8 +48,8 @@ void AssembleSystem(Mesh3D* mesh,
 	}
 
 	if(num_tet) {
-		AssembleSystemTet(mesh, wgalpha, dwgalpha, F, J, cublas_handle);
-		AssembleSystemTetFace(mesh, wgalpha, dwgalpha, F, J, cublas_handle);
+		AssembleSystemTet(mesh, wgalpha, dwgalpha, F, J);
+		AssembleSystemTetFace(mesh, wgalpha, dwgalpha, F, J);
 	}
 	CUGUARD(cudaGetLastError());
 	
@@ -90,7 +89,7 @@ void SolveFlowSystem(Mesh3D* mesh,
 	f64 fact2[] = {kDT * kALPHAF * (1.0 - kGAMMA), kDT * kALPHAF * kGAMMA,
 								 -kDT * kALPHAF * (1.0 - kGAMMA), -kDT * kALPHAF * kGAMMA};
 
-	cublasHandle_t handle = *(cublasHandle_t*)ksp->handle;
+	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 
 	index_type num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
 
@@ -115,7 +114,7 @@ void SolveFlowSystem(Mesh3D* mesh,
 	/* Construct the right-hand side */
 	
 	start = clock();
-	AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc, ksp->handle);
+	AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
 	end = clock();
 	fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 	cublasDnrm2(handle, num_node * BS, F, 1, &rnorm_init);
@@ -142,7 +141,7 @@ void SolveFlowSystem(Mesh3D* mesh,
 	while(!converged && iter < maxit) {
 		/* Construct the Jacobian matrix */
 		start = clock();
-		AssembleSystem(mesh, wgalpha, dwgalpha, NULL, J, bcs, nbc, ksp->handle);
+		AssembleSystem(mesh, wgalpha, dwgalpha, NULL, J, bcs, nbc);
 		end = clock();
 		fprintf(stdout, "Assemble J time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		CUGUARD(cudaGetLastError());
@@ -222,7 +221,7 @@ void SolveFlowSystem(Mesh3D* mesh,
 
 
 		start = clock();
-		AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc, ksp->handle);
+		AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
 		end = clock();
 		fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		cublasDnrm2(handle, num_node * BS, F, 1, &rnorm);
@@ -273,9 +272,9 @@ void MyFieldInit(f64* value, void* ctx) {
 
 
 int main() {
-	AMGX_initialize();
+	Init(0, NULL);
 	b32 converged = FALSE;
-	i32 step = 0, num_step = 10;
+	i32 step = 0, num_step = 1;
 	char filename_buffer[256] = {0};
 	struct cudaDeviceProp prop;
 	i32 num_device;
@@ -304,13 +303,12 @@ int main() {
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);
 
-	cublasHandle_t handle;
-	cublasCreate(&handle);
-	cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
-	// cublasSetMathMode(handle, CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION);
+	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
+	// cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
+	cublasSetMathMode(handle, CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION);
 	
-	cusparseHandle_t sp_handle;
-	cusparseCreate(&sp_handle);
+	// cusparseHandle_t sp_handle;
+	// cusparseCreate(&sp_handle);
 
 	index_type num_node = Mesh3DNumNode(mesh);
 
@@ -321,17 +319,17 @@ int main() {
 	CSRAttr* spy1x3 = CSRAttrCreateBlock(spy1x1, 1, 3);
 	CSRAttr* spy3x1 = CSRAttrCreateBlock(spy1x1, 3, 1);
 	CSRAttr* spy3x3 = CSRAttrCreateBlock(spy1x1, 3, 3);
-	Matrix* J = MatrixCreateTypeFS(n_offset, offset, &handle);
+	Matrix* J = MatrixCreateTypeFS(n_offset, offset, NULL);
 	MatrixFS* mat_fs = (MatrixFS*)J->data;
 	mat_fs->spy1x1 = spy1x1;
 
-	mat_fs->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3, &sp_handle);
-	mat_fs->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1, &sp_handle);
+	mat_fs->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3, NULL);
+	mat_fs->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1, NULL);
 	// mat_fs->mat[4*0+2] = MatrixCreateTypeCSR(spy3x1);
 	// mat_fs->mat[4*0+3] = MatrixCreateTypeCSR(spy3x1);
 
-	mat_fs->mat[4*1+0] = MatrixCreateTypeCSR(spy1x3, &sp_handle);
-	mat_fs->mat[4*1+1] = MatrixCreateTypeCSR(spy1x1, &sp_handle);
+	mat_fs->mat[4*1+0] = MatrixCreateTypeCSR(spy1x3, NULL);
+	mat_fs->mat[4*1+1] = MatrixCreateTypeCSR(spy1x1, NULL);
 	// mat_fs->mat[4*1+2] = MatrixCreateTypeCSR(spy1x1);
 	// mat_fs->mat[4*1+3] = MatrixCreateTypeCSR(spy1x1);
 
@@ -346,7 +344,7 @@ int main() {
 	// mat_fs->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
 	MatrixSetup(J);
 
-	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-5, &handle);
+	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-5, NULL);
 
 
 	clock_t start, end;
@@ -521,9 +519,9 @@ int main() {
 	CdamFreeDevice(dwgold, num_node * SIZE_OF(f64) * BS);
 	CdamFreeDevice(dwg, num_node * SIZE_OF(f64) * BS);
 	CdamFreeHost(buffer, num_node * SIZE_OF(f64) * BS);
-	cublasDestroy(handle);
 	MatrixDestroy(J);
-	cusparseDestroy(sp_handle);
+	// cublasDestroy(handle);
+	// cusparseDestroy(sp_handle);
 	KrylovDestroy(ksp);
 	// FieldDestroy(wgold);
 	// FieldDestroy(dwgold);
@@ -533,6 +531,6 @@ int main() {
 	CSRAttrDestroy(spy3x1);
 	CSRAttrDestroy(spy3x3);
 	Mesh3DDestroy(mesh);
-	AMGX_finalize();
+	Finalize();
 	return 0;
 }

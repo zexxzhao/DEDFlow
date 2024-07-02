@@ -51,7 +51,7 @@ static void PCJacobiSetup(PC* pc) {
 	MatrixGetDiag(mat, pc_ctx, bs);
 	value_type *inv, **input_batch, **output_batch, **h_batch;
 	int* info, *pivot;
-	cublasHandle_t cublas_handle = *(cublasHandle_t*)pc->cublas_handle;
+	cublasHandle_t cublas_handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 
 	if(bs == 1) {
 		VecPointwiseInv(pc_ctx, num_row);
@@ -94,7 +94,7 @@ static void PCJacobiApply(PC* pc, value_type* x, value_type* y) {
 	PCJacobi* pc_impl = (PCJacobi*)pc->data;
 	index_type bs = pc_impl->bs;
 	value_type* diag = (value_type*)pc_impl->diag;
-	cublasHandle_t cublas_handle = *(cublasHandle_t*)pc->cublas_handle;
+	cublasHandle_t cublas_handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 	value_type one = 1.0, zero = 0.0;
 
 	if(bs == 1) {
@@ -158,6 +158,7 @@ static void PCDecompositionDestroy(PC* pc) {
 }
 
 static void PCAMGXAlloc(PC* pc, void* options) {
+#ifdef USE_AMGX
 	Matrix* mat = (Matrix*)pc->mat;
 	MatrixCSR* mat_csr = NULL;
 	PCAMGX* pc_impl = (PCAMGX*)CdamMallocHost(SIZE_OF(PCAMGX));
@@ -188,9 +189,11 @@ static void PCAMGXAlloc(PC* pc, void* options) {
 
 	AMGX_solver_setup(pc_impl->solver, pc_impl->A);
 	pc->data = (void*)pc_impl;
+#endif
 }
 
 static void PCAMGXSetup(PC* pc) {
+#ifdef USE_AMGX
 	Matrix* mat = (Matrix*)pc->mat;
 	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
 	PCAMGX* pc_impl = (PCAMGX*)pc->data;
@@ -203,9 +206,11 @@ static void PCAMGXSetup(PC* pc) {
 																	 NULL);
 
 	AMGX_solver_resetup(pc_impl->solver, pc_impl->A);
+#endif
 }
 
 static void PCAMGXApply(PC* pc, value_type* x, value_type* y) {
+#ifdef USE_AMGX
 	index_type num_row = MatrixNumRow((Matrix*)pc->mat);
 	PCAMGX* pc_impl = (PCAMGX*)pc->data;
 	AMGX_vector_upload(pc_impl->x, num_row, 1, x);
@@ -213,9 +218,11 @@ static void PCAMGXApply(PC* pc, value_type* x, value_type* y) {
 	/// AMGX_vector_set_zero(pc_impl->y);
 	AMGX_solver_solve_with_0_initial_guess(pc_impl->solver, pc_impl->x, pc_impl->y);
 	AMGX_vector_download(pc_impl->y, y);
+#endif
 }
 
 static void PCAMGXDestroy(PC* pc) {
+#ifdef USE_AMGX
 	PCAMGX* pc_impl = (PCAMGX*)pc->data;
 	AMGX_solver_destroy(pc_impl->solver);
 	AMGX_config_destroy(pc_impl->cfg);
@@ -224,6 +231,7 @@ static void PCAMGXDestroy(PC* pc) {
 	AMGX_matrix_destroy(pc_impl->A);
 	AMGX_resources_destroy(pc_impl->rsrc);
 	CdamFreeHost(pc_impl, SIZE_OF(PCAMGX));
+#endif
 }
 
 PC* PCCreateNone(Matrix* mat, index_type n) {
@@ -269,6 +277,7 @@ PC* PCCreateDecomposition(Matrix* mat, index_type bs, const index_type* offset, 
 }
 
 PC* PCCreateAMGX(Matrix* mat, void* options) {
+#ifdef USE_AMGX
 	PC* pc = (PC*)CdamMallocHost(SIZE_OF(PC));
 	memset(pc, 0, SIZE_OF(PC));
 	pc->mat = (void*)mat;
@@ -279,6 +288,10 @@ PC* PCCreateAMGX(Matrix* mat, void* options) {
 	pc->op->destroy = PCAMGXDestroy;
 
 	return pc;
+#else
+#warning "AMGX is not enabled"
+	return NULL;
+#endif
 }
 
 void PCApply(PC* pc, value_type* x, value_type* y) {

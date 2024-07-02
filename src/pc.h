@@ -1,6 +1,8 @@
 #ifndef __PC_H__
 #define __PC_H__
+#ifdef USE_AMGX
 #include <amgx_c.h>
+#endif
 #include "common.h"
 #include "matrix.h"
 
@@ -62,6 +64,7 @@ struct PCDecomposition {
 };
 
 struct PCAMGX {
+#ifdef USE_AMGX
 	AMGX_config_handle cfg;
 	AMGX_matrix_handle A;
 	AMGX_vector_handle x;
@@ -69,6 +72,7 @@ struct PCAMGX {
 	AMGX_solver_handle solver;
 	AMGX_resources_handle rsrc;
 	AMGX_Mode mode;
+#endif
 };
 
 struct PCCustom {

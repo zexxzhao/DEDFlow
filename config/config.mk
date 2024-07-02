@@ -20,7 +20,7 @@ CUDA_DIR=$(CUDA_ROOT)
 endif
 
 ifeq ($(origin AMGX_DIR), undefined)
-$(error AMGX_DIR is not set)
+$(warning AMGX_DIR is not set)
 endif
 
 ifeq ($(origin METIS_DIR), undefined)
@@ -58,14 +58,17 @@ LIB=-lm
 INC+=-I$(MK_HDF5_DIR)/include
 LIB+=-L$(MK_HDF5_DIR)/lib -lhdf5
 
-INC+=-I$(AMGX_DIR)/include
-LIB+=-L$(AMGX_DIR)/lib -lamgx
-
 # if MK_METIS_DIR is not set, then METIS will not be used
 ifneq ($(MK_METIS_DIR),)
-CLFAGS+= -DUSE_METIS
+DEFINES+= -DUSE_METIS
 INC+=-I$(MK_METIS_DIR)/include
 LIB+=-L$(MK_METIS_DIR)/lib -lmetis
+endif
+
+ifneq ($(AMGX_DIR),)
+DEFINES+= -DUSE_AMGX
+INC+=-I$(AMGX_DIR)/include
+LIB+=-L$(AMGX_DIR)/lib -lamgx -lcusolver -lnvToolsExt
 endif
 
 NVCC=nvcc
@@ -73,7 +76,7 @@ NVCCFLAGS=-std=c++17 $(CU_OPT) $(DEFINES) -Wno-deprecated-gpu-targets -Wno-depre
 NVCCFLAGS+= --generate-code arch=compute_75,code=sm_75 # RTX 2080 Ti
 NVCCFLAGS+= --generate-code arch=compute_86,code=sm_86 # RTX 3090
 CU_INC=
-CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand -lcusolver -lnvToolsExt
+CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand 
 
 LINKER=g++
 

@@ -38,124 +38,6 @@ void MatrixGetDiagBlock(const value_type* matval,
 												const index_type* row_ptr, const index_type* col_ind,
 												value_type* diag, int lda, int stride);
 
-/*
-static void PCGeneratePrivate(Matrix* A, void* ctx) {
-	MatrixFS* mat = (MatrixFS*)A->data;
-	index_type n_offset = mat->n_offset;
-	const CSRAttr* spy = mat->spy1x1;
-	index_type num_node = spy->num_row;
-
-	Krylov* ksp = (Krylov*)ctx;
-	value_type* pc_ctx = (value_type*)ksp->pc_ctx;
-	cublasHandle_t cublas_handle = *(cublasHandle_t*)ksp->handle;
-
-	CUGUARD(cudaGetLastError());
-	CUGUARD(cudaGetLastError());
-	MatrixGetDiagBlock(((MatrixCSR*)mat->mat[0]->data)->val, 3,
-										 spy->num_row, spy->num_col, spy->row_ptr, spy->col_ind,
-										 pc_ctx, 3, 3 * 3);
-	// cudaStreamSynchronize(0);
-	CUGUARD(cudaGetLastError());
-	value_type* inv = (value_type*)CdamMallocDevice(num_node * 3 * 3 * SIZE_OF(value_type));
-	value_type** input_batch = (value_type**)CdamMallocDevice(num_node * SIZE_OF(value_type*) * 2);
-	value_type** output_batch = input_batch + num_node;
-	CUGUARD(cudaGetLastError());
-	CUGUARD(cudaGetLastError());
-	int* info = (int*)CdamMallocDevice(num_node * SIZE_OF(int) * 4);
-	int* pivot = info + num_node;
-	CUGUARD(cudaGetLastError());
-
-	value_type** h_batch = (value_type**)CdamMallocHost(num_node * SIZE_OF(value_type*));
-	for(int i = 0; i < num_node; i++) {
-		h_batch[i] = pc_ctx + i * 3 * 3;
-	}
-	cudaMemcpy(input_batch, h_batch, num_node * SIZE_OF(value_type*), cudaMemcpyHostToDevice);
-	for(int i = 0; i < num_node; i++) {
-		h_batch[i] = inv + i * 3 * 3;
-	}
-	cudaMemcpy(output_batch, h_batch, num_node * SIZE_OF(value_type*), cudaMemcpyHostToDevice);
-	CUGUARD(cudaGetLastError());
-	cublasDgetrfBatched(cublas_handle, 3, input_batch, 3, pivot, info, num_node);
-	cublasDgetriBatched(cublas_handle, 3, (const value_type* const*)input_batch, 3, pivot, output_batch, 3, info, num_node);
-	cudaMemcpy(pc_ctx, inv, num_node * 3 * 3 * SIZE_OF(value_type), cudaMemcpyDeviceToDevice);
-
-
-	if(mat->mat[1 * n_offset + 1]) {
-		MatrixGetDiag(mat->mat[1 * n_offset + 1], pc_ctx + (3 * 3 + 0) * num_node); 
-	}
-	else {
-		SetValGPU(pc_ctx + (3 * 3 + 0) * num_node, num_node , 1.0);
-	}
-	if(mat->mat[2 * n_offset + 2]) {
-		MatrixGetDiag(mat->mat[2 * n_offset + 2], pc_ctx + (3 * 3 + 1) * num_node);
-	}
-	else {
-		SetValGPU(pc_ctx + (3 * 3 + 1) * num_node, num_node, 1.0);
-	}
-	if(mat->mat[3 * n_offset + 3]) {
-		MatrixGetDiag(mat->mat[3 * n_offset + 3], pc_ctx + (3 * 3 + 2) * num_node);
-	}
-	else {
-		SetValGPU(pc_ctx + (3 * 3 + 2) * num_node, num_node, 1.0);
-	}
-
-	CdamFreeDevice(inv, num_node * 3 * 3 * SIZE_OF(value_type));
-	CdamFreeDevice(input_batch, num_node * SIZE_OF(value_type*) * 2);
-	CdamFreeDevice(info, num_node * SIZE_OF(int) * 4);
-	CdamFreeHost(h_batch, num_node * SIZE_OF(value_type*));
-
-	if(0) {
-		f64* h_pc_ctx = (f64*)CdamMallocHost(ksp->pc_ctx_size);
-		cudaMemcpy(h_pc_ctx, pc_ctx, ksp->pc_ctx_size, cudaMemcpyDeviceToHost);
-		FILE* fp = fopen("pc_ctx.txt", "w");
-		for(int i = 0; i < num_node; i++) {
-			fprintf(fp, "%.17e %.17e %.17e %.17e %.17e %.17e %.17e %.17e %.17e\n",
-							h_pc_ctx[i * 3 * 3 + 0], h_pc_ctx[i * 3 * 3 + 1], h_pc_ctx[i * 3 * 3 + 2],
-							h_pc_ctx[i * 3 * 3 + 3], h_pc_ctx[i * 3 * 3 + 4], h_pc_ctx[i * 3 * 3 + 5],
-							h_pc_ctx[i * 3 * 3 + 6], h_pc_ctx[i * 3 * 3 + 7], h_pc_ctx[i * 3 * 3 + 8]);
-		}
-		fclose(fp);
-		CdamFreeHost(h_pc_ctx, ksp->pc_ctx_size);
-		exit(0);
-	}
-}
-*/
-
-/*
-static void PCJacobiApply(Matrix* A, f64* x, f64* y, void* ctx) {
-	// cudaMemcpy(y, x, MatrixNumRow(A) * SIZE_OF(f64), cudaMemcpyDeviceToDevice);
-	// return;
-	MatrixFS* mat = (MatrixFS*)A->data;
-	const CSRAttr* spy = mat->spy1x1;
-	index_type num_node = spy->num_row;
-
-	Krylov* ksp = *(Krylov**)ctx;
-	cublasHandle_t cublas_handle = *(cublasHandle_t*)ksp->handle;
-
-	value_type* pc_ctx = (value_type*)ksp->pc_ctx;
-
-	f64 one = 1.0, zero = 0.0;
-
-	cublasDgemvStridedBatched(cublas_handle,
-														CUBLAS_OP_N,
-														3, 3,
-														&one,
-														pc_ctx, 3, 3 * 3,
-														x, 1, 3,
-														&zero,
-														y, 1, 3,
-														num_node);
-
-
-	VecPointwiseDiv(x + num_node * 3,
-									pc_ctx + num_node * 3 * 3,
-									y + num_node * 3,
-									num_node * 1);
-
-	cudaMemcpyAsync(y + num_node * 4, x + num_node * 4, num_node * 2 * SIZE_OF(f64), cudaMemcpyDeviceToDevice, 0);
-	// cudaMemcpyAsync(y + num_node * 3, x + num_node * 3, 3 * num_node * SIZE_OF(f64), cudaMemcpyDeviceToDevice, 0);
-}
-*/
 
 static void CGSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	index_type n = MatrixNumRow(A);
@@ -189,7 +71,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	// cusparseDnVecDescr_t vec_r, vec_x, vec_tmp;
 	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 
-	cublasHandle_t cublas_handle = *(cublasHandle_t*)ksp->handle;
+	cublasHandle_t cublas_handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 	// cublasStatus_t status;
 
 #define QCOL(col) (Q + (col) * n)

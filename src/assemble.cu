@@ -1172,12 +1172,13 @@ __global__ void IncrementByN(I n, T* a, INC inc) {
 
 
 template <typename I, typename T, I NSHL=4>
-void GetElemInvJ3D(I batch_size, const I* ien, const I* batch_index_ptr, const T* xg, T* elem_metric, void* buff, cublasHandle_t handle) {
+void GetElemInvJ3D(I batch_size, const I* ien, const I* batch_index_ptr, const T* xg, T* elem_metric, void* buff) {
 	f64 one = 1.0, zero = 0.0;
 	int block_size = 256;
 	int num_block = CEIL_DIV(batch_size, block_size);
 
 	cudaStream_t stream[1] = {0};
+	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 	// cudaStreamCreate(stream + 0);
 
 
@@ -1356,7 +1357,7 @@ __BEGIN_DECLS__
 void AssembleSystemTet(Mesh3D *mesh,
 											 /* Field *wgold, Field* dwgold, Field* dwg, */
 											 f64* wgalpha_dptr, f64* dwgalpha_dptr,
-											 f64* F, Matrix* J, void* cublas_handle) {
+											 f64* F, Matrix* J) {
 
 	const i32 NSHL = 4;
 	const i32 MAX_BATCH_SIZE = 1 << 10;
@@ -1365,7 +1366,7 @@ void AssembleSystemTet(Mesh3D *mesh,
 	const Mesh3DData* dev = Mesh3DDevice(mesh);
 	const index_type* ien = Mesh3DDataTet(dev);
 	const f64* xg = Mesh3DDataCoord(dev);
-	cublasHandle_t handle = *(cublasHandle_t*)cublas_handle;
+	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 
 	UNUSED(MAX_BATCH_SIZE);
 	UNUSED(num_tet);
@@ -1464,7 +1465,7 @@ void AssembleSystemTet(Mesh3D *mesh,
 		/* 0.0. Get dxi/dx and det(dxi/dx) */
 
 		start = std::chrono::steady_clock::now();
-		GetElemInvJ3D<index_type, f64, NSHL>(batch_size, ien, batch_index_ptr, xg, elem_invJ, shgradg, handle);
+		GetElemInvJ3D<index_type, f64, NSHL>(batch_size, ien, batch_index_ptr, xg, elem_invJ, shgradg);
 		end = std::chrono::steady_clock::now();
 		time_len[0] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 		/* 0.1. Calculate the gradient of the shape functions */
@@ -1652,7 +1653,7 @@ void AssembleSystemTet(Mesh3D *mesh,
 
 void AssembleSystemTetFace(Mesh3D* mesh,
 													 f64* wgalpha_dptr, f64* dwgalpha_dptr,
-													 f64* F, Matrix* J, void* cublas_handle) {
+													 f64* F, Matrix* J) {
 	const i32 NSHL = 4;
 	const i32 MAX_BATCH_SIZE = 1 << 10;
 	const Mesh3DData* dev = Mesh3DDevice(mesh);
@@ -1665,7 +1666,7 @@ void AssembleSystemTetFace(Mesh3D* mesh,
 	color_t c;
 	f64 one = 1.0, zero = 0.0;
 
-	cublasHandle_t handle = *(cublasHandle_t*)cublas_handle;
+	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 
 	// static f64* d_shlgradu = NULL, *d_shlu = NULL;
 	// if(!d_shlgradu) {
@@ -1721,7 +1722,7 @@ void AssembleSystemTetFace(Mesh3D* mesh,
 		/* 0. Calculate the element metrics */
 		GetElemJ3DKernel<index_type, value_type, NSHL><<<CEIL_DIV(num_face, 256), 256>>>(num_face, ien, f2e, xg, elem_invJ);
 		GetElemFaceNVKernel<index_type, value_type><<<CEIL_DIV(num_face, 256), 256>>>(num_face, elem_invJ, forn, nv);
-		GetElemInvJ3D<index_type, value_type, NSHL>(num_face, ien, f2e, xg, elem_invJ, shgradg, handle);
+		GetElemInvJ3D<index_type, value_type, NSHL>(num_face, ien, f2e, xg, elem_invJ, shgradg);
 		GetShapeGradKernel<index_type, value_type><<<CEIL_DIV(num_face, 256), 256>>>(num_face, elem_invJ, shgradg);
 
 		/* 1. Interpolate the field values */
