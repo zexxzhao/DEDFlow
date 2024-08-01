@@ -278,7 +278,7 @@ static void GMRESSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 		cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_HOST);
 		
 		/* 4. Check convergence */
-		if((iter + 1) % 10 == 0) {
+		if((iter + 1) % 20 == 0) {
 			cublasGetVector(1, SIZE_OF(f64), beta + iter + 1, 1, &rnrm, 1);
 			rnrm = fabs(rnrm);
 			fprintf(stdout, "%3d) abs = %6.4e (tol = %6.4e) rel = %6.4e (tol = %6.4e)\n",

@@ -26,6 +26,7 @@ struct Mesh3D {
 
 	/* Bound */
 	index_type num_bound;
+	index_type* bound_fid;
 	index_type* bound_node_offset;
 	index_type* bound_node;
 	index_type* bound_elem_offset;

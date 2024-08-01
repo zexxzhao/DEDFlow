@@ -48,7 +48,7 @@ FLAGS=-Wall -Wextra \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			-Wno-deprecated-declarations
-DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE
+DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE # -DDBG_TET
 CC=gcc
 CFLAGS=-std=c99 $(FLAGS) $(DEFINES) $(C_OPT) # -fno-omit-frame-pointer
 

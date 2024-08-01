@@ -21,7 +21,7 @@
 #include "assemble.h"
 
 #define kRHOC (0.5)
-#define kDT (1e-3)
+#define kDT (5e-2)
 #define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
@@ -37,7 +37,7 @@
 #define kCP (1.0)
 #define kKAPPA (0.66)
 /// #define kKAPPA (0.0)
-#define kMU (1.0e-3)
+#define kMU (10.0/3.0)
 
 __constant__ f64 fb[3] = {0.0, 0.0, -9.81 * 0.0};
 __constant__ f64 gw[4] = {0.0416666666666667, 0.0416666666666667, 0.0416666666666667, 0.0416666666666667};
@@ -64,6 +64,7 @@ const f64 h_shlgradu[12] = {-1.0, -1.0, -1.0,
 
 #define NQRB (3)
 const f64 h_gwb[3] = {0.1666666666666667, 0.1666666666666667, 0.1666666666666667};
+/* h_shlub[0:NSHL, 0:NQRB, 0:NFACE] */
 const f64 h_shlub[NQRB*4*4] = {/* h_shlub[:, :, 0] = */
 															 0.0, 0.1666666666666667, 0.1666666666666667, 0.6666666666666667,
 															 0.0, 0.1666666666666667, 0.6666666666666667, 0.1666666666666667,
@@ -108,6 +109,13 @@ __constant__ f64 c_nv[3*2*4] = {/* n[:, 0, 0] = */ -1.0, 1.0, 0.0,
 															  /* n[:, 1, 2] = */ 0.0, 0.0, 1.0,
 															  /* n[:, 0, 3] = */ 0.0, 1.0, 0.0,
 															  /* n[:, 1, 3] = */ 1.0, 0.0, 0.0};
+/* Facet normal vectors of tet in the reference coordinate*/
+/* Reserved for the normal vectors in the physical coordinate using Nanson's formula */
+__constant__ f64 c_nv2[4*3] = { /* 0.57735026919, 0.57735026919, 0.57735026919, */
+																1.0, 1.0, 1.0,
+															 -1.0, 0.0, 0.0,
+																0.0, -1.0, 0.0,
+																0.0, 0.0, -1.0};
 
 /** Load the value from the source array to the destination array belonging to the batch
  * The source array is columned-majored of size (max(elem_size, stridex), num_node)
@@ -271,13 +279,14 @@ __device__ void cross_product(const T* a, const T* b, T* c) {
 template<typename I, typename T, I NSHL=4>
 __global__ void GetElemFaceNVKernel(I batch_size, const T* metric, const I* forn, T* nv) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	T a[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 	if(idx >= batch_size) return;
 	I iorn = forn[idx];
 	
 	nv += 3 * idx;
 	/* metric (= metric + 10 * idx) is 3x3 and column-majored */
 	metric += 10 * idx;
+#if 0
+	T a[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 	/* a  is 3x2 and column-majored */
 	/* d_nv (= c_nv + iorn * 6) is 3x2 and column-majored */
 	const f64* d_nv = c_nv + iorn * 6;
@@ -293,6 +302,20 @@ __global__ void GetElemFaceNVKernel(I batch_size, const T* metric, const I* forn
 
 	/* nv = cross(a[:, 0], a[:, 1]) */
 	cross_product<T>(a, a + 3, nv);
+#else
+	T b[3] = {0.0, 0.0, 0.0};
+	T detJ = metric[9];
+	/* Using Nanson's formula */
+	/* nv[0:3] = metric[0:3, 0:3] @ c_nv2[iorn, 0:3] */	
+	for(I k = 0; k < 3; ++k) {
+		for(I n = 0; n < 3; ++n) {
+			b[n] += metric[n * 3 + k] * c_nv2[iorn * 3 + k];
+		}
+	}
+	nv[0] = b[0] * detJ;
+	nv[1] = b[1] * detJ;
+	nv[2] = b[2] * detJ;
+#endif
 }
 
 template<typename I, typename T, I NSHL=4>
@@ -584,6 +607,8 @@ AssembleWeakFormLHSKernel(I batch_size,
 
 		tau[0] = tau_component[te][2];
 		tau[1] = tau_component[te][3];
+		// tau[0] = 0.0;
+		// tau[1] = 0.0;
 		// tau[2] = rsqrt(4.0 / (kDT * kDT) + tau_component[te]);
 		// tau[3] = rsqrt(4.0 / (kDT * kDT) + tau_component[te] + 3.0 * kalpha * kalpha * tau_component[te + BLK_ELEM_COUNT]) / (kRHO * kCP);
 
@@ -617,17 +642,18 @@ AssembleWeakFormLHSKernel(I batch_size,
 			}
 		}
 
+		/* dRM/dP */
+		for(I ii = 0; ii < 3; ++ii) {
+			elem_J_buffer[ii * 4 + 3] -= shgradl[te][aa * 3 + ii] * shlu[bb * NQR + iq] * detJgw;
+			elem_J_buffer[ii * 4 + 3] += kRHO * tau[0] * shconv[te][aa] * shgradl[te][bb * 3 + ii] * detJgw;
+		}
+
+		// tau[0] = 0.0;
 		/* dRC/dU */
 		for(I ii = 0; ii < 3; ++ii) {
 			elem_J_buffer[3 * 4 + ii] += fact1 * kRHO * tau[0] * shgradl[te][aa * 3 + ii] * shlu[bb * NQR + iq] * detJgw;
 			elem_J_buffer[3 * 4 + ii] += fact2 * shlu[aa * NQR + iq] * shgradl[te][bb * 3 + ii] * detJgw;
 			elem_J_buffer[3 * 4 + ii] += fact2 * tau[0] * shgradl[te][aa * 3 + ii] * kRHO * shconv[te][bb] * detJgw;
-		}
-
-		/* dRM/dP */
-		for(I ii = 0; ii < 3; ++ii) {
-			elem_J_buffer[ii * 4 + 3] -= shgradl[te][aa * 3 + ii] * shlu[bb * NQR + iq] * detJgw;
-			elem_J_buffer[ii * 4 + 3] -= kRHO * tau[0] * shconv[te][aa] * shgradl[te][bb * 3 + ii] * detJgw;
 		}
 
 		/* dRC/dP */
@@ -654,26 +680,35 @@ AssembleWeakFormLHSKernel(I batch_size,
 		// 		elem_J[M4D(aa, bb, ii, jj)] = ii * BS + jj + 1.0;
 		// 	}
 		// }
-		/*
-		if(0 && batch_size > 28700 && aa == 1 && bb == 2 && iel == 0 && iq >= 0) {
+#ifdef DBG_TET
+		if(batch_size > 0 && aa == 0 && bb == 0 && iel == 0 && iq >= 0) {
 			printf("SHARED MEM[%d][%d][%d]\n", iel, aa, bb);
 			printf("tau: %.17e %.17e %.17e %.17e\n", tau[0], tau[1], tau[2], tau[3]);
 			printf("tmp: %.17e detJ: %.17e\n", tmp, detJ);
+			printf("tau_comp: %.17e %.17e\n", tau_component[te][0], tau_component[te][1]);
 			printf("shgradl[0:3]: %.17e %.17e %.17e\n", shgradl[te][0], shgradl[te][1], shgradl[te][2]);
 			printf("shgradl[3:6]: %.17e %.17e %.17e\n", shgradl[te][3], shgradl[te][4], shgradl[te][5]);
 			printf("shgradl[6:9]: %.17e %.17e %.17e\n", shgradl[te][6], shgradl[te][7], shgradl[te][8]);
 			printf("shgradl[9:12]: %.17e %.17e %.17e\n", shgradl[te][9], shgradl[te][10], shgradl[te][11]);
 			printf("shconv[0:4]: %.17e %.17e %.17e %.17e\n", shconv[te][0], shconv[te][1], shconv[te][2], shconv[te][3]);
+
 			if(iq == 3) {
-				printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[0], elem_J_buffer[1], elem_J_buffer[2], elem_J_buffer[3], elem_J_buffer[4], elem_J_buffer[5]);
-				printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[6], elem_J_buffer[7], elem_J_buffer[8], elem_J_buffer[9], elem_J_buffer[10], elem_J_buffer[11]);
-				printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[12], elem_J_buffer[13], elem_J_buffer[14], elem_J_buffer[15], elem_J_buffer[16], elem_J_buffer[17]);
-				printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[18], elem_J_buffer[19], elem_J_buffer[20], elem_J_buffer[21], elem_J_buffer[22], elem_J_buffer[23]);
-				printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[24], elem_J_buffer[25], elem_J_buffer[26], elem_J_buffer[27], elem_J_buffer[28], elem_J_buffer[29]);
-				printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[30], elem_J_buffer[31], elem_J_buffer[32], elem_J_buffer[33], elem_J_buffer[34], elem_J_buffer[35]);
+				printf("%.17e %.17e %.17e %.17e\n", elem_J_buffer[0], elem_J_buffer[1], elem_J_buffer[2], elem_J_buffer[3]);
+				printf("%.17e %.17e %.17e %.17e\n", elem_J_buffer[4], elem_J_buffer[5], elem_J_buffer[6], elem_J_buffer[7]);
+				printf("%.17e %.17e %.17e %.17e\n", elem_J_buffer[8], elem_J_buffer[9], elem_J_buffer[10], elem_J_buffer[11]);
+				printf("%.17e %.17e %.17e %.17e\n", elem_J_buffer[12], elem_J_buffer[13], elem_J_buffer[14], elem_J_buffer[15]);
 			}
+
+			// if(iq == 3) {
+			// 	printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[0], elem_J_buffer[1], elem_J_buffer[2], elem_J_buffer[3], elem_J_buffer[4], elem_J_buffer[5]);
+			// 	printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[6], elem_J_buffer[7], elem_J_buffer[8], elem_J_buffer[9], elem_J_buffer[10], elem_J_buffer[11]);
+			// 	printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[12], elem_J_buffer[13], elem_J_buffer[14], elem_J_buffer[15], elem_J_buffer[16], elem_J_buffer[17]);
+			// 	printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[18], elem_J_buffer[19], elem_J_buffer[20], elem_J_buffer[21], elem_J_buffer[22], elem_J_buffer[23]);
+			// 	printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[24], elem_J_buffer[25], elem_J_buffer[26], elem_J_buffer[27], elem_J_buffer[28], elem_J_buffer[29]);
+			// 	printf("elem_J[%d][%d][%d]: %.17e %.17e %.17e %.17e %.17e %.17e\n", iel, aa, bb, elem_J_buffer[30], elem_J_buffer[31], elem_J_buffer[32], elem_J_buffer[33], elem_J_buffer[34], elem_J_buffer[35]);
+			// }
 		}
-		*/
+#endif
 		__syncthreads();
 	}
 
@@ -793,8 +828,8 @@ AssembleWeakFormKernel(I batch_size,
 		}
 
 		if constexpr(TENSOR == 1) {
-			// tau[0] = 1e-60;
-			// tau[1] = 1e-60;
+			// tau[0] = 0;
+			// tau[1] = 0;
 			T tmp0[3];
 			T tmp1[3 * 3];
 			// T tmp2[1];
@@ -815,6 +850,8 @@ AssembleWeakFormKernel(I batch_size,
 					tmp1[i * 3 + j] += kRHO * tau[0] * rLi[i] * uadv[j];
 					tmp1[i * 3 + j] -= kRHO * tau[0] * tau[0] * rLi[i] * rLi[j];
 				}
+			}
+			for(I i = 0; i < 3; ++i) {
 				tmp1[i * 3 + i] += -qr_wgalpha[NQR * 3 + iq] + kRHO * tau[1] * divu;
 			}
 
@@ -868,13 +905,22 @@ AssembleWeakFormKernel(I batch_size,
 
 				elem_F[M2D(aa, 5)] += bt * gw[iq] * detJ;
 			}
-			// if(iel == 0) {
-			// 	printf("elem_F(%d) = %p\n", iq, elem_F);
-			// 	printf("F[:, 0] = %g, %g, %g, %g, %g, %g\n", elem_F[0], elem_F[1], elem_F[2], elem_F[3], elem_F[4], elem_F[5]);
-			// 	printf("F[:, 1] = %g, %g, %g, %g, %g, %g\n", elem_F[6], elem_F[7], elem_F[8], elem_F[9], elem_F[10], elem_F[11]);
-			// 	printf("F[:, 2] = %g, %g, %g, %g, %g, %g\n", elem_F[12], elem_F[13], elem_F[14], elem_F[15], elem_F[16], elem_F[17]);
-			// 	printf("F[:, 3] = %g, %g, %g, %g, %g, %g\n", elem_F[18], elem_F[19], elem_F[20], elem_F[21], elem_F[22], elem_F[23]);
-			// }
+#ifdef DBG_TET
+			if(0 && iel == 0) {
+				printf("tmp0: %.17e %.17e %.17e\n", tmp0[0], tmp0[1], tmp0[2]);
+				printf("tmp1[0, :] = %.17e %.17e %.17e\n", tmp1[0], tmp1[1], tmp1[2]);
+				printf("tmp1[1, :] = %.17e %.17e %.17e\n", tmp1[3], tmp1[4], tmp1[5]);
+				printf("tmp1[2, :] = %.17e %.17e %.17e\n", tmp1[6], tmp1[7], tmp1[8]);
+				printf("gw=%.17e detJ=%.17e\n", gw[iq], detJ);
+				if(iq == 3) {
+					printf("elem_F(%d) = %p\n", iq, elem_F);
+					printf("F[:, 0] = %.17e, %.17e, %.17e, %.17e, %.17e, %.17e\n", elem_F[0], elem_F[1], elem_F[2], elem_F[3], elem_F[4], elem_F[5]);
+					printf("F[:, 1] = %.17e, %.17e, %.17e, %.17e, %.17e, %.17e\n", elem_F[6], elem_F[7], elem_F[8], elem_F[9], elem_F[10], elem_F[11]);
+					printf("F[:, 2] = %.17e, %.17e, %.17e, %.17e, %.17e, %.17e\n", elem_F[12], elem_F[13], elem_F[14], elem_F[15], elem_F[16], elem_F[17]);
+					printf("F[:, 3] = %.17e, %.17e, %.17e, %.17e, %.17e, %.17e\n", elem_F[18], elem_F[19], elem_F[20], elem_F[21], elem_F[22], elem_F[23]);
+				}
+			}
+#endif
 		}
 
 		if constexpr(TENSOR == 2) {
@@ -1014,8 +1060,9 @@ FaceAssemblyKernel(I batch_size, const T* elem_invJ, const T* nv, const T* shgra
 	}
 	detJb = sqrt(detJb);
 	// hinv = sqrt(hinv) / detJb;
+	hinv = sqrt(hinv);
 	T tau_b = 4.0 * kMU * hinv;
-	// tau_b = 0.0;
+	// tau_b = 4.0 * kMU / 0.01 * detJb;
 
 	/* Assemble the weak imposition of the boundary condition */
 	if(elem_F) {
@@ -1030,29 +1077,29 @@ FaceAssemblyKernel(I batch_size, const T* elem_invJ, const T* nv, const T* shgra
 			uadv[1] = qr_wgalpha[NQRB * 1 + iq];
 			uadv[2] = qr_wgalpha[NQRB * 2 + iq];
 			T unor = uadv[0] * nv[0] + uadv[1] * nv[1] + uadv[2] * nv[2];
-			T uneg = (unor - abs(unor)) * 0.5;
+			T uneg = (unor - fabs(unor)) * 0.5;
 			for(I i = 0; i < 3; ++i) {
 				tmp0[i] = 0.0;
+				tmp0[i] += nv[i] * qr_wgalpha[NQRB * 3 + iq];
 				tmp0[i] -= kMU * (nv[0] * qr_wggradalpha[3 * i + 0] +
 													nv[1] * qr_wggradalpha[3 * i + 1] +
 													nv[2] * qr_wggradalpha[3 * i + 2]);
 				tmp0[i] -= kMU * (nv[0] * qr_wggradalpha[3 * 0 + i] +
 													nv[1] * qr_wggradalpha[3 * 1 + i] +
 													nv[2] * qr_wggradalpha[3 * 2 + i]);
-				tmp0[i] += nv[i] * qr_wgalpha[NQRB * 3 + iq];
-				tmp0[i] -= kRHO * uneg * qr_wgalpha[NQRB * i + iq];
-				tmp0[i] += tau_b * qr_wgalpha[NQRB * i + iq];
+				tmp0[i] -= kRHO * uneg * uadv[i]; // qr_wgalpha[NQRB * i + iq];
+				tmp0[i] += tau_b * uadv[i]; // qr_wgalpha[NQRB * i + iq];
 
 			}	
 
 			for(I i = 0; i < 3; ++i) {
 				for(I j = 0; j < 3; ++j) {
-					tmp1[i * 3 + j] = -kMU * (nv[i] * qr_wgalpha[NQRB * j + iq] + nv[j] * qr_wgalpha[NQRB * i + iq]);
+					// tmp1[i * 3 + j] = -kMU * (nv[i] * qr_wgalpha[NQRB * j + iq] + nv[j] * qr_wgalpha[NQRB * i + iq]);
+					tmp1[i * 3 + j] = -kMU * (nv[i] * uadv[j] + nv[j] * uadv[i]);
 				}
 			}
 
 			for(I aa = 0; aa < NSHL; ++aa) {
-				#pragma unroll
 				for(I ii = 0; ii < 3; ++ii) {
 					T bm = 0.0;
 					bm += c_shlub[NQRB * NSHL * iorn + iq * NSHL + aa] * tmp0[ii];
@@ -1098,7 +1145,7 @@ FaceAssemblyKernel(I batch_size, const T* elem_invJ, const T* nv, const T* shgra
 			uadv[1] = qr_wgalpha[NQRB * 1 + iq];
 			uadv[2] = qr_wgalpha[NQRB * 2 + iq];
 			T unor = uadv[0] * nv[0] + uadv[1] * nv[1] + uadv[2] * nv[2];
-			T uneg = (unor - abs(unor)) * 0.5;
+			T uneg = (unor - fabs(unor)) * 0.5;
 			for(I aa = 0; aa < NSHL; ++aa) {
 				for(I bb = 0; bb < NSHL; ++bb) {
 					/* dRM/dU */
@@ -1113,16 +1160,22 @@ FaceAssemblyKernel(I batch_size, const T* elem_invJ, const T* nv, const T* shgra
 											+ shnorm[aa] * c_shlub[NQRB * NSHL * iorn + iq * NSHL + bb]);
 					tmp0 -= kRHO * c_shlub[NQRB * NSHL * iorn + iq * NSHL + aa] 
 											 * c_shlub[NQRB * NSHL * iorn + iq * NSHL + bb] * uneg;
-					tmp0 += tau_b * c_shlub[NQRB * NSHL * iorn + iq * NQRB + aa] * c_shlub[NQRB * NSHL * iorn + iq * NSHL + bb];
+					tmp0 += tau_b * c_shlub[NQRB * NSHL * iorn + iq * NSHL + aa] * c_shlub[NQRB * NSHL * iorn + iq * NSHL + bb];
 					elem_J[M4D(aa, bb, 0, 0)] += fact2 * tmp0 * c_gwb[iq];
 					elem_J[M4D(aa, bb, 1, 1)] += fact2 * tmp0 * c_gwb[iq];
 					elem_J[M4D(aa, bb, 2, 2)] += fact2 * tmp0 * c_gwb[iq];
+					// if(idx == 0 && aa == 0 && bb == 0) {
+					// 		printf("sys = %.17e tauB= %.17e, uneg=%.17e, unor=%.17e\n", tmp0, tau_b, uneg, unor);
+					// }
 					
 					for(I ii = 0; ii < 3; ++ii) {
 						for(I jj = 0; jj < 3; ++jj) {
 							tmp0 = 0.0;
-							tmp0 -= kMU * c_shlub[NQRB * NSHL * iorn + iq * NSHL + aa] * shgradg[bb * 3 + ii] * nv[ii];
-							tmp0 -= kMU * c_shlub[NQRB * NSHL * iorn + iq * NSHL + bb] * shgradg[aa * 3 + jj] * nv[jj];
+							tmp0 -= kMU * c_shlub[NQRB * NSHL * iorn + iq * NSHL + aa] * shgradg[bb * 3 + ii] * nv[jj];
+							tmp0 -= kMU * c_shlub[NQRB * NSHL * iorn + iq * NSHL + bb] * shgradg[aa * 3 + jj] * nv[ii];
+							// if(idx == 0 && aa == 0 && bb == 0) {
+							// 	printf("sys[%d][%d] = %.17e %.17e %.17e\n", ii, jj, fact2, tmp0, c_gwb[iq]);
+							// }
 							elem_J[M4D(aa, bb, ii, jj)] += fact2 * tmp0 * c_gwb[iq];
 						}
 					}
@@ -1138,6 +1191,24 @@ FaceAssemblyKernel(I batch_size, const T* elem_invJ, const T* nv, const T* shgra
 				}
 			}
 		}
+#ifdef DBG_TET
+		if(idx == 0 && elem_J) {
+			I aa = 0;
+			I bb = 0;
+			printf("num_thread = %d\n", blockDim.x * gridDim.x);
+			printf("batch_size = %d\n", batch_size);
+			printf("uadv=[%e %e %e]\n", uadv[0], uadv[1], uadv[2]);
+			printf("nv=[%e %e %e]\n", nv[0], nv[1], nv[2]);
+			printf("elem_J[M4D(%d, %d, :, :)] = \n", aa, bb);
+			for(I ii = 0; ii < 4; ++ii) {
+				for(I jj = 0; jj < 4; ++jj) {
+					printf("%.17e ", elem_J[M4D(aa, bb, ii, jj)]);
+				}
+				printf("\n");
+			}
+
+		}
+#endif
 
 	}
 }
@@ -1263,6 +1334,7 @@ void IntElemAssembly(I batch_size,
 										 const T* qr_wgalpha, const T* qr_dwgalpha, const T* qr_wggradalpha,
 										 T* elem_F, T* elem_J, cudaStream_t stream) {
 
+	const int NSHL = 4;
 	if(elem_F) {
 		i32 block_dim = 256;
 		i32 grid_dim = CEIL_DIV(batch_size, block_dim);
@@ -1271,9 +1343,22 @@ void IntElemAssembly(I batch_size,
 				elem_G, shgradg,
 				qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
 				elem_F, NULL);
+		if(0) {
+			f64* h_elem_F = (f64*)malloc(batch_size * BS * NSHL * SIZE_OF(f64));
+			cudaMemcpy(h_elem_F, elem_F, batch_size * BS * NSHL * SIZE_OF(f64), cudaMemcpyDeviceToHost);
+			FILE* fp = fopen("elem_F_shared.txt", "w");
+			for(index_type i = 0; i < batch_size * NSHL; ++i) {
+				for(index_type j = 0; j < BS; ++j) {
+					fprintf(fp, "%.17e ", h_elem_F[i * BS + j]);
+				}
+				fprintf(fp, "\n");
+			
+			}	
+			fclose(fp);
+			free(h_elem_F);
+		}
 	}
 	if(elem_J) {
-		const int NSHL = 4;
 		if(1) {
 			const i32 block_dim = 64*4;
 			i32 grid_dim = CEIL_DIV(batch_size * NSHL * NSHL, block_dim);
@@ -1295,16 +1380,16 @@ void IntElemAssembly(I batch_size,
 					nrm += fabs(h_elem_J[i + 15]);
 				}
 				printf("NRM: %a %.17e\n", nrm, nrm);
-				// FILE* fp = fopen("elem_J_shared.txt", "w");
-				// for(index_type i = 0; i < batch_size * NSHL * NSHL; ++i) {
-				// 	for(index_type j = 0; j < BS * BS; ++j) {
-				// 		fprintf(fp, "%.17e ", h_elem_J[i * BS * BS + j]);
-				// 	}
-				// 	fprintf(fp, "\n");
-				// }
-				// fclose(fp);
-				// free(h_elem_J);
-				// exit(-1);
+				FILE* fp = fopen("elem_J_shared.txt", "w");
+				for(index_type i = 0; i < batch_size * NSHL * NSHL; ++i) {
+					for(index_type j = 0; j < BS * BS; ++j) {
+						fprintf(fp, "%.17e ", h_elem_J[i * BS * BS + j]);
+					}
+					fprintf(fp, "\n");
+				}
+				fclose(fp);
+				free(h_elem_J);
+				exit(-1);
 			}
 
 		}
@@ -1344,8 +1429,33 @@ void FaceAssembly(I batch_size, const T* elem_invJ, const T* nv, const T* shgrad
 									T* elem_F, T* elem_J) {
 	i32 block_dim = 256;
 	i32 grid_dim = CEIL_DIV(batch_size, block_dim);
+	const int NSHL = 4;
 	FaceAssemblyKernel<I, T><<<grid_dim, block_dim>>>(batch_size, elem_invJ, nv, shgradg, forn, qr_wgalpha, qr_wggradalpha, elem_F, elem_J);
-
+#ifdef DBG_TET
+	if(elem_J) {
+		f64* h_elem_J = (f64*)malloc(batch_size * BS * NSHL * BS * NSHL * SIZE_OF(f64));
+		cudaMemcpy(h_elem_J, elem_J, batch_size * BS * NSHL * BS * NSHL * SIZE_OF(f64), cudaMemcpyDeviceToHost);
+		f64 nrm = 0.0;
+		for(index_type i = 0; i < batch_size * BS * NSHL * BS * NSHL; i += BS * BS) {
+			// nrm += h_elem_J[i] * h_elem_J[i];
+			nrm += fabs(h_elem_J[i + 3]);
+			nrm += fabs(h_elem_J[i + 9]);
+			nrm += fabs(h_elem_J[i + 15]);
+		}
+		printf("batch_size = %d\n", batch_size);
+		printf("NRM: %a %.17e\n", nrm, nrm);
+		FILE* fp = fopen("elem_SJ_shared.txt", "w");
+		for(index_type i = 0; i < batch_size * NSHL * NSHL; ++i) {
+			for(index_type j = 0; j < BS * BS; ++j) {
+				fprintf(fp, "%.17e ", h_elem_J[i * BS * BS + j]);
+			}
+			fprintf(fp, "\n");
+		}
+		fclose(fp);
+		free(h_elem_J);
+		// exit(-1);
+	}
+#endif
 }
 
 __BEGIN_DECLS__
@@ -1571,12 +1681,12 @@ void AssembleSystemTet(Mesh3D *mesh,
 		// 								 thrust::make_counting_iterator<index_type>(batch_size),
 		// 								 LoadBatchFunctor<index_type, f64, NSHL, 1>(batch_index_ptr, ien, dwgalpha_dptr, buffer));
 		// CUGUARD(cudaGetLastError());
-		/* qr_dwgalpha[0:NQR, 0:BS, 0:batch_size] = d_shlu[0:NQR, 0:NSHL] @ buffer[0:NSHL, 0:BS, 0:batch_size] */
+		/* qr_dwgalpha[0:NQR, 0:BS, 0:batch_size] = d_shlu[0:NSHL, 0:NQR].T @ buffer[0:NSHL, 0:BS, 0:batch_size] */
 		cublasDgemm(handle,
-								CUBLAS_OP_N, CUBLAS_OP_N,
+								CUBLAS_OP_T, CUBLAS_OP_N,
 								NQR, batch_size * BS, NSHL,
 								&one,
-								d_shlu, NQR,
+								d_shlu, NSHL,
 								buffer, NSHL,
 								&zero,
 								qr_dwgalpha,
@@ -1713,17 +1823,19 @@ void AssembleSystemTetFace(Mesh3D* mesh,
 	}
 
 	for(b = 0; b < mesh->num_bound; b++) {
+#ifndef DBG_TET
 		if(b != 4) continue;
+#endif
 
 		index_type num_face = Mesh3DBoundNumElem(mesh, b);
 		const index_type* f2e = Mesh3DBoundF2E(mesh, b);
 		const index_type* forn = Mesh3DBoundFORN(mesh, b);
 
 		/* 0. Calculate the element metrics */
-		GetElemJ3DKernel<index_type, value_type, NSHL><<<CEIL_DIV(num_face, 256), 256>>>(num_face, ien, f2e, xg, elem_invJ);
-		GetElemFaceNVKernel<index_type, value_type><<<CEIL_DIV(num_face, 256), 256>>>(num_face, elem_invJ, forn, nv);
+		// GetElemJ3DKernel<index_type, value_type, NSHL><<<CEIL_DIV(num_face, 256), 256>>>(num_face, ien, f2e, xg, elem_invJ);
 		GetElemInvJ3D<index_type, value_type, NSHL>(num_face, ien, f2e, xg, elem_invJ, shgradg);
 		GetShapeGradKernel<index_type, value_type><<<CEIL_DIV(num_face, 256), 256>>>(num_face, elem_invJ, shgradg);
+		GetElemFaceNVKernel<index_type, value_type><<<CEIL_DIV(num_face, 256), 256>>>(num_face, elem_invJ, forn, nv);
 
 		/* 1. Interpolate the field values */
 		LoadElementValueKernel<index_type, value_type, NSHL><<<CEIL_DIV(num_face * NSHL, 256), 256>>>(num_face, 3,
@@ -1736,10 +1848,10 @@ void AssembleSystemTetFace(Mesh3D* mesh,
 																																																	buffer + 3 * NSHL, BS * NSHL);
 		/* 1.1. Calculate the gradient */
 		cublasDgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-															3, NSHL, BS,
+															3, BS, NSHL,
 															&one,
 															shgradg, 3, (long long)(NSHL * 3),
-															buffer, BS, (long long)(NSHL * BS),
+															buffer, NSHL, (long long)(NSHL * BS),
 															&zero,
 															qr_wggradalpha, 3, (long long)(BS * 3),
 															num_face);
@@ -1756,8 +1868,8 @@ void AssembleSystemTetFace(Mesh3D* mesh,
 											 CUBLAS_OP_T, CUBLAS_OP_N,
 											 NQRB, BS, NSHL,
 											 &one,
-											 (const f64* const*)d_shlub_batch, NSHL,
-											 (const f64* const*)d_buffer_batch, NSHL,
+											 (const f64* const*)d_shlub_batch, (long long)NSHL,
+											 (const f64* const*)d_buffer_batch, (long long)NSHL,
 											 &zero,
 											 (f64**)d_qr_wgalpha_batch, NQRB,
 											 num_face);

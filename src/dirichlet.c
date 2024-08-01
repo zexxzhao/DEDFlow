@@ -8,7 +8,7 @@ __BEGIN_DECLS__
 
 Dirichlet* DirichletCreate(const Mesh3D* mesh, index_type face_ind, index_type shape) {
 	Dirichlet* bc = (Dirichlet*)CdamMallocHost(SIZE_OF(Dirichlet) + SIZE_OF(BCType) * shape);
-	memset(bc, 0, SIZE_OF(Dirichlet));
+	memset(bc, 0, SIZE_OF(Dirichlet) + SIZE_OF(BCType) * shape);
 	bc->mesh = mesh;
 	bc->face_ind = face_ind;
 	bc->buffer_size = Mesh3DBoundNumNode(mesh, face_ind);

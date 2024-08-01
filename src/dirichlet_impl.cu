@@ -37,13 +37,15 @@ __global__ void GetNodeFromRowKernel(I n, I* node, I shape) {
 
 __BEGIN_DECLS__
 
-void ApplyBCVecGPU(value_type* b, index_type n_bc, const index_type* bc_ind, const value_type* bc_val) {
+void ApplyBCVecGPU(value_type* b, index_type n_bc, const index_type* bc_ind,
+									 const value_type* bc_val) {
 	int block_size = 256;
 	int n_blocks = (n_bc + block_size - 1) / block_size;
 	ApplyBCVecKernel<<<n_blocks, block_size>>>(b, n_bc, bc_ind, bc_val);
 }
 
-void ApplyBCVecNodalGPU(value_type* b, index_type n_bc_node, const index_type* bc_node, index_type shape, index_type init) {
+void ApplyBCVecNodalGPU(value_type* b, index_type n_bc_node, const index_type* bc_node,
+												index_type shape, index_type init) {
 	int block_size = 256;
 	int n_blocks = (n_bc_node + block_size - 1) / block_size;
 	ApplyBCVecNodalKernel<<<n_blocks, block_size>>>(b, n_bc_node, bc_node, shape, init);

@@ -21,7 +21,7 @@
 #include "assemble.h"
 
 #define kRHOC (0.5)
-#define kDT (1e-3)
+#define kDT (5e-2)
 #define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
@@ -32,6 +32,7 @@ void AssembleSystem(Mesh3D* mesh,
 										f64* wgalpha, f64* dwgalpha,
 										f64* F, Matrix* J,
 										Dirichlet** bcs, index_type nbc) {
+	static int flag = 0;
 	// index_type i, j, k;
 	index_type num_node = (index_type)Mesh3DNumNode(mesh);
 	index_type num_tet = (index_type)Mesh3DNumTet(mesh);
@@ -78,10 +79,16 @@ void SolveFlowSystem(Mesh3D* mesh,
 										 Matrix* J, f64* F, f64* dx,
 										 Krylov* ksp,
 										 Dirichlet** bcs, index_type nbc) {
-	index_type maxit = 4, iter = 0;
-	f64 tol = 1.0e-5;
+
+#ifdef DBG_TET
+	index_type maxit = 1;
+#else
+	index_type maxit = 4;
+#endif
+	index_type iter = 0;
+	f64 tol = 0.5e-3;
 	b32 converged = FALSE;
-	f64 rnorm, rnorm_init;
+	f64 rnorm[4], rnorm_init[4];
 	f64 minus_one = -1.0;
 	clock_t start, end;
 
@@ -97,11 +104,11 @@ void SolveFlowSystem(Mesh3D* mesh,
 	f64* dwgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
 
 
-	/* dwgalpha = fact1[0] * dwgold + fact[1] * dwg */ 
+	/* dwgalpha = fact1[0] * dwgold + fact1[1] * dwg */ 
 	cudaMemset(dwgalpha, 0, num_node * SIZE_OF(f64) * BS);
 	cublasDaxpy(handle, num_node * BS, fact1 + 0, dwgold, 1, dwgalpha, 1);
 	cublasDaxpy(handle, num_node * BS, fact1 + 1, dwg, 1, dwgalpha, 1);
-	/* dwgalpha[3, :] = -dwgold[3, :] */
+	/* dwgalpha[3, :] = dwg[3, :] */
 	cublasDcopy(handle, num_node, dwg + num_node * 3, 1, dwgalpha + num_node * 3, 1);
 
 	/* wgalpha = wgold + fact2[0] * dwgold + fact2[1] * dwg */
@@ -117,7 +124,10 @@ void SolveFlowSystem(Mesh3D* mesh,
 	AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
 	end = clock();
 	fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-	cublasDnrm2(handle, num_node * BS, F, 1, &rnorm_init);
+	cublasDnrm2(handle, num_node * 3, F + num_node * 0, 1, rnorm_init + 0);
+	cublasDnrm2(handle, num_node * 1, F + num_node * 3, 1, rnorm_init + 1);
+	cublasDnrm2(handle, num_node * 1, F + num_node * 4, 1, rnorm_init + 2);
+	cublasDnrm2(handle, num_node * 1, F + num_node * 5, 1, rnorm_init + 3);
 
 	if(0 && F) {
 		f64* h_F = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
@@ -128,15 +138,21 @@ void SolveFlowSystem(Mesh3D* mesh,
 		}
 		fclose(fp);
 		CdamFreeHost(h_F, num_node * SIZE_OF(f64) * BS);
-		printf("F norm: %g\n", rnorm_init);
+		printf("F[0] norm: %g\n", rnorm_init[0]);
 		exit(0);
 	}
 
 
 	CUGUARD(cudaGetLastError());
 
-	fprintf(stdout, "Newton %d) abs = %6.4e rel = %6.4e (tol = %6.4e)\n",
-					0, rnorm_init, 1.0, tol);
+	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[0], 1.0, tol);
+	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[1], 1.0, tol);
+	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[2], 1.0, tol);
+	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[3], 1.0, tol);
+	rnorm_init[0] += 1e-16;
+	rnorm_init[1] += 1e-16;
+	rnorm_init[2] += 1e-16;
+	rnorm_init[3] += 1e-16;
 
 	while(!converged && iter < maxit) {
 		/* Construct the Jacobian matrix */
@@ -208,26 +224,54 @@ void SolveFlowSystem(Mesh3D* mesh,
 		// cublasDaxpy(handle, ArrayLen(d_dwg), &minus_one, dx, 1, ArrayData(d_dwg), 1);
 		/* Update dwg by dwg -= dx */
 		cublasDaxpy(handle, num_node * BS, &minus_one, dx, 1, dwg, 1);
-		/* Update dwgalpha by dwgalpha[[0,1,2], :] -= kALPHAM * dx[[0,1,2], :] */ 
-		cublasDaxpy(handle, num_node * 3, fact1 + 3, dx, 1, dwgalpha, 1);
-		/* Update dwgalpha by dwgalpha[3, :] -= dx[3, :] */ 
-		cublasDaxpy(handle, num_node, &minus_one, dx + num_node * 3, 1, dwgalpha + num_node * 3, 1);
-		/* Update dwgalpha by dwgalpha[[4,5], :] -= kALPHAM * dx[[4,5], :] */ 
-		cublasDaxpy(handle, num_node * 2, fact1 + 3, dx + num_node * 4, 1, dwgalpha + num_node * 4, 1);
-		/* Update wgalpha by wgalpha[[0,1,2], :] -= kDT * kALPHAF * kGAMMA * dx[[0,1,2], :] */
-		cublasDaxpy(handle, num_node * 3, fact2 + 3, dx, 1, wgalpha, 1);
-		/* Update wgalpha by wgalpha[[4,5], :] -= kDT * kALPHAF * kGAMMA * dx[[4,5], :] */
-		cublasDaxpy(handle, num_node * 2, fact2 + 3, dx + num_node * 4, 1, wgalpha + num_node * 4, 1);
+		// cublasDaxpy(handle, num_node * 3, &minus_one, dx + num_node * 0, 1, dwg + num_node * 0, 1);
+		// cublasDaxpy(handle, num_node * 1, &minus_one, dx + num_node * 3, 1, dwg + num_node * 3, 1);
+		if(0) {
+			/* Update dwgalpha by dwgalpha[[0,1,2], :] -= kALPHAM * dx[[0,1,2], :] */ 
+			cublasDaxpy(handle, num_node * 3, fact1 + 3, dx + num_node * 0, 1, dwgalpha + num_node * 0, 1);
+			/* Update dwgalpha by dwgalpha[3, :] -= dx[3, :] */ 
+			cublasDaxpy(handle, num_node * 1, &minus_one, dx + num_node * 3, 1, dwgalpha + num_node * 3, 1);
+			/* Update dwgalpha by dwgalpha[[4,5], :] -= kALPHAM * dx[[4,5], :] */ 
+			cublasDaxpy(handle, num_node * 2, fact1 + 3, dx + num_node * 4, 1, dwgalpha + num_node * 4, 1);
+			/* Update wgalpha by wgalpha[[0,1,2], :] -= kDT * kALPHAF * kGAMMA * dx[[0,1,2], :] */
+			cublasDaxpy(handle, num_node * 3, fact2 + 3, dx + num_node * 0, 1, wgalpha + num_node * 0, 1);
+			/* Update wgalpha by wgalpha[[4,5], :] -= kDT * kALPHAF * kGAMMA * dx[[4,5], :] */
+			cublasDaxpy(handle, num_node * 2, fact2 + 3, dx + num_node * 4, 1, wgalpha + num_node * 4, 1);
+		}
+		else {
+			/* dwgalpha = fact1[0] * dwgold + fact1[1] * dwg */ 
+			cudaMemset(dwgalpha, 0, num_node * SIZE_OF(f64) * BS);
+			cublasDaxpy(handle, num_node * BS, fact1 + 0, dwgold, 1, dwgalpha, 1);
+			cublasDaxpy(handle, num_node * BS, fact1 + 1, dwg, 1, dwgalpha, 1);
+			/* dwgalpha[3, :] = dwg[3, :] */
+			cublasDcopy(handle, num_node * 1, dwg + num_node * 3, 1, dwgalpha + num_node * 3, 1);
+
+			/* wgalpha = wgold + fact2[0] * dwgold + fact2[1] * dwg */
+			cublasDcopy(handle, num_node * BS, wgold, 1, wgalpha, 1);
+			cublasDaxpy(handle, num_node * BS, fact2 + 0, dwgold, 1, wgalpha, 1);
+			cublasDaxpy(handle, num_node * BS, fact2 + 1, dwg, 1, wgalpha, 1);
+			cudaMemset(wgalpha + num_node * 3, 0, num_node * SIZE_OF(f64));
+
+		}
 
 
 		start = clock();
 		AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
 		end = clock();
 		fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-		cublasDnrm2(handle, num_node * BS, F, 1, &rnorm);
-		fprintf(stdout, "Newton %d) abs = %6.4e rel = %6.4e (tol = %6.4e)\n",
-						iter + 1, rnorm, rnorm / (rnorm_init + 1e-16), tol);
-		if (rnorm < tol * (rnorm_init + 1e-16)) {
+		cublasDnrm2(handle, num_node * 3, F + num_node * 0, 1, rnorm + 0);
+		cublasDnrm2(handle, num_node * 1, F + num_node * 3, 1, rnorm + 1);	
+		cublasDnrm2(handle, num_node * 1, F + num_node * 4, 1, rnorm + 2);
+		cublasDnrm2(handle, num_node * 1, F + num_node * 5, 1, rnorm + 3);
+		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[0], rnorm[0] / rnorm_init[0], tol);
+		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[1], rnorm[1] / rnorm_init[1], tol);
+		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[2], rnorm[2] / rnorm_init[2], tol);
+		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[3], rnorm[3] / rnorm_init[3], tol);
+
+		if (rnorm[0] < tol * rnorm_init[0] &&
+				rnorm[1] < tol * rnorm_init[1] &&
+				rnorm[2] < tol * rnorm_init[2] &&
+				rnorm[3] < tol * rnorm_init[3]) {
 			converged = TRUE;
 		}
 		iter++;
@@ -249,9 +293,15 @@ void MyFieldInit(f64* value, void* ctx) {
 	f64* coord = Mesh3DDataCoord(data);
 
 	for(i = 0; i < num_node; i++) {
-		value[i * 3 + 0] = 0.0 * coord[i * 3 + 0] * coord[i * 3 + 0] + 1.0;
+#ifdef DBG_TET
+		value[i * 3 + 0] = coord[i * 3 + 0];
+		value[i * 3 + 1] = coord[i * 3 + 1];
+		value[i * 3 + 2] = coord[i * 3 + 2];
+#else
+		value[i * 3 + 0] = 1.0; // coord[i * 3 + 0]; // * coord[i * 3 + 0] - 0.5;
 		value[i * 3 + 1] = 0.0; // coord[i * 3 + 1];
 		value[i * 3 + 2] = 0.0; // coord[i * 3 + 2];
+#endif
 	}
 	for(i = 0; i < num_node; ++i) {
 		z = 2e-4 - coord[i * 3 + 2];
@@ -274,7 +324,12 @@ void MyFieldInit(f64* value, void* ctx) {
 int main() {
 	Init(0, NULL);
 	b32 converged = FALSE;
-	i32 step = 0, num_step = 1;
+	i32 step = 0;
+#ifdef DBG_TET
+	i32 num_step = 1;
+#else
+	i32 num_step = 4000;
+#endif
 	char filename_buffer[256] = {0};
 	struct cudaDeviceProp prop;
 	i32 num_device;
@@ -299,7 +354,11 @@ int main() {
 		printf("==================================================\n");
 	}
 
+#ifdef DBG_TET
+	H5FileInfo* h5_handler = H5OpenFile("tet.h5", "r");
+#else
 	H5FileInfo* h5_handler = H5OpenFile("box.h5", "r");
+#endif
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);
 
@@ -344,7 +403,7 @@ int main() {
 	// mat_fs->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
 	MatrixSetup(J);
 
-	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-5, NULL);
+	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-4, NULL);
 
 
 	clock_t start, end;
@@ -389,9 +448,14 @@ int main() {
 	ParticleContext* pctx = ParticleContextCreate(100);
 	ParticleContextUpdateDevice(pctx);
 
+#ifdef DBG_TET
+	Dirichlet* bcs[] = {};
+#else
 	Dirichlet* bcs[] = {DirichletCreate(mesh, 0, 3),
 											DirichletCreate(mesh, 2, 3),
-											DirichletCreate(mesh, 3, 3)};
+											DirichletCreate(mesh, 3, 3),
+											DirichletCreate(mesh, 4, 3),
+											};
 
 	bcs[0]->bctype[0] = BC_STRONG;
 	bcs[0]->bctype[1] = BC_STRONG;
@@ -399,10 +463,19 @@ int main() {
 	// bcs[0]->bctype[4] = BC_STRONG;
 	// bcs[0]->bctype[5] = BC_STRONG;
 
+	bcs[1]->bctype[0] = BC_NONE;
 	bcs[1]->bctype[1] = BC_STRONG;
+	bcs[1]->bctype[2] = BC_NONE;
 
+	bcs[2]->bctype[0] = BC_NONE;
+	bcs[2]->bctype[1] = BC_NONE;
 	bcs[2]->bctype[2] = BC_STRONG;
 
+	bcs[3]->bctype[0] = BC_NONE;
+	bcs[3]->bctype[1] = BC_NONE;
+	bcs[3]->bctype[2] = BC_NONE;
+#endif
+	index_type nbc = SIZE_OF(bcs) / SIZE_OF(bcs[0]);
 
 	if (step) {
 		sprintf(filename_buffer, "sol.%d.h5", step);
@@ -437,18 +510,22 @@ int main() {
 		/* dwgold[0:3*N] = 0 */
 		/* dwgold[4*N:5*N] = buffer[4*N:5*N] */
 		/* dwgold[5*N:6*N] = 0 */
+		cudaMemset(dwgold, 0, num_node * SIZE_OF(f64) * BS);
+		cudaMemset(dwg, 0, num_node * SIZE_OF(f64) * BS);
+		cudaMemset(wgold, 0, num_node * SIZE_OF(f64) * BS);
 		cudaMemcpy(wgold, buffer, num_node * SIZE_OF(f64) * BS, cudaMemcpyHostToDevice);
 		cudaMemset(wgold + num_node * 3, 0, num_node * SIZE_OF(f64));
-		cudaMemcpy(dwgold + num_node * 3, buffer + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyHostToDevice);
+		// cudaMemcpy(dwgold + num_node * 3, buffer + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyHostToDevice);
+		cudaMemcpy(dwg + num_node * 3, buffer + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyHostToDevice);
 	
 		h5_handler = H5OpenFile("sol.0.h5", "w");
 		H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
+		H5WriteDatasetf64(h5_handler, "p", num_node, buffer + num_node * 3);
 		H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
 		H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
 
 		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
 		H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
-		H5WriteDatasetf64(h5_handler, "p", num_node * 3, buffer + num_node * 3);
 		H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
 		H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
 
@@ -458,6 +535,10 @@ int main() {
 	f64 fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
 	f64 fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};
 	while(step++ < num_step) {
+		fprintf(stdout, "##################\n");
+		fprintf(stdout, "# Step %d\n", step);
+		fprintf(stdout, "##################\n");
+		fflush(stdout);
 		/* Prediction stage */
 		// ArrayScale(FieldDevice(dwg), (kGAMMA - 1.0) / kGAMMA);
 		cublasDscal(handle, num_node * 3, fac_pred, dwg, 1);
@@ -469,7 +550,7 @@ int main() {
 		/* Newton-Raphson iteration */
 		converged = FALSE;
 		while(!converged) {
-			SolveFlowSystem(mesh, wgold, dwgold, dwg, J, F, dx, ksp, bcs, 3);
+			SolveFlowSystem(mesh, wgold, dwgold, dwg, J, F, dx, ksp, bcs, nbc);
 #ifdef DEBUG
 			SolveParticleSystem(pctx);
 #endif
@@ -487,11 +568,13 @@ int main() {
 		/* Particle removal */
 		// ParticleContextRemove(pctx);
 
-		if (step % 1 == 0) {
+		if (step % 10 == 0) {
 			sprintf(filename_buffer, "sol.%d.h5", step);
+			fprintf(stdout, "Save solution to %s\n", filename_buffer);
 			h5_handler = H5OpenFile(filename_buffer, "w");
 		
 			cudaMemcpy(buffer, wgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
+			cudaMemcpy(buffer + num_node * 3, dwgold + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyDeviceToHost);
 			H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
 			H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
 			H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
@@ -510,7 +593,7 @@ int main() {
 
 
 	ParticleContextDestroy(pctx);
-	for(index_type ibc = 0; ibc < 3; ++ibc) {
+	for(index_type ibc = 0; ibc < nbc; ++ibc) {
 		DirichletDestroy(bcs[ibc]);
 	}
 	CdamFreeDevice(F, num_node * SIZE_OF(f64) * BS);
