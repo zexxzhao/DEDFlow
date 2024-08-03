@@ -4,12 +4,14 @@ from sys import argv
 import meshio
 import h5py
 
+INT_TYPE = np.int32
+FP_TYPE = np.float64
 
 keys = ['tetra', 'wedge', 'hexahedron', 'triangle']
 key_map = {'tetra': 'tet', 'wedge': 'prism', 'hexahedron': 'hex', 'triangle': 'tri'} 
 
 def get_mesh_coord(mesh, verbose=False):
-    xg =np.asarray(mesh.points, dtype=np.float64)
+    xg =np.asarray(mesh.points, dtype=FP_TYPE)
     if verbose:
         print(f'Number of points: {len(xg)}')
     return xg
@@ -21,7 +23,7 @@ def get_mesh_elem(mesh, verbose=False):
     for c in mesh.cells:
         k, v = c.type, c.data
         if k in keys:
-            elem[key_map[k]] = np.array(v, dtype=np.uint32)
+            elem[key_map[k]] = np.array(v, dtype=INT_TYPE)
         else:
             warnings.warn(f'Unknown cell type: {k}')
     if verbose:
@@ -46,7 +48,7 @@ def get_mesh_facet_connectivity(elem):
         v2e[k] = list(set(v))
 
     # build a f2e map
-    f2e = np.zeros(len(tri), dtype=np.uint32)
+    f2e = np.zeros(len(tri), dtype=INT_TYPE)
     for i, f in enumerate(tri):
         all_e = []
         for v in f:
@@ -55,7 +57,7 @@ def get_mesh_facet_connectivity(elem):
         f2e[i] = max(set(all_e), key=all_e.count)
 
     # build facet orientation
-    forn = np.zeros(len(tri), dtype=np.uint32)
+    forn = np.zeros(len(tri), dtype=INT_TYPE)
     for i, f in enumerate(tri):
         e = f2e[i]
         e_v = tet[e]
@@ -71,7 +73,7 @@ def main(verbose=None):
     if verbose: 
         print(f'Reading mesh from {filename}', flush=True)
     mesh = meshio.read(filename)
-    points = np.array(mesh.points, dtype=np.float64)
+    points = np.array(mesh.points, dtype=FP_TYPE)
     # elem = {'tet': [], 'prism': [], 'hex': []}
     elem = get_mesh_elem(mesh, verbose)
     cell_data_key = 'gmsh:physical'
@@ -101,7 +103,7 @@ def main(verbose=None):
         bnode_count.append(len(facets))
         bnode.extend(facets)
 
-    bnode = np.array(bnode, dtype=np.uint32)
+    bnode = np.array(bnode, dtype=INT_TYPE)
     bnode_offset = np.cumsum(bnode_count)
     bnode_offset = np.insert(bnode_offset, 0, 0)
 
@@ -119,7 +121,7 @@ def main(verbose=None):
         f.create_dataset(f'mesh/bound/node_offset', data=bnode_offset)
         f.create_dataset(f'mesh/bound/node', data=bnode)
         f.create_dataset(f'mesh/bound/elem_offset', data=elem_offset)
-        f.create_dataset(f'mesh/bound/ien', data=elem['tet'].flatten())
+        f.create_dataset(f'mesh/bound/ien', data=elem['tri'].flatten())
         f.create_dataset(f'mesh/bound/f2e', data=f2e)
         f.create_dataset(f'mesh/bound/forn', data=forn)
     if verbose:
