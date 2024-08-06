@@ -22,7 +22,7 @@
 
 #define kRHOC (0.5)
 #define kDT (5e-2)
-#define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
+#define kALPHAM (0.5 * (3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 

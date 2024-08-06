@@ -19,6 +19,7 @@ typedef struct GlobalCtx GlobalCtx;
 static void* global_ctx = NULL;
 
 void Init(int argc, char **argv) {
+	MPI_Init(&argc, &argv);
 	global_ctx = CdamMallocHost(SIZE_OF(GlobalCtx));
 	GlobalCtx *ctx = (GlobalCtx *)global_ctx;
 	cusparseCreate(&ctx->cusparse_handle);
@@ -29,6 +30,7 @@ void Init(int argc, char **argv) {
 }
 
 void Finalize() {
+	MPI_Finalize();
 	GlobalCtx *ctx = (GlobalCtx *)global_ctx;
 	cusparseDestroy(ctx->cusparse_handle);
 	cublasDestroy(ctx->cublas_handle);

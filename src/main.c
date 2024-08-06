@@ -10,6 +10,8 @@
 #include <cublas_v2.h>
 #include <cuda_profiler_api.h>
 
+
+#include "json.h"
 #include "alloc.h"
 #include "h5util.h"
 #include "Mesh.h"
@@ -22,7 +24,7 @@
 
 #define kRHOC (0.5)
 #define kDT (5e-2)
-#define kALPHAM ((3.0 - kRHOC) / (1.0 + kRHOC))
+#define kALPHAM (0.5 * (3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
@@ -320,8 +322,56 @@ void MyFieldInit(f64* value, void* ctx) {
 	}
 }
 
+static inline void ParseJSONFile(const char* filename, cJSON** root) {
+	FILE* fp = fopen(filename, "r");
+	ASSERT(fp && "Cannot open file");
+	fseek(fp, 0, SEEK_END);
+	size_t size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
 
-int main() {
+	char* buffer = (char*)CdamMallocHost(size + 1);
+	fread(buffer, 1, size, fp);
+	buffer[size] = '\0';
+	fclose(fp);
+
+	*root = cJSON_Parse(buffer);
+	CdamFreeHost(buffer, size + 1);
+
+	ASSERT(*root && "Cannot parse JSON file");
+
+}
+
+int main(int argc, char** argv) {
+	char argv_opt[256];
+	cJSON* config = NULL;
+	{
+		memset(argv_opt, 0, 256);
+		for(i32 i = 1; i < argc;) {
+			if(strcmp(argv[i], "--m") == 0) {
+				strcpy(argv_opt, argv[i + 1]);
+				i += 2;
+			}
+			else {
+				i++;
+			}
+		}
+	}
+	if(strlen(argv_opt) == 0) {
+		fprintf(stderr, "Usage: %s --m <config.json>\n", argv[0]);
+		return 1;
+	}
+
+	
+	ParseJSONFile(argv_opt, &config);
+
+
+	char* json_str = cJSON_Print(config);
+	fprintf(stdout, json_str);
+	fprintf(stdout, "\n");
+	// cJSON_Delete(config);
+	CdamFreeHost(json_str, strlen(json_str) + 1);
+	// return 0;
+
 	Init(0, NULL);
 	b32 converged = FALSE;
 	i32 step = 0;
@@ -335,8 +385,8 @@ int main() {
 	i32 num_device;
 	cudaGetDeviceCount(&num_device);
 	ASSERT(num_device > 0 && "No CUDA device found");
-	if (num_device) {
-		cudaGetDeviceProperties(&prop, 0);
+	for(i32 i = 0; i < num_device; i++) {
+		cudaGetDeviceProperties(&prop, i);
 		printf("==================================================\n");
 		printf(" * Device name: %s\n", prop.name);
 		printf(" * Compute capability: %d.%d\n", prop.major, prop.minor);
@@ -357,7 +407,7 @@ int main() {
 #ifdef DBG_TET
 	H5FileInfo* h5_handler = H5OpenFile("tet.h5", "r");
 #else
-	H5FileInfo* h5_handler = H5OpenFile("box.h5", "r");
+	H5FileInfo* h5_handler = H5OpenFile(JSONGetItem(config, "IO.Input.Path")->valuestring, "r");
 #endif
 	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
 	H5CloseFile(h5_handler);

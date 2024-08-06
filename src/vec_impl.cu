@@ -1,6 +1,6 @@
 #include <thrust/transform.h>
 #include <thrust/device_ptr.h>
-#include "vec.h"
+#include "vec_impl.h"
 
 template<typename T>
 struct VecModFunctor {
