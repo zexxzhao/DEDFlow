@@ -76,4 +76,72 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, index_type num_part) {
 #endif
 }
 
+void PartitionMeshMetis(index_type num[], index_type* ien, index_type num_part,
+											  index_type* epart, index_type* npart) {
+#ifdef USE_METIS
+	index_type i = 0, num_node = 0;
+	idx_t num_elem = num[0] + num[1] + num[2];
+
+	idx_t* eptr = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * (num[1] + num[2] + num[3] + 1));
+	eptr[0] = 0;
+	for (i32 i = 0; i < num[0]; i++) {
+		eptr[i + 1] = i * 4;
+	}
+	for (i32 i = 0; i < num[1]; i++) {
+		eptr[num[0] + i] = num[0] * 4 + i * 6;
+	}
+	for (i32 i = 0; i < num[2]; i++) {
+		eptr[num[0] + num[1] + i] = num[0] * 4 + num[1] * 6 + i * 8;
+	}
+
+	idx_t* eind = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * (num[0] * 4 + num[1] * 6 + num[2] * 8));
+	for(i = 0; i < num[0] * 4 + num[1] * 6 + num[2] * 8; i++) {
+		eind[i] = ien[i];
+	}
+	for(i = 0; i < num[0] * 4 + num[1] * 6 + num[2] * 8; i++) {
+		if(eind[i] > num_node) {
+			num_node = eind[i];
+		}
+	}
+	num_node++;
+
+	idx_t *epart_metis = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * (num[0] + num[1] + num[2]));
+	idx_t *npart_metis = (idx_t*)CdamMallocHost(SIZE_OF(idx_t) * num_node);
+
+	idx_t objval;
+	idx_t ncon = 1;
+	idx_t nparts = num_part;
+
+	idx_t options[METIS_NOPTIONS];
+	METIS_SetDefaultOptions(options);
+	options[METIS_OPTION_NUMBERING] = 0;
+	options[METIS_OPTION_PTYPE] = METIS_PTYPE_KWAY;
+	options[METIS_OPTION_OBJTYPE] = METIS_OBJTYPE_CUT;
+	options[METIS_OPTION_CTYPE] = METIS_CTYPE_SHEM;
+	options[METIS_OPTION_IPTYPE] = METIS_IPTYPE_GROW;
+	options[METIS_OPTION_RTYPE] = -1;
+	options[METIS_OPTION_DBGLVL] = 0;
+	options[METIS_OPTION_UFACTOR] = -1;
+	options[METIS_OPTION_MINCONN] = 0;
+	options[METIS_OPTION_CONTIG] = 0;
+	options[METIS_OPTION_SEED] = -1;
+	options[METIS_OPTION_NITER] = 10;
+	METIS_PartMeshDual(&num_elem, &num_node, eptr, eind, NULL, NULL,
+										 &ncon, &nparts, NULL, options, &objval,
+										 epart_metis, npart_metis);
+
+	for(i = 0; i < num[0] + num[1] + num[2]; i++) {
+		epart[i] = (index_type)epart_metis[i];
+	}
+	for(i = 0; i < num_node; i++) {
+		npart[i] = (index_type)npart_metis[i];
+	}
+
+	CdamFreeHost(eptr, SIZE_OF(idx_t) * (num[0] + num[1] + num[2] + num[3] + 1));
+	CdamFreeHost(eind, SIZE_OF(idx_t) * (num[0] * 4 + num[1] * 6 + num[2] * 8));
+	CdamFreeHost(epart_metis, SIZE_OF(idx_t) * (num[0] + num[1] + num[2]));
+	CdamFreeHost(npart_metis, SIZE_OF(idx_t) * num_node);
+#endif
+}
+
 __END_DECLS__

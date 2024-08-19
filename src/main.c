@@ -131,18 +131,6 @@ void SolveFlowSystem(Mesh3D* mesh,
 	cublasDnrm2(handle, num_node * 1, F + num_node * 4, 1, rnorm_init + 2);
 	cublasDnrm2(handle, num_node * 1, F + num_node * 5, 1, rnorm_init + 3);
 
-	if(0 && F) {
-		f64* h_F = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
-		cudaMemcpy(h_F, F, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
-		FILE* fp = fopen("F.txt", "w");
-		for(index_type i = 0; i < num_node * BS; i++) {
-			fprintf(fp, "%.17g\n", h_F[i]);
-		}
-		fclose(fp);
-		CdamFreeHost(h_F, num_node * SIZE_OF(f64) * BS);
-		printf("F[0] norm: %g\n", rnorm_init[0]);
-		exit(0);
-	}
 
 
 	CUGUARD(cudaGetLastError());
@@ -164,50 +152,6 @@ void SolveFlowSystem(Mesh3D* mesh,
 		fprintf(stdout, "Assemble J time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
 		CUGUARD(cudaGetLastError());
 
-		if(0) {
-			MatrixFS* mat_fs = (MatrixFS*)J->data;
-			MatrixCSR* mat;
-
-			f64* h_val;
-			index_type* h_col, *h_row;
-			for(int i = 0 ; i < 2; ++i) {
-				for(int j = 0; j < 2; ++j) {
-					mat = (MatrixCSR*)mat_fs->mat[4*i+j]->data;
-					h_val = (f64*)CdamMallocHost(mat->attr->nnz * SIZE_OF(f64));
-					h_col = (index_type*)CdamMallocHost(mat->attr->nnz * SIZE_OF(index_type));
-					h_row = (index_type*)CdamMallocHost((mat->attr->num_row + 1) * SIZE_OF(index_type));
-
-					cudaMemcpy(h_val, mat->val, mat->attr->nnz * SIZE_OF(f64), cudaMemcpyDeviceToHost);
-					cudaMemcpy(h_col, mat->attr->col_ind, mat->attr->nnz * SIZE_OF(index_type), cudaMemcpyDeviceToHost);
-					cudaMemcpy(h_row, mat->attr->row_ptr, (mat->attr->num_row + 1) * SIZE_OF(index_type), cudaMemcpyDeviceToHost);
-
-					char filename[256];
-					sprintf(filename, "J_%d_%d_val.txt", i, j);
-					FILE* fp = fopen(filename, "w");
-					for(index_type k = 0; k < mat->attr->nnz; ++k) {
-						fprintf(fp, "%.17g\n", h_val[k]);
-					}
-					fclose(fp);
-					sprintf(filename, "J_%d_%d_col.txt", i, j);
-					fp = fopen(filename, "w");
-					for(index_type k = 0; k < mat->attr->nnz; ++k) {
-						fprintf(fp, "%d\n", h_col[k]);
-					}
-					fclose(fp);
-					sprintf(filename, "J_%d_%d_row.txt", i, j);
-					fp = fopen(filename, "w");
-					for(index_type k = 0; k < mat->attr->num_row + 1; ++k) {
-						fprintf(fp, "%d\n", h_row[k]);
-					}
-					fclose(fp);
-					CdamFreeHost(h_val, mat->attr->nnz * SIZE_OF(f64));
-					CdamFreeHost(h_col, mat->attr->nnz * SIZE_OF(index_type));
-					CdamFreeHost(h_row, (mat->attr->num_row + 1) * SIZE_OF(index_type));
-				}
-			}
-			exit(0);
-		}
-		
 	
 		/* Solve the linear system */
 		cudaMemset(dx, 0, num_node * SIZE_OF(f64) * BS);
@@ -342,7 +286,9 @@ static inline void ParseJSONFile(const char* filename, cJSON** root) {
 }
 
 int main(int argc, char** argv) {
+	int rank, num_procs;
 	char argv_opt[256];
+	CDAM_Mesh* mesh;
 	cJSON* config = NULL;
 	{
 		memset(argv_opt, 0, 256);
@@ -380,37 +326,43 @@ int main(int argc, char** argv) {
 #else
 	i32 num_step = 4000;
 #endif
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 	char filename_buffer[256] = {0};
 	struct cudaDeviceProp prop;
 	i32 num_device;
 	cudaGetDeviceCount(&num_device);
-	ASSERT(num_device > 0 && "No CUDA device found");
+	ASSERT(num_device == num_procs && "No CUDA device found");
+	cudaSetDevice(rank);
 	for(i32 i = 0; i < num_device; i++) {
-		cudaGetDeviceProperties(&prop, i);
-		printf("==================================================\n");
-		printf(" * Device name: %s\n", prop.name);
-		printf(" * Compute capability: %d.%d\n", prop.major, prop.minor);
-		printf(" * Total global memory: %f (MB)\n", (f64)prop.totalGlobalMem / 1024.0 / 1024.0);
-		printf(" * Shared memory per block: %f (KB)\n", (f64)prop.sharedMemPerBlock / 1024.0);
-		printf(" * Registers per block: %f (KB)\n", (f64)prop.regsPerBlock / 1024.0);
-		printf(" * Warp size: %d\n", prop.warpSize);
-		printf(" * Max threads per block: %d\n", prop.maxThreadsPerBlock);
-		printf(" * Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
-		printf(" * Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
-		printf(" * Clock rate: %f (Hz) \n", (f64)prop.clockRate);
-		printf(" * Total constant memory: %f (MB)\n", (f64)prop.totalConstMem / 1024.0 / 1024.0);
-		printf(" * Peak memory clock rate: %f (MHz)\n", (f64)prop.memoryClockRate / 1e6);
-		printf(" * Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
-		printf("==================================================\n");
+		MPI_Barrier(MPI_COMM_WORLD);
+		if(i == rank) {
+			cudaGetDeviceProperties(&prop, i);
+			printf("==================================================\n");
+			printf(" * Device[%d] name: %s\n", rank, prop.name);
+			printf(" * Compute capability: %d.%d\n", prop.major, prop.minor);
+			printf(" * Total global memory: %f (MB)\n", (f64)prop.totalGlobalMem / 1024.0 / 1024.0);
+			printf(" * Shared memory per block: %f (KB)\n", (f64)prop.sharedMemPerBlock / 1024.0);
+			printf(" * Registers per block: %f (KB)\n", (f64)prop.regsPerBlock / 1024.0);
+			printf(" * Warp size: %d\n", prop.warpSize);
+			printf(" * Max threads per block: %d\n", prop.maxThreadsPerBlock);
+			printf(" * Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
+			printf(" * Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
+			printf(" * Clock rate: %f (Hz) \n", (f64)prop.clockRate);
+			printf(" * Total constant memory: %f (MB)\n", (f64)prop.totalConstMem / 1024.0 / 1024.0);
+			printf(" * Peak memory clock rate: %f (MHz)\n", (f64)prop.memoryClockRate / 1e6);
+			printf(" * Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
+			printf("==================================================\n");
+		}
 	}
 
-#ifdef DBG_TET
-	H5FileInfo* h5_handler = H5OpenFile("tet.h5", "r");
-#else
 	H5FileInfo* h5_handler = H5OpenFile(JSONGetItem(config, "IO.Input.Path")->valuestring, "r");
-#endif
-	Mesh3D* mesh = Mesh3DCreateH5(h5_handler, "mesh");
+	CDAM_MeshCreate(MPI_COMM_WORLD, &mesh);
+	CDAM_MeshLoad(mesh, h5_handler);
 	H5CloseFile(h5_handler);
+
+	CDAM_MeshToDevice(mesh);
+	CDAM_MeshGenreateColorBatch(mesh);
 
 	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 	// cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
@@ -419,120 +371,56 @@ int main(int argc, char** argv) {
 	// cusparseHandle_t sp_handle;
 	// cusparseCreate(&sp_handle);
 
-	index_type num_node = Mesh3DNumNode(mesh);
+	CDAM_Form vms;
+	CDAM_FormCreate(MPI_COMM_WORLD, &vms);
+	CDAM_FormSetMesh(vms, mesh);
+	CDAM_FormConfig(vms, JSONGetItem(config, "VMS"));
+	
+	CDAM_NewtonSolver* nssolver;
+	/* Create the Newton solver */
+	CDAM_NewtonSolverCreate(MPI_COMM_WORLD, &nssolver);
+	/* Set the FEM problem to be solved. This will be used to preallocated the distributed
+	 * vectors and matrices. */
+	CDAM_NewtonSolverSetFEM(nssolver, vms);
+	/* Set the number of Newton iterations, 
+	 *     the relative residual 
+	 *     the absolute residual
+	 *     whether use user-defined UpdateSolution */
+	CDAM_NewtonSolverConfig(nssolver, JSONGetItem(config, "NewtonSolver"));
 
-	index_type n_offset = 4;
-	index_type offset[] = {0, 3, 4, 5, 6};
+	CDAM_Krylov* krylov = NULL;
+	CDAM_NewtonSolverGetLinearSolver(nssolver, &krylov);
+	
+	CDAM_KrylovSetUp(krylov, mesh, JSONGetItem(config, "NewtonSolver.LinearSolver"));
 
-	CSRAttr* spy1x1 = CSRAttrCreate(mesh);
-	CSRAttr* spy1x3 = CSRAttrCreateBlock(spy1x1, 1, 3);
-	CSRAttr* spy3x1 = CSRAttrCreateBlock(spy1x1, 3, 1);
-	CSRAttr* spy3x3 = CSRAttrCreateBlock(spy1x1, 3, 3);
-	Matrix* J = MatrixCreateTypeFS(n_offset, offset, NULL);
-	MatrixFS* mat_fs = (MatrixFS*)J->data;
-	mat_fs->spy1x1 = spy1x1;
+	CDAM_Vec* vec, *dx;
+	CDAM_Mat* mat;
+	CDAM_NewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
+	CDAM_VecCreate(MPI_COMM_WORLD, &vec);
+	CDAM_VecSetUp(vec, vms);
+	CDAM_VecCreate(MPI_COMM_WORLD, &dx);
+	CDAM_VecClone(dx, vec);
 
-	mat_fs->mat[4*0+0] = MatrixCreateTypeCSR(spy3x3, NULL);
-	mat_fs->mat[4*0+1] = MatrixCreateTypeCSR(spy3x1, NULL);
-	// mat_fs->mat[4*0+2] = MatrixCreateTypeCSR(spy3x1);
-	// mat_fs->mat[4*0+3] = MatrixCreateTypeCSR(spy3x1);
-
-	mat_fs->mat[4*1+0] = MatrixCreateTypeCSR(spy1x3, NULL);
-	mat_fs->mat[4*1+1] = MatrixCreateTypeCSR(spy1x1, NULL);
-	// mat_fs->mat[4*1+2] = MatrixCreateTypeCSR(spy1x1);
-	// mat_fs->mat[4*1+3] = MatrixCreateTypeCSR(spy1x1);
-
-	// mat_fs->mat[4*2+0] = MatrixCreateTypeCSR(spy1x3);
-	// mat_fs->mat[4*2+1] = MatrixCreateTypeCSR(spy1x1);
-	// mat_fs->mat[4*2+2] = MatrixCreateTypeCSR(spy1x1);
-	// mat_fs->mat[4*2+3] = MatrixCreateTypeCSR(spy1x1);
-
-	// mat_fs->mat[4*3+0] = MatrixCreateTypeCSR(spy1x3);
-	// mat_fs->mat[4*3+1] = MatrixCreateTypeCSR(spy1x1);
-	// mat_fs->mat[4*3+2] = MatrixCreateTypeCSR(spy1x1);
-	// mat_fs->mat[4*3+3] = MatrixCreateTypeCSR(spy1x1);
-	MatrixSetup(J);
-
-	Krylov* ksp = KrylovCreateGMRES(120, 1e-12, 1e-4, NULL);
+	CDAM_MatCreate(MPI_COMM_WOTLD, &mat);
+	CDAM_MatSetUp(mat, vms);
 
 
-	clock_t start, end;
-	start = clock();
-	Mesh3DGenerateColorBatch(mesh);
-	end = clock();
-	fprintf(stdout, "Coloring time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-	if(0){
-		// Mesh3DData* dev = Mesh3DHost(mesh);
-		// index_type num_elem = dev->num_tet;
-		// color_t* h_color = (color_t*)CdamMallocHost(num_elem * SIZE_OF(color_t));
-		// color_t* d_color = mesh->color;
-		// cudaMemcpy(h_color, d_color, num_elem * SIZE_OF(color_t), D2H);
-		// FILE* fp = fopen("color.txt", "w");
-		// for (index_type i = 0; i < num_elem; i++) {
-		// 	fprintf(fp, "%d\n", h_color[i]);
-		// }
-		// return 0;
-	}
+	/* Simulation initialization */
+	value_type* wgold = (value_type*)CdamMallocDevice(num_node * SIZE_OF(value_type) * BS);
+	value_type* dwgold = (value_type*)CdamMallocDevice(num_node * SIZE_OF(value_type) * BS);
+	value_type* dwg = (value_type*)CdamMallocDevice(num_node * SIZE_OF(value_type) * BS);
 
+	value_type* buffer = (value_type*)CdamMallocHost(num_node * SIZE_OF(value_type) * BS);
 
+	cudaMemset(wgold, 0, num_node * SIZE_OF(value_type) * BS);
+	cudaMemset(dwgold, 0, num_node * SIZE_OF(value_type) * BS);
+	cudaMemset(dwg, 0, num_node * SIZE_OF(value_type) * BS);
 
-	// Field* wgold = FieldCreate3D(mesh, 1);
-	// Field* dwgold = FieldCreate3D(mesh, 1);
-	// Field* dwg = FieldCreate3D(mesh, 1);
-	// FieldUpdateDevice(wgold);
-	// FieldUpdateDevice(dwgold);
-	// FieldUpdateDevice(dwg);
-	f64* wgold = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-	f64* dwgold = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-	f64* dwg = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-	f64* buffer = (f64*)CdamMallocHost(num_node * SIZE_OF(f64) * BS);
+	memset(buffer, 0, num_node * SIZE_OF(value_type) * BS);
 
-	f64* F = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-	f64* dx = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-
-	cudaMemset(wgold, 0, num_node * SIZE_OF(f64) * BS);
-	cudaMemset(dwgold, 0, num_node * SIZE_OF(f64) * BS);
-	cudaMemset(dwg, 0, num_node * SIZE_OF(f64) * BS);
-	memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
-
-	ParticleContext* pctx = ParticleContextCreate(100);
-	ParticleContextUpdateDevice(pctx);
-
-#ifdef DBG_TET
-	Dirichlet* bcs[] = {};
-#else
-	Dirichlet* bcs[] = {DirichletCreate(mesh, 0, 3),
-											DirichletCreate(mesh, 2, 3),
-											DirichletCreate(mesh, 3, 3),
-											DirichletCreate(mesh, 4, 3),
-											};
-
-	bcs[0]->bctype[0] = BC_STRONG;
-	bcs[0]->bctype[1] = BC_STRONG;
-	bcs[0]->bctype[2] = BC_STRONG;
-	// bcs[0]->bctype[4] = BC_STRONG;
-	// bcs[0]->bctype[5] = BC_STRONG;
-
-	bcs[1]->bctype[0] = BC_NONE;
-	bcs[1]->bctype[1] = BC_STRONG;
-	bcs[1]->bctype[2] = BC_NONE;
-
-	bcs[2]->bctype[0] = BC_NONE;
-	bcs[2]->bctype[1] = BC_NONE;
-	bcs[2]->bctype[2] = BC_STRONG;
-
-	bcs[3]->bctype[0] = BC_NONE;
-	bcs[3]->bctype[1] = BC_NONE;
-	bcs[3]->bctype[2] = BC_NONE;
-#endif
-	index_type nbc = SIZE_OF(bcs) / SIZE_OF(bcs[0]);
-
-	if (step) {
+	if(step) {
 		sprintf(filename_buffer, "sol.%d.h5", step);
 		h5_handler = H5OpenFile(filename_buffer, "r");
-		// FieldLoad(wgold, h5_handler, "w");
-		// FieldLoad(dwgold, h5_handler, "dw");
-		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
 		H5ReadDatasetf64(h5_handler, "u", buffer);
 		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
 		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
@@ -580,11 +468,14 @@ int main(int argc, char** argv) {
 		H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
 
 		H5CloseFile(h5_handler);
+
 	}
 
+	/* Simulation loop */
 	f64 fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
 	f64 fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};
-	while(step++ < num_step) {
+
+	while(step ++ < num_step) {
 		fprintf(stdout, "##################\n");
 		fprintf(stdout, "# Step %d\n", step);
 		fprintf(stdout, "##################\n");
@@ -600,7 +491,7 @@ int main(int argc, char** argv) {
 		/* Newton-Raphson iteration */
 		converged = FALSE;
 		while(!converged) {
-			SolveFlowSystem(mesh, wgold, dwgold, dwg, J, F, dx, ksp, bcs, nbc);
+			CDAM_NewtonSolverSolve(nssolver, wgold, dwgold, dwg, NULL, NULL);
 #ifdef DEBUG
 			SolveParticleSystem(pctx);
 #endif
@@ -642,28 +533,20 @@ int main(int argc, char** argv) {
 	}
 
 
-	ParticleContextDestroy(pctx);
-	for(index_type ibc = 0; ibc < nbc; ++ibc) {
-		DirichletDestroy(bcs[ibc]);
-	}
-	CdamFreeDevice(F, num_node * SIZE_OF(f64) * BS);
-	CdamFreeDevice(dx, num_node * SIZE_OF(f64) * BS);
-	CdamFreeDevice(wgold, num_node * SIZE_OF(f64) * BS);
-	CdamFreeDevice(dwgold, num_node * SIZE_OF(f64) * BS);
-	CdamFreeDevice(dwg, num_node * SIZE_OF(f64) * BS);
-	CdamFreeHost(buffer, num_node * SIZE_OF(f64) * BS);
-	MatrixDestroy(J);
-	// cublasDestroy(handle);
-	// cusparseDestroy(sp_handle);
-	KrylovDestroy(ksp);
-	// FieldDestroy(wgold);
-	// FieldDestroy(dwgold);
-	// FieldDestroy(dwg);
-	CSRAttrDestroy(spy1x1);
-	CSRAttrDestroy(spy1x3);
-	CSRAttrDestroy(spy3x1);
-	CSRAttrDestroy(spy3x3);
-	Mesh3DDestroy(mesh);
+	CDAM_NewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
+	CDAM_VecDestroy(vec);
+	CDAM_VecDestroy(dx);
+	CDAM_MatDestroy(mat);
+
+	CDAM_NewtonSolverGetLinearSolver(nssolver, &krylov);
+	CDAM_KrylovDestroy(krylov);
+
+	CDAM_FormDestroy(vms);
+	CDAM_NewtonSolverDestroy(nssolver);
+	CDAM_MeshDestroy(mesh);
+
+
+
 	Finalize();
 	return 0;
 }
