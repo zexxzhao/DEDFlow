@@ -16,11 +16,12 @@ void GenerateV2EMapRowHexGPU(const index_type* ien, index_type num_elem, index_t
 void GenerateV2EMapColHexGPU(const index_type* ien, index_type num_elem, index_type num_node, const index_type* row_ptr, index_type* col_idx);
 
 void ColorElementJPLTetGPU(const index_type* ien, const index_type* row_ptr, const index_type* col_ind,
-													 color_t max_color, color_t* color, index_type num_elem);
+													 index_type max_color, index_type* color, index_type num_elem);
 
 
-void GenerateRandomColor(color_t* color, index_type num_elem, color_t max_color);
+void GenerateRandomColor(index_type* color, index_type num_elem, index_type max_color);
 
-void GetMaxColorGPU(const color_t* color, index_type num_elem, color_t* max_color);
+void GetMaxColorGPU(const index_type* color, index_type num_elem, index_type* max_color);
+
 __END_DECLS__
 #endif /* __COLOR_IMPL_H__ */

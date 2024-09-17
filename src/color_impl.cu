@@ -1,13 +1,15 @@
 
-#include <algorithm>
-#include <thrust/logical.h>
 #include <thrust/scan.h>
-#include <thrust/device_ptr.h>
-#include <thrust/execution_policy.h>
-#include <thrust/count.h>
+#include <cub/cub.cuh>
 #include <curand.h>
+
 #include "alloc.h"
 #include "color_impl.h"
+// #include <algorithm>
+// #include <thrust/logical.h>
+// #include <thrust/device_ptr.h>
+// #include <thrust/execution_policy.h>
+// #include <thrust/count.h>
 
 #define COLOR_RANDOM_LB (0)
 #define COLOR_RANDOM_UB (INT_MAX/2)
@@ -32,7 +34,7 @@ void GenerateV2EMapRowGPU(const IndexType* ien, IndexType num_elem, IndexType nu
 
 	GenerateV2EMapRowCountKernel<IndexType, NSHL><<<grid_dim, block_dim>>>(ien, num_elem, num_node, row_ptr);
 
-	thrust::inclusive_scan(thrust::device, row_ptr, row_ptr + num_node + 1, row_ptr);
+	thrust::inclusive_scan(row_ptr, row_ptr + num_node + 1, row_ptr);
 }
 
 template <typename IndexType, int NSHL>
@@ -218,11 +220,11 @@ void GenerateV2EMapColHexGPU(const index_type* ien, index_type num_elem, index_t
 
 void ColorElementJPLTetGPU(const index_type* ien, /* Element to Vertex */
 						   const index_type* row_ptr, const index_type* col_ind, /* Vertex to Element */
-						   color_t max_color, color_t* color, index_type num_elem) {
-	ColorElementJPLGPU<index_type, color_t, 4>(ien, row_ptr, col_ind, max_color, color, num_elem);
+						   index_type max_color, index_type* color, index_type num_elem) {
+	ColorElementJPLGPU<index_type, index_type, 4>(ien, row_ptr, col_ind, max_color, color, num_elem);
 }
 
-void GenerateRandomColor(color_t* color, index_type n, color_t max_color) {
+void GenerateRandomColor(index_type* color, index_type n, index_type max_color) {
 	curandGenerator_t gen;
 	curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
 	curandSetPseudoRandomGeneratorSeed(gen, 1234ULL);
@@ -233,24 +235,25 @@ void GenerateRandomColor(color_t* color, index_type n, color_t max_color) {
 		return;
 	}
 
-	thrust::transform(thrust::device, color, color + n, color, GenerateRandomColorFunctor<color_t>(COLOR_RANDOM_LB, COLOR_RANDOM_UB));
+	thrust::transform(color, color + n, color, GenerateRandomColorFunctor<index_type>(COLOR_RANDOM_LB, COLOR_RANDOM_UB));
 }
 
 
-void GetMaxColorGPU(const color_t* color, index_type n, color_t* max_color) {
-	// thrust::device_ptr<const color_t> ptr(color);
-	// thrust::device_ptr<const color_t> max_ptr = thrust::max_element(ptr, ptr + n);
+void GetMaxColorGPU(const index_type* color, index_type n, index_type* max_color) {
+	// thrust::device_ptr<const index_type> ptr(color);
+	// thrust::device_ptr<const index_type> max_ptr = thrust::max_element(ptr, ptr + n);
 	// *max_color = *max_ptr;
-	color_t* output = (color_t*)CdamMallocDevice(SIZE_OF(color_t));
-	color_t* color_temp_buff = NULL;
-	size_t color_temp_buff_size = 0;
-	cub::DeviceReduce::Max(color_temp_buff, color_temp_buff_size, color, output, n);
-	color_temp_buff = (color_t*)CdamMallocDevice(color_temp_buff_size);
+	index_type* output = (index_type*)CdamMallocDevice(SIZE_OF(index_type));
+	index_type* index_typeemp_buff = NULL;
+	size_t index_typeemp_buff_size = 0;
+	cub::DeviceReduce::Max(index_typeemp_buff, index_typeemp_buff_size, color, output, n);
+	index_typeemp_buff = (index_type*)CdamMallocDevice(index_typeemp_buff_size);
 
-	cub::DeviceReduce::Max(color_temp_buff, color_temp_buff_size, color, output, n);
-	cudaMemcpy(max_color, output, SIZE_OF(color_t), cudaMemcpyDeviceToHost);
+	cub::DeviceReduce::Max(index_typeemp_buff, index_typeemp_buff_size, color, output, n);
+	cudaMemcpy(max_color, output, SIZE_OF(index_type), cudaMemcpyDeviceToHost);
 
-	CdamFreeDevice(output, SIZE_OF(color_t));
-	CdamFreeDevice(color_temp_buff, color_temp_buff_size);
+	CdamFreeDevice(output, SIZE_OF(index_type));
+	CdamFreeDevice(index_typeemp_buff, index_typeemp_buff_size);
 }
 __END_DECLS__
+

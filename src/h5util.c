@@ -139,6 +139,7 @@ void H5ReadDatasetf64(H5FileInfo* h5file, const char* dataset_name, f64* data) {
 	H5ReadDataset(h5file, dataset_name, H5T_NATIVE_DOUBLE, (void*)data);
 }
 
+
 void H5ReadDatasetInd(H5FileInfo* h5file, const char* dataset_name, index_type* data) {
 #if defined(USE_U32_INDEX)
 	H5ReadDatasetu32(h5file, dataset_name, data);
@@ -161,6 +162,59 @@ void H5ReadDatasetVal(H5FileInfo* h5file, const char* dataset_name, value_type* 
 #else
 #error "H5ReadDatasetVal: No value type is defined!"
 #endif
+}
+
+static void SetHypreSlabPrivate(hid_t dataspace_id, int size,
+																index_type* start, index_type* stride,
+																index_type* count, index_type* block) {
+	hsize_t hstart[1], hstride[1], hcount[1], hblock[1];
+
+	index_type i;
+
+	H5Sselect_none(dataspace_id);
+	for(i = 0; i < size; i++) {
+		hstart[0] = start ? start[i]: 0;
+		hstride[0] = stride ? stride[i]: 1;
+		hcount[0] = count ? count[i]: 1;
+		hblock[0] = block ? block[i]: 1;
+		H5Sselect_hyperslab(dataspace_id, H5S_SELECT_OR,
+												hstart, hstride, hcount, hblock);
+	}
+
+}
+																
+
+void H5ReadDatasetValIndexed(H5FileInfo* h5file, const char* dataset_name,
+														 index_type count, index_type* block_len, index_type* indices,
+														 value_type* data) {
+	hid_t dataset_id = H5Dopen(h5file->file_id, dataset_name, H5P_DEFAULT);
+	hid_t dataspace_id = H5Dget_space(dataset_id);
+	hid_t mem_type_id;
+#if defined(USE_F32_VALUE)
+	mem_type_id = H5T_NATIVE_FLOAT;
+#elif defined(USE_F64_VALUE)
+	mem_type_id = H5T_NATIVE_DOUBLE;
+#else
+#error "H5ReadDatasetValIndexed: No value type is defined!"
+#endif
+
+	hsize_t h5len = 0;
+
+	for(index_type i = 0; i < count; i++) {
+		h5len += block_len[i];
+	}
+
+	hid_t memspace_id = H5Screate_simple(1, &h5len, NULL);
+
+	SetHypreSlabPrivate(dataspace_id, count, indices, NULL, block_len, NULL);
+
+	H5Dread(dataset_id, mem_type_id, memspace_id, dataspace_id, H5P_DEFAULT, data);
+
+
+	H5Sclose(memspace_id);
+	H5Sclose(dataspace_id);
+	H5Dclose(dataset_id);
+
 }
 
 

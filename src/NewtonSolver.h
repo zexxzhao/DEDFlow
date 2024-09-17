@@ -6,56 +6,63 @@
 __BEGIN_DECLS__
 
 
-typedef struct CDAM_LinearSolver CDAM_LinearSolver;
-typedef struct CDAM_Form CDAM_Form;
-typedef struct CDAM_Vec CDAM_Vec;
-typedef struct CDAM_Mat CDAM_Mat;
+typedef struct CdamKrylov CdamKrylov;
 
 typedef struct NewtonSolverOps NewtonSolverOps;
+typedef void (*NewtonSolverFunctionLinear)(void*, void*, void*);
+typedef void (*NewtonSolverFunctionBilinear)(void*, void*, void*);
+
 struct NewtonSolverOps {
-	void (*update_solution)(void *data, CDAM_Vec *x);
-	b32 (*converged)(void *data, CDAM_Vec *x);
+	void (*update_solution)(void *data, void *x);
+	b32 (*is_converged)(void *data, void *x, b32);
+	NewtonSolverFunctionLinear linear_form;
+	NewtonSolverFunctionBilinear bilinear_form;
 };
 
-typedef struct CDAM_NewtonSolver CDAM_NewtonSolver;
-struct CDAM_NewtonSolver {
+typedef struct CdamNewtonSolver CdamNewtonSolver;
+struct CdamNewtonSolver {
 	MPI_Comm comm;
 	value_type rtol;
 	value_type atol;
 	index_type iter, maxit;
 	value_type relaxation;
 
-	CDAM_Form *fem;
-	CDAM_LinearSolver *lsolver;
-	CDAM_Mat *A;
-	CDAM_Vec *x;
-	CDAM_Vec *b;
 
-	value_type *rnorm_init;
-	value_type *rnorm;
+	CdamKrylov *lsolver;
+	void *layout;
+	void *A;
+	void *dx;
+	void *b;
+
+	value_type rnorm_init[16];
+	value_type rnorm[16];
 	
 	NewtonSolverOps op[1];
 };
 
-void CDAM_NewtonSolverCreate(MPI_Comm comm, CDAM_NewtonSolver **solver);
-void CDAM_NewtonSolverDestroy(CDAM_NewtonSolver *solver);
-void CDAM_NewtonSolverConfig(CDAM_NewtonSolver *solver, void* config);
+void CdamNewtonSolverCreate(MPI_Comm comm, CdamNewtonSolver **solver);
+void CdamNewtonSolverDestroy(CdamNewtonSolver *solver);
+void CdamNewtonSolverConfig(CdamNewtonSolver *solver, void* config);
 
-void CDAM_NewtonSolverSetRelativeTolerance(CDAM_NewtonSolver *solver, value_type rtol);
-void CDAM_NewtonSolverSetAbsoluteTolerance(CDAM_NewtonSolver *solver, value_type atol);
-void CDAM_NewtonSolverSetMaxIterations(CDAM_NewtonSolver *solver, index_type maxit);
-void CDAM_NewtonSolverSetFEM(CDAM_NewtonSolver *solver, CDAM_Form *fem);
-void CDAM_NewtonSolverSetLinearSolver(CDAM_NewtonSolver *solver, CDAM_LinearSolver *lsolver);
-void CDAM_NewtonSolverSetLinearSystem(CDAM_NewtonSolver *solver, CDAM_Mat *A, CDAM_Vec *x, CDAM_Vec *b);
+void CdamNewtonSolverSetRelativeTolerance(CdamNewtonSolver *solver, value_type rtol);
+void CdamNewtonSolverSetAbsoluteTolerance(CdamNewtonSolver *solver, value_type atol);
+void CdamNewtonSolverSetMaxIterations(CdamNewtonSolver *solver, index_type maxit);
+void CdamNewtonSolverSetLinearForm(CdamNewtonSolver *solver, NewtonSolverFunctionLinear linear);
+void CdamNewtonSolverSetBilinearForm(CdamNewtonSolver *solver, NewtonSolverFunctionBilinear bilinear);
+void CdamNewtonSolverSetKrylov(CdamNewtonSolver *solver, CdamKrylov *lsolver);
+void CdamNewtonSolverSetLinearSystem(CdamNewtonSolver *solver, void *A, void *x, void *b);
 
-void CDAM_NewtonSolverGetRelativeTolerance(CDAM_NewtonSolver *solver, value_type *rtol);
-void CDAM_NewtonSolverGetAbsoluteTolerance(CDAM_NewtonSolver *solver, value_type *atol);
-void CDAM_NewtonSolverGetMaxIterations(CDAM_NewtonSolver *solver, index_type *maxit);
-void CDAM_NewtonSolverGetFEM(CDAM_NewtonSolver *solver, CDAM_Form **fem);
-void CDAM_NewtonSolverGetLinearSolver(CDAM_NewtonSolver *solver, CDAM_LinearSolver **lsolver);
-void CDAM_NewtonSolverGetLinearSystem(CDAM_NewtonSolver *solver, CDAM_Mat **A, CDAM_Vec **x, CDAM_Vec **b);
+void CdamNewtonSolverGetRelativeTolerance(CdamNewtonSolver *solver, value_type *rtol);
+void CdamNewtonSolverGetAbsoluteTolerance(CdamNewtonSolver *solver, value_type *atol);
+void CdamNewtonSolverGetMaxIterations(CdamNewtonSolver *solver, index_type *maxit);
+void CdamNewtonSolverGetLinearSolver(CdamNewtonSolver *solver, CdamKrylov **lsolver);
+// void CdamNewtonSolverGetLinearSystem(CdamNewtonSolver *solver, void **A, void **x, void **b);
 
-void CDAM_NewtonSolverSolve(CDAM_NewtonSolver *solver, CDAM_Vec *x);
+void CdamNewtonSolverSolve(CdamNewtonSolver *solver, value_type *x);
+
+#define CdamNewtonSolverA(solver) ((solver)->A)
+#define CdamNewtonSolverX(solver) ((solver)->dx)
+#define CdamNewtonSolverB(solver) ((solver)->b)
 
 __END_DECLS__
 

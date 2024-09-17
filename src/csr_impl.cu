@@ -3,7 +3,7 @@
 #include <thrust/scan.h>
 
 #include "alloc.h"
-#include "Mesh.h"
+// #include "Mesh.h"
 #include "csr.h"
 
 #define MAX_ROW_LENGTH 64
@@ -110,18 +110,18 @@ CSRAttrGetNZIndBatchedKernel(I num_row, I num_col, const I* row_ptr, const I* co
 __BEGIN_DECLS__
 
 typedef csr_index_type index_t;
-void GenerateCSRFromMesh(const Mesh3D* mesh, CSRAttr* attr) {
-	index_t num_node = Mesh3DNumNode(mesh);
-	index_t num_elem = Mesh3DNumTet(mesh);
-	const Mesh3DData* device = Mesh3DDevice(mesh);
-	index_type* ien = device->ien;
-	index_t* buffer = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
-	/* Generate a vertex-to-vetex mapping */
-	cudaMemset(buffer, 0, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
-	fprintf(stderr, "Not implemented\n");
-
-	CdamFreeDevice(buffer, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
-}
+// void GenerateCSRFromMesh(const Mesh3D* mesh, CSRAttr* attr) {
+// 	index_t num_node = Mesh3DNumNode(mesh);
+// 	index_t num_elem = Mesh3DNumTet(mesh);
+// 	const Mesh3DData* device = Mesh3DDevice(mesh);
+// 	index_type* ien = device->ien;
+// 	index_t* buffer = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
+// 	/* Generate a vertex-to-vetex mapping */
+// 	cudaMemset(buffer, 0, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
+// 	fprintf(stderr, "Not implemented\n");
+// 
+// 	CdamFreeDevice(buffer, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
+// }
 
 void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_size[2]) {
 	index_t num_rows = CSRAttrNumRow(attr);

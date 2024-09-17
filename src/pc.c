@@ -1,5 +1,4 @@
 #include <string.h>
-#include <cublas_v2.h>
 #include "vec.h"
 #include "alloc.h"
 #include "pc.h"
@@ -11,8 +10,8 @@ __BEGIN_DECLS__
 /* PCXXXDestroy free the space */
 
 static void PCNoneAlloc(PC* pc, index_type n) {
-	PCNone* pc_impl = (PCNone*)CdamMallocHost(SIZE_OF(PCNone));
-	memset(pc_impl, 0, SIZE_OF(PCNone));
+	PCNone* pc_impl = CdamTMalloc(PCNone, 1, HOST_MEM);
+	CdamMemset(pc_impl, 0, SIZE_OF(PCNone), HOST_MEM);
 	pc->data = (void*)pc_impl;
 	pc_impl->n = n;
 }
@@ -23,22 +22,22 @@ static void PCNoneSetup(PC* pc) {
 static void PCNoneApply(PC* pc, value_type* x, value_type* y) {
 	PCNone* pc_impl = (PCNone*)pc->data;
 	index_type n = pc_impl->n;
-	cudaMemcpyAsync(y, x, n * SIZE_OF(value_type), cudaMemcpyDeviceToDevice, 0);
+	CdamMemcpy(y, x, n * SIZE_OF(value_type), DEVICE_MEM, DEVICE_MEM);
 }
 
 static void PCNoneDestroy(PC* pc) {
 	PCNone* pc_impl = (PCNone*)pc->data;
-	CdamFreeHost(pc_impl, SIZE_OF(PCNone));
+	CdamFree(pc_impl, SIZE_OF(PCNone), HOST_MEM);
 }
 
 static void PCJacobiAlloc(PC* pc, index_type bs, void* cublas_handle) {
-	PCJacobi* pc_impl = (PCJacobi*)CdamMallocHost(SIZE_OF(PCJacobi));
-	memset(pc_impl, 0, SIZE_OF(PCJacobi));
+	PCJacobi* pc_impl = CdamTMalloc(PCJacobi, 1, HOST_MEM);
+	CdamMemset(pc_impl, 0, SIZE_OF(PCJacobi), HOST_MEM);
 	pc->cublas_handle = cublas_handle; 
 	pc->data = (void*)pc_impl;
 	pc_impl->n = MatrixNumRow((Matrix*)pc->mat);
 	pc_impl->bs = bs;
-	pc_impl->diag = CdamMallocDevice(SIZE_OF(value_type) * pc_impl->n * bs);
+	pc_impl->diag = CdamTMalloc(value_type, pc_impl->n * bs, DEVICE_MEM);
 }
 
 static void PCJacobiSetup(PC* pc) {
@@ -57,37 +56,38 @@ static void PCJacobiSetup(PC* pc) {
 		VecPointwiseInv(pc_ctx, num_row);
 	}
 	else if(bs > 1) {
-		inv = (value_type*)CdamMallocDevice(num_node * bs * bs * SIZE_OF(value_type));
-		input_batch = (value_type**)CdamMallocDevice(num_node * SIZE_OF(value_type*) * 2);
+		inv = CdamTMalloc(value_type, num_node * bs * bs, DEVICE_MEM);
+		input_batch = CdamTMalloc(value_type*, num_node * 2, DEVICE_MEM);
 		output_batch = input_batch + num_node;
-		info = (int*)CdamMallocDevice(num_node * SIZE_OF(int) * (bs + 1));
+		info = CdamTMalloc(int, num_node * (bs + 1), DEVICE_MEM);
 		pivot = info + num_node;
 
-		h_batch = (value_type**)CdamMallocHost(num_node * SIZE_OF(value_type*));
+		h_batch = CdamTMalloc(value_type*, num_node, HOST_MEM);
 		for(int i = 0; i < num_node; i++) {
 			h_batch[i] = pc_ctx + i * bs * bs;
 		}
-		cudaMemcpy(input_batch, h_batch, num_node * SIZE_OF(value_type*), cudaMemcpyHostToDevice);
+		CdamMemcpy(input_batch, h_batch, num_node * SIZE_OF(value_type*), DEVICE_MEM, HOST_MEM);
 		for(int i = 0; i < num_node; i++) {
 			h_batch[i] = inv + i * bs * bs;
 		}
-		cudaMemcpy(output_batch, h_batch, num_node * SIZE_OF(value_type*), cudaMemcpyHostToDevice);
+		CdamMemcpy(output_batch, h_batch, num_node * SIZE_OF(value_type*), DEVICE_MEM, HOST_MEM);
 		cublasDgetrfBatched(cublas_handle, bs, input_batch, bs, pivot, info, num_node);
 		cublasDgetriBatched(cublas_handle, bs, (const value_type* const*)input_batch, bs,
 												pivot, output_batch, bs, info, num_node);
-		cudaMemcpy(pc_ctx, inv, num_node * bs * bs * SIZE_OF(value_type), cudaMemcpyDeviceToDevice);
+		CdamMemcpy(pc_ctx, inv, num_node * bs * bs * SIZE_OF(value_type), DEVICE_MEM, DEVICE_MEM);
 
-		CdamFreeDevice(inv, num_node * bs * bs * SIZE_OF(value_type));
-		CdamFreeDevice(input_batch, num_node * SIZE_OF(value_type*) * 2);
-		CdamFreeDevice(info, num_node * SIZE_OF(int) * (bs + 1));
-		CdamFreeHost(h_batch, num_node * SIZE_OF(value_type*));
+
+		CdamFree(inv, num_node * bs * bs * SIZE_OF(value_type), DEVICE_MEM);
+		CdamFree(input_batch, num_node * SIZE_OF(value_type*) * 2, DEVICE_MEM);
+		CdamFree(info, num_node * SIZE_OF(int) * (bs + 1), DEVICE_MEM);
+		CdamFree(h_batch, num_node * SIZE_OF(value_type*), HOST_MEM);
 	}
 }
 
 static void PCJacobiDestory(PC* pc) {
 	PCJacobi* pc_impl = (PCJacobi*)pc->data;
-	CdamFreeDevice(pc_impl->diag, pc_impl->n * pc_impl->bs * SIZE_OF(value_type));
-	CdamFreeHost(pc_impl, SIZE_OF(PCJacobi));
+	CdamFree(pc_impl->diag, pc_impl->n * pc_impl->bs * SIZE_OF(value_type), DEVICE_MEM);
+	CdamFree(pc_impl, SIZE_OF(PCJacobi), HOST_MEM);
 }
 
 static void PCJacobiApply(PC* pc, value_type* x, value_type* y) {
@@ -114,15 +114,15 @@ static void PCJacobiApply(PC* pc, value_type* x, value_type* y) {
 }
 
 static void PCDecompositionAlloc(PC* pc, index_type n_sec, const index_type* offset, void* cublas_handle) {
-	PCDecomposition* pc_impl = (PCDecomposition*)CdamMallocHost(SIZE_OF(PCDecomposition));
-	memset(pc_impl, 0, SIZE_OF(PCDecomposition));
+	PCDecomposition* pc_impl = CdamTMalloc(PCDecomposition, 1, HOST_MEM);
+	CdamMemset(pc_impl, 0, SIZE_OF(PCDecomposition), HOST_MEM);
 	pc->cublas_handle = cublas_handle;
 	pc->data = (void*)pc_impl;
 	pc_impl->n_sec = n_sec;
-	pc_impl->offset = (index_type*)CdamMallocHost(SIZE_OF(index_type) * (pc_impl->n_sec + 1));
+	pc_impl->offset = CdamTMalloc(index_type, n_sec + 1, HOST_MEM);
 	memcpy(pc_impl->offset, offset, SIZE_OF(index_type) * (n_sec + 1));
-	pc_impl->pc = (PC**)CdamMallocHost(SIZE_OF(PC*) * n_sec);
-	memset(pc_impl->pc, 0, SIZE_OF(PC*) * n_sec);
+	pc_impl->pc = CdamTMalloc(PC*, n_sec, HOST_MEM);
+	CdamMemset(pc_impl->pc, 0, SIZE_OF(PC*) * n_sec, HOST_MEM);
 }
 
 static void PCDecompositionSetup(PC* pc) {
@@ -161,8 +161,8 @@ static void PCAMGXAlloc(PC* pc, void* options) {
 #ifdef USE_AMGX
 	Matrix* mat = (Matrix*)pc->mat;
 	MatrixCSR* mat_csr = NULL;
-	PCAMGX* pc_impl = (PCAMGX*)CdamMallocHost(SIZE_OF(PCAMGX));
-	memset(pc_impl, 0, SIZE_OF(PCAMGX));
+	PCAMGX* pc_impl = CdamTMalloc(PCAMGX, 1, HOST_MEM);
+	CdamMemset(pc_impl, 0, SIZE_OF(PCAMGX), HOST_MEM);
 	pc_impl->mode = AMGX_mode_dDDI;
 	if(mat->type != MAT_TYPE_CSR) {
 		fprintf(stderr, "Matrix type is not CSR\n");
@@ -235,8 +235,8 @@ static void PCAMGXDestroy(PC* pc) {
 }
 
 PC* PCCreateNone(Matrix* mat, index_type n) {
-	PC* pc = (PC*)CdamMallocHost(SIZE_OF(PC));
-	memset(pc, 0, SIZE_OF(PC));
+	PC* pc = CdamTMalloc(PC, 1, HOST_MEM);
+	CdamMemset(pc, 0, SIZE_OF(PC), HOST_MEM);
 	if(mat) {
 		n = MatrixNumRow(mat);
 	}
@@ -251,8 +251,8 @@ PC* PCCreateNone(Matrix* mat, index_type n) {
 }
 
 PC* PCCreateJacobi(Matrix* mat, index_type bs, void* cublas_handle) {
-	PC* pc = (PC*)CdamMallocHost(SIZE_OF(PC));
-	memset(pc, 0, SIZE_OF(PC));
+	PC* pc = CdamTMalloc(PC, 1, HOST_MEM);
+	CdamMemset(pc, 0, SIZE_OF(PC), HOST_MEM);
 	pc->mat = (void*)mat;
 	PCJacobiAlloc(pc, bs, cublas_handle);
 
@@ -264,8 +264,8 @@ PC* PCCreateJacobi(Matrix* mat, index_type bs, void* cublas_handle) {
 }
 
 PC* PCCreateDecomposition(Matrix* mat, index_type bs, const index_type* offset, void* cublas_handle) {
-	PC* pc = (PC*)CdamMallocHost(SIZE_OF(PC));
-	memset(pc, 0, SIZE_OF(PC));
+	PC* pc = CdamTMalloc(PC, 1, HOST_MEM);
+	CdamMemset(pc, 0, SIZE_OF(PC), HOST_MEM);
 	pc->mat = (void*)mat;
 	PCDecompositionAlloc(pc, bs, offset, cublas_handle);
 
@@ -278,8 +278,8 @@ PC* PCCreateDecomposition(Matrix* mat, index_type bs, const index_type* offset, 
 
 PC* PCCreateAMGX(Matrix* mat, void* options) {
 #ifdef USE_AMGX
-	PC* pc = (PC*)CdamMallocHost(SIZE_OF(PC));
-	memset(pc, 0, SIZE_OF(PC));
+	PC* pc = CdamTMalloc(PC, 1, HOST_MEM);
+	CdamMemset(pc, 0, SIZE_OF(PC), HOST_MEM);
 	pc->mat = (void*)mat;
 	PCAMGXAlloc(pc, options);
 
@@ -298,7 +298,23 @@ void PCApply(PC* pc, value_type* x, value_type* y) {
 	pc->op->apply(pc, x, y);
 }
 
-void PCSetup(PC* pc) {
+void PCSetup(PC* pc, void* config) {
+	
+	if(strcmp(JSONGetItem(config, "Type")->valuestring, "Jacobi") == 0) {
+		/* Seek "bs" */
+
+		PCJacobiSetup(pc);
+	}
+	else if(strcmp(JSONGetItem(config, "Type")->valuestring, "Decomposition") == 0) {
+		PCDecompositionSetup(pc);
+	}
+	else if(strcmp(JSONGetItem(config, "Type")->valuestring, "AMGX") == 0) {
+		PCAMGXSetup(pc);
+	}
+	else {
+		pc->op->setup(pc);
+	}
+
 	pc->op->setup(pc);
 }
 

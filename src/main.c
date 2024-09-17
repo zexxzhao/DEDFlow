@@ -6,17 +6,18 @@
 #endif
 #include <stdlib.h>
 
-#include <cuda_runtime.h>
-#include <cublas_v2.h>
-#include <cuda_profiler_api.h>
+// #include <cuda_runtime.h>
+// #include <cublas_v2.h>
+// #include <cuda_profiler_api.h>
 
 
 #include "json.h"
 #include "alloc.h"
 #include "h5util.h"
 #include "Mesh.h"
-#include "Field.h"
-#include "Particle.h"
+#include "vec.h"
+// #include "Particle.h"
+#include "NewtonSolver.h"
 #include "dirichlet.h"
 #include "csr.h"
 #include "krylov.h"
@@ -30,213 +31,16 @@
 
 #define BS (6)
 
-void AssembleSystem(Mesh3D* mesh,
-										f64* wgalpha, f64* dwgalpha,
-										f64* F, Matrix* J,
-										Dirichlet** bcs, index_type nbc) {
-	static int flag = 0;
-	// index_type i, j, k;
-	index_type num_node = (index_type)Mesh3DNumNode(mesh);
-	index_type num_tet = (index_type)Mesh3DNumTet(mesh);
-	index_type num_prism = (index_type)Mesh3DNumPrism(mesh);
-	index_type num_hex = (index_type)Mesh3DDataNumHex(mesh);
-	// f64* xg = Mesh3DDataCoord(Mesh3DHost(mesh));
-
-	/* Zero the RHS and LHS */
-	if(F) {
-		cudaMemset(F, 0, num_node * SIZE_OF(f64) * BS);
-	}
-	if(J) {
-		MatrixZero(J);
-	}
-
-	if(num_tet) {
-		AssembleSystemTet(mesh, wgalpha, dwgalpha, F, J);
-		AssembleSystemTetFace(mesh, wgalpha, dwgalpha, F, J);
-	}
-	CUGUARD(cudaGetLastError());
-	
-	if(num_prism) {
-	}
-
-	if(num_hex) {
-	}
-
-	if(F) {
-		cudaMemset(F + 4 * num_node, 0, num_node * SIZE_OF(f64) * 2);
-		CUGUARD(cudaGetLastError());
-	}
-	for(index_type ibc = 0; ibc < nbc; ++ibc) {
-		if(F) {
-			DirichletApplyVec(bcs[ibc], F);
-		}
-		if(J) {
-			DirichletApplyMat(bcs[ibc], J);
-		}
-	}
-}
-
-void SolveFlowSystem(Mesh3D* mesh,
-										 f64* wgold, f64* dwgold, f64* dwg,
-										 Matrix* J, f64* F, f64* dx,
-										 Krylov* ksp,
-										 Dirichlet** bcs, index_type nbc) {
-
-#ifdef DBG_TET
-	index_type maxit = 1;
-#else
-	index_type maxit = 4;
-#endif
-	index_type iter = 0;
-	f64 tol = 0.5e-3;
-	b32 converged = FALSE;
-	f64 rnorm[4], rnorm_init[4];
-	f64 minus_one = -1.0;
-	clock_t start, end;
-
-	f64 fact1[] = {1.0 - kALPHAM, kALPHAM, kALPHAM - 1.0, -kALPHAM};
-	f64 fact2[] = {kDT * kALPHAF * (1.0 - kGAMMA), kDT * kALPHAF * kGAMMA,
-								 -kDT * kALPHAF * (1.0 - kGAMMA), -kDT * kALPHAF * kGAMMA};
-
-	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
-
-	index_type num_node = Mesh3DDataNumNode(Mesh3DHost(mesh));
-
-	f64* wgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-	f64* dwgalpha = (f64*)CdamMallocDevice(num_node * SIZE_OF(f64) * BS);
-
-
-	/* dwgalpha = fact1[0] * dwgold + fact1[1] * dwg */ 
-	cudaMemset(dwgalpha, 0, num_node * SIZE_OF(f64) * BS);
-	cublasDaxpy(handle, num_node * BS, fact1 + 0, dwgold, 1, dwgalpha, 1);
-	cublasDaxpy(handle, num_node * BS, fact1 + 1, dwg, 1, dwgalpha, 1);
-	/* dwgalpha[3, :] = dwg[3, :] */
-	cublasDcopy(handle, num_node, dwg + num_node * 3, 1, dwgalpha + num_node * 3, 1);
-
-	/* wgalpha = wgold + fact2[0] * dwgold + fact2[1] * dwg */
-	cublasDcopy(handle, num_node * BS, wgold, 1, wgalpha, 1);
-	cublasDaxpy(handle, num_node * BS, fact2 + 0, dwgold, 1, wgalpha, 1);
-	cublasDaxpy(handle, num_node * BS, fact2 + 1, dwg, 1, wgalpha, 1);
-	cudaMemset(wgalpha + num_node * 3, 0, num_node * SIZE_OF(f64));
-
-
-	/* Construct the right-hand side */
-	
-	start = clock();
-	AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
-	end = clock();
-	fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-	cublasDnrm2(handle, num_node * 3, F + num_node * 0, 1, rnorm_init + 0);
-	cublasDnrm2(handle, num_node * 1, F + num_node * 3, 1, rnorm_init + 1);
-	cublasDnrm2(handle, num_node * 1, F + num_node * 4, 1, rnorm_init + 2);
-	cublasDnrm2(handle, num_node * 1, F + num_node * 5, 1, rnorm_init + 3);
 
 
 
-	CUGUARD(cudaGetLastError());
-
-	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[0], 1.0, tol);
-	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[1], 1.0, tol);
-	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[2], 1.0, tol);
-	fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", 0, rnorm_init[3], 1.0, tol);
-	rnorm_init[0] += 1e-16;
-	rnorm_init[1] += 1e-16;
-	rnorm_init[2] += 1e-16;
-	rnorm_init[3] += 1e-16;
-
-	while(!converged && iter < maxit) {
-		/* Construct the Jacobian matrix */
-		start = clock();
-		AssembleSystem(mesh, wgalpha, dwgalpha, NULL, J, bcs, nbc);
-		end = clock();
-		fprintf(stdout, "Assemble J time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-		CUGUARD(cudaGetLastError());
-
-	
-		/* Solve the linear system */
-		cudaMemset(dx, 0, num_node * SIZE_OF(f64) * BS);
-		// for(index_type ibc = 0; ibc < nbc; ++ibc) {
-		// 	DirichletApplyVec(bcs[ibc], dx);
-		// }
-		cudaStreamSynchronize(0);
-		start = clock();
-		KrylovSolve(ksp, J, dx, F);
-
-		cudaStreamSynchronize(0);
-		end = clock();
-		fprintf(stdout, "Krylov solve time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-
-		/* Update the solution */	
-		// cublasDaxpy(handle, ArrayLen(d_dwg), &minus_one, dx, 1, ArrayData(d_dwg), 1);
-		/* Update dwg by dwg -= dx */
-		cublasDaxpy(handle, num_node * BS, &minus_one, dx, 1, dwg, 1);
-		// cublasDaxpy(handle, num_node * 3, &minus_one, dx + num_node * 0, 1, dwg + num_node * 0, 1);
-		// cublasDaxpy(handle, num_node * 1, &minus_one, dx + num_node * 3, 1, dwg + num_node * 3, 1);
-		if(0) {
-			/* Update dwgalpha by dwgalpha[[0,1,2], :] -= kALPHAM * dx[[0,1,2], :] */ 
-			cublasDaxpy(handle, num_node * 3, fact1 + 3, dx + num_node * 0, 1, dwgalpha + num_node * 0, 1);
-			/* Update dwgalpha by dwgalpha[3, :] -= dx[3, :] */ 
-			cublasDaxpy(handle, num_node * 1, &minus_one, dx + num_node * 3, 1, dwgalpha + num_node * 3, 1);
-			/* Update dwgalpha by dwgalpha[[4,5], :] -= kALPHAM * dx[[4,5], :] */ 
-			cublasDaxpy(handle, num_node * 2, fact1 + 3, dx + num_node * 4, 1, dwgalpha + num_node * 4, 1);
-			/* Update wgalpha by wgalpha[[0,1,2], :] -= kDT * kALPHAF * kGAMMA * dx[[0,1,2], :] */
-			cublasDaxpy(handle, num_node * 3, fact2 + 3, dx + num_node * 0, 1, wgalpha + num_node * 0, 1);
-			/* Update wgalpha by wgalpha[[4,5], :] -= kDT * kALPHAF * kGAMMA * dx[[4,5], :] */
-			cublasDaxpy(handle, num_node * 2, fact2 + 3, dx + num_node * 4, 1, wgalpha + num_node * 4, 1);
-		}
-		else {
-			/* dwgalpha = fact1[0] * dwgold + fact1[1] * dwg */ 
-			cudaMemset(dwgalpha, 0, num_node * SIZE_OF(f64) * BS);
-			cublasDaxpy(handle, num_node * BS, fact1 + 0, dwgold, 1, dwgalpha, 1);
-			cublasDaxpy(handle, num_node * BS, fact1 + 1, dwg, 1, dwgalpha, 1);
-			/* dwgalpha[3, :] = dwg[3, :] */
-			cublasDcopy(handle, num_node * 1, dwg + num_node * 3, 1, dwgalpha + num_node * 3, 1);
-
-			/* wgalpha = wgold + fact2[0] * dwgold + fact2[1] * dwg */
-			cublasDcopy(handle, num_node * BS, wgold, 1, wgalpha, 1);
-			cublasDaxpy(handle, num_node * BS, fact2 + 0, dwgold, 1, wgalpha, 1);
-			cublasDaxpy(handle, num_node * BS, fact2 + 1, dwg, 1, wgalpha, 1);
-			cudaMemset(wgalpha + num_node * 3, 0, num_node * SIZE_OF(f64));
-
-		}
-
-
-		start = clock();
-		AssembleSystem(mesh, wgalpha, dwgalpha, F, NULL, bcs, nbc);
-		end = clock();
-		fprintf(stdout, "Assemble F time: %f ms\n", (f64)(end - start) / CLOCKS_PER_SEC * 1000.0);
-		cublasDnrm2(handle, num_node * 3, F + num_node * 0, 1, rnorm + 0);
-		cublasDnrm2(handle, num_node * 1, F + num_node * 3, 1, rnorm + 1);	
-		cublasDnrm2(handle, num_node * 1, F + num_node * 4, 1, rnorm + 2);
-		cublasDnrm2(handle, num_node * 1, F + num_node * 5, 1, rnorm + 3);
-		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[0], rnorm[0] / rnorm_init[0], tol);
-		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[1], rnorm[1] / rnorm_init[1], tol);
-		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[2], rnorm[2] / rnorm_init[2], tol);
-		fprintf(stdout, "Newton %d) abs = %.17e rel = %6.4e (tol = %6.4e)\n", iter + 1, rnorm[3], rnorm[3] / rnorm_init[3], tol);
-
-		if (rnorm[0] < tol * rnorm_init[0] &&
-				rnorm[1] < tol * rnorm_init[1] &&
-				rnorm[2] < tol * rnorm_init[2] &&
-				rnorm[3] < tol * rnorm_init[3]) {
-			converged = TRUE;
-		}
-		iter++;
-
-	}
-
-	CdamFreeDevice(dwgalpha, num_node * SIZE_OF(f64) * BS);
-	CdamFreeDevice(wgalpha, num_node * SIZE_OF(f64) * BS);
-}
-
-
-void MyFieldInit(f64* value, void* ctx) {
+void MyFieldInit(value_type* value, void* ctx) {
 	double eps = 1.5e-4 * 0.5;
 	double z, h;
-	Mesh3D* mesh = (Mesh3D*)ctx;
-	Mesh3DData* data = Mesh3DHost(mesh);
+	CdamMesh* mesh = (CdamMesh*)ctx;
 	index_type i;
-	index_type num_node = Mesh3DDataNumNode(data);
-	f64* coord = Mesh3DDataCoord(data);
+	index_type num_node = CdamMeshNumNode(mesh);
+	value_type* coord = CdamMeshCoord(mesh);
 
 	for(i = 0; i < num_node; i++) {
 #ifdef DBG_TET
@@ -261,7 +65,7 @@ void MyFieldInit(f64* value, void* ctx) {
 			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
 		}
 		value[num_node * 3 + i] = 0.0;
-		value[num_node * 4 + i] = coord[i * 3 + 0];
+		value[num_node * 4 + i] = h;
 		value[num_node * 5 + i] = -coord[i * 3 + 0];
 	}
 }
@@ -288,7 +92,7 @@ static inline void ParseJSONFile(const char* filename, cJSON** root) {
 int main(int argc, char** argv) {
 	int rank, num_procs;
 	char argv_opt[256];
-	CDAM_Mesh* mesh;
+	CdamMesh* mesh;
 	cJSON* config = NULL;
 	{
 		memset(argv_opt, 0, 256);
@@ -312,7 +116,7 @@ int main(int argc, char** argv) {
 
 
 	char* json_str = cJSON_Print(config);
-	fprintf(stdout, json_str);
+	fprintf(stdout, "%s", json_str);
 	fprintf(stdout, "\n");
 	// cJSON_Delete(config);
 	CdamFreeHost(json_str, strlen(json_str) + 1);
@@ -341,82 +145,79 @@ int main(int argc, char** argv) {
 			printf("==================================================\n");
 			printf(" * Device[%d] name: %s\n", rank, prop.name);
 			printf(" * Compute capability: %d.%d\n", prop.major, prop.minor);
-			printf(" * Total global memory: %f (MB)\n", (f64)prop.totalGlobalMem / 1024.0 / 1024.0);
-			printf(" * Shared memory per block: %f (KB)\n", (f64)prop.sharedMemPerBlock / 1024.0);
-			printf(" * Registers per block: %f (KB)\n", (f64)prop.regsPerBlock / 1024.0);
+			printf(" * Total global memory: %f (MB)\n", (value_type)prop.totalGlobalMem / 1024.0 / 1024.0);
+			printf(" * Shared memory per block: %f (KB)\n", (value_type)prop.sharedMemPerBlock / 1024.0);
+			printf(" * Registers per block: %f (KB)\n", (value_type)prop.regsPerBlock / 1024.0);
 			printf(" * Warp size: %d\n", prop.warpSize);
 			printf(" * Max threads per block: %d\n", prop.maxThreadsPerBlock);
 			printf(" * Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
 			printf(" * Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
-			printf(" * Clock rate: %f (Hz) \n", (f64)prop.clockRate);
-			printf(" * Total constant memory: %f (MB)\n", (f64)prop.totalConstMem / 1024.0 / 1024.0);
-			printf(" * Peak memory clock rate: %f (MHz)\n", (f64)prop.memoryClockRate / 1e6);
+			printf(" * Clock rate: %f (Hz) \n", (value_type)prop.clockRate);
+			printf(" * Total constant memory: %f (MB)\n", (value_type)prop.totalConstMem / 1024.0 / 1024.0);
+			printf(" * Peak memory clock rate: %f (MHz)\n", (value_type)prop.memoryClockRate / 1e6);
 			printf(" * Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
 			printf("==================================================\n");
 		}
 	}
 
 	H5FileInfo* h5_handler = H5OpenFile(JSONGetItem(config, "IO.Input.Path")->valuestring, "r");
-	CDAM_MeshCreate(MPI_COMM_WORLD, &mesh);
-	CDAM_MeshLoad(mesh, h5_handler);
+	CdamMeshCreate(MPI_COMM_WORLD, &mesh);
+	CdamMeshLoad(mesh, h5_handler, "/mesh");
 	H5CloseFile(h5_handler);
 
-	CDAM_MeshToDevice(mesh);
-	CDAM_MeshGenreateColorBatch(mesh);
+	CdamMeshPrefetch(mesh);
+	// CdamMeshGenreateColorBatch(mesh);
 
-	cublasHandle_t handle = *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
-	// cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
-	cublasSetMathMode(handle, CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION);
+#if CDAM_USE_CUDA
+	cublasHandle_t handle;
+	cublasCreate(&handle);
+	cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
+	// cublasSetMathMode(handle, CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION);
+	cublasDestroy(handle);
+#endif
 	
-	// cusparseHandle_t sp_handle;
-	// cusparseCreate(&sp_handle);
-
-	CDAM_Form vms;
-	CDAM_FormCreate(MPI_COMM_WORLD, &vms);
-	CDAM_FormSetMesh(vms, mesh);
-	CDAM_FormConfig(vms, JSONGetItem(config, "VMS"));
-	
-	CDAM_NewtonSolver* nssolver;
 	/* Create the Newton solver */
-	CDAM_NewtonSolverCreate(MPI_COMM_WORLD, &nssolver);
-	/* Set the FEM problem to be solved. This will be used to preallocated the distributed
-	 * vectors and matrices. */
-	CDAM_NewtonSolverSetFEM(nssolver, vms);
+	CdamNewtonSolver* nssolver;
+	CdamNewtonSolverCreate(MPI_COMM_WORLD, &nssolver);
 	/* Set the number of Newton iterations, 
 	 *     the relative residual 
 	 *     the absolute residual
 	 *     whether use user-defined UpdateSolution */
-	CDAM_NewtonSolverConfig(nssolver, JSONGetItem(config, "NewtonSolver"));
+	CdamNewtonSolverConfig(nssolver, JSONGetItem(config, "NewtonSolver"));
 
-	CDAM_Krylov* krylov = NULL;
-	CDAM_NewtonSolverGetLinearSolver(nssolver, &krylov);
+	CdamKrylov* krylov = NULL;
+	CdamNewtonSolverGetLinearSolver(nssolver, &krylov);
 	
-	CDAM_KrylovSetUp(krylov, mesh, JSONGetItem(config, "NewtonSolver.LinearSolver"));
+	CdamKrylovSetup(krylov, mesh, JSONGetItem(config, "NewtonSolver.LinearSolver"));
 
-	CDAM_Vec* vec, *dx;
-	CDAM_Mat* mat;
-	CDAM_NewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
-	CDAM_VecCreate(MPI_COMM_WORLD, &vec);
-	CDAM_VecSetUp(vec, vms);
-	CDAM_VecCreate(MPI_COMM_WORLD, &dx);
-	CDAM_VecClone(dx, vec);
+	CdamVecLayout* layout;
+	CdamVecLayoutCreate(&layout, config);
+	value_type* vec, *dx;
+	// CdamNewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
+	
+	index_type num_node = CdamMeshNumNode(mesh);
+	dx = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	vec = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamNewtonSolverB(nssolver) = vec;
+	CdamNewtonSolverX(nssolver) = dx;
 
-	CDAM_MatCreate(MPI_COMM_WOTLD, &mat);
-	CDAM_MatSetUp(mat, vms);
+	CdamMat* mat;
+	CdamMatCreate(MPI_COMM_WORLD, &mat);
+	CdamNewtonSolverA(nssolver) = mat;
 
 
 	/* Simulation initialization */
-	value_type* wgold = (value_type*)CdamMallocDevice(num_node * SIZE_OF(value_type) * BS);
-	value_type* dwgold = (value_type*)CdamMallocDevice(num_node * SIZE_OF(value_type) * BS);
-	value_type* dwg = (value_type*)CdamMallocDevice(num_node * SIZE_OF(value_type) * BS);
+	value_type* wgold = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	value_type* dwgold = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	value_type* dwg = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 
-	value_type* buffer = (value_type*)CdamMallocHost(num_node * SIZE_OF(value_type) * BS);
+	value_type* buffer = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, HOST_MEM);
 
-	cudaMemset(wgold, 0, num_node * SIZE_OF(value_type) * BS);
-	cudaMemset(dwgold, 0, num_node * SIZE_OF(value_type) * BS);
-	cudaMemset(dwg, 0, num_node * SIZE_OF(value_type) * BS);
+	CdamMemset(wgold, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamMemset(dwgold, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamMemset(dwg, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 
-	memset(buffer, 0, num_node * SIZE_OF(value_type) * BS);
+	CdamMemset(buffer, 0, num_node * sizeof(value_type) * BS, HOST_MEM);
 
 	if(step) {
 		sprintf(filename_buffer, "sol.%d.h5", step);
@@ -424,18 +225,18 @@ int main(int argc, char** argv) {
 		H5ReadDatasetf64(h5_handler, "u", buffer);
 		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
 		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
-		cudaMemcpy(wgold, buffer, num_node * SIZE_OF(f64) * 3, cudaMemcpyHostToDevice);
+		CdamMemcpy(wgold, buffer, num_node * sizeof(value_type) * 3, DEVICE_MEM, HOST_MEM);
 
-		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
+		memset(buffer, 0, num_node * sizeof(value_type) * BS);
 		H5ReadDatasetf64(h5_handler, "du", buffer);
 		H5ReadDatasetf64(h5_handler, "p", buffer + num_node * 3);
 		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
 		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
-		cudaMemcpy(dwgold, buffer, num_node * SIZE_OF(f64) * BS, cudaMemcpyHostToDevice);
+		// cudaMemcpy(dwgold, buffer, num_node * sizeof(value_type) * BS, cudaMemcpyHostToDevice);
+		CdamMemcpy(dwgold, buffer, num_node * sizeof(value_type) * 3, DEVICE_MEM, HOST_MEM);
 
-		// ParticleContextLoad(pctx, h5_handler, "ptc/test/group/context");
 		
-		cudaMemcpy(dwg, dwgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToDevice);
+		CdamMemcpy(dwg, dwgold, num_node * sizeof(value_type) * 3, DEVICE_MEM, DEVICE_MEM);
 
 		H5CloseFile(h5_handler);
 	}
@@ -448,13 +249,19 @@ int main(int argc, char** argv) {
 		/* dwgold[0:3*N] = 0 */
 		/* dwgold[4*N:5*N] = buffer[4*N:5*N] */
 		/* dwgold[5*N:6*N] = 0 */
-		cudaMemset(dwgold, 0, num_node * SIZE_OF(f64) * BS);
-		cudaMemset(dwg, 0, num_node * SIZE_OF(f64) * BS);
-		cudaMemset(wgold, 0, num_node * SIZE_OF(f64) * BS);
-		cudaMemcpy(wgold, buffer, num_node * SIZE_OF(f64) * BS, cudaMemcpyHostToDevice);
-		cudaMemset(wgold + num_node * 3, 0, num_node * SIZE_OF(f64));
-		// cudaMemcpy(dwgold + num_node * 3, buffer + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyHostToDevice);
-		cudaMemcpy(dwg + num_node * 3, buffer + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyHostToDevice);
+		// cudaMemset(dwgold, 0, num_node * sizeof(value_type) * BS);
+		// cudaMemset(dwg, 0, num_node * sizeof(value_type) * BS);
+		// cudaMemset(wgold, 0, num_node * sizeof(value_type) * BS);
+		// cudaMemcpy(wgold, buffer, num_node * sizeof(value_type) * BS, cudaMemcpyHostToDevice);
+		// cudaMemset(wgold + num_node * 3, 0, num_node * sizeof(value_type));
+		// cudaMemcpy(dwgold + num_node * 3, buffer + num_node * 3, num_node * sizeof(value_type), cudaMemcpyHostToDevice);
+		// cudaMemcpy(dwg + num_node * 3, buffer + num_node * 3, num_node * sizeof(value_type), cudaMemcpyHostToDevice);
+		CdamMemset(dwgold, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+		CdamMemset(dwg, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+		CdamMemset(wgold, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+		CdamMemcpy(wgold, buffer, num_node * sizeof(value_type) * BS, DEVICE_MEM, HOST_MEM);
+		CdamMemset(wgold + num_node * 3, 0, num_node, DEVICE_MEM);
+		CdamMemcpy(dwg + num_node * 3, buffer + num_node * 3, num_node, DEVICE_MEM, HOST_MEM);
 	
 		h5_handler = H5OpenFile("sol.0.h5", "w");
 		H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
@@ -462,7 +269,7 @@ int main(int argc, char** argv) {
 		H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
 		H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
 
-		memset(buffer, 0, num_node * SIZE_OF(f64) * BS);
+		memset(buffer, 0, num_node * sizeof(value_type) * BS);
 		H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
 		H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
 		H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
@@ -472,8 +279,8 @@ int main(int argc, char** argv) {
 	}
 
 	/* Simulation loop */
-	f64 fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
-	f64 fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};
+	value_type fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
+	value_type fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};
 
 	while(step ++ < num_step) {
 		fprintf(stdout, "##################\n");
@@ -481,9 +288,10 @@ int main(int argc, char** argv) {
 		fprintf(stdout, "##################\n");
 		fflush(stdout);
 		/* Prediction stage */
-		// ArrayScale(FieldDevice(dwg), (kGAMMA - 1.0) / kGAMMA);
-		cublasDscal(handle, num_node * 3, fac_pred, dwg, 1);
-		cublasDscal(handle, num_node * 2, fac_pred, dwg + num_node * 4, 1);
+		// cublasDscal(handle, num_node * 3, fac_pred, dwg, 1);
+		// cublasDscal(handle, num_node * 2, fac_pred, dwg + num_node * 4, 1);
+		BLAS_CALL(scal, num_node * 3, fac_pred + 0, dwgold, 1);
+		BLAS_CALL(scal, num_node * 2, fac_pred + 0, dwgold + num_node * 4, 1);
 
 		/* Generate new particles */
 		// ParticleContextAdd(pctx);
@@ -491,7 +299,7 @@ int main(int argc, char** argv) {
 		/* Newton-Raphson iteration */
 		converged = FALSE;
 		while(!converged) {
-			CDAM_NewtonSolverSolve(nssolver, wgold, dwgold, dwg, NULL, NULL);
+			CdamNewtonSolverSolve(nssolver, dwg);
 #ifdef DEBUG
 			SolveParticleSystem(pctx);
 #endif
@@ -499,11 +307,18 @@ int main(int argc, char** argv) {
 		}
 
 		/* Update stage */
-		cublasDaxpy(handle, num_node * 3, fac_corr + 0, dwgold, 1, wgold, 1);
-		cublasDaxpy(handle, num_node * 2, fac_corr + 0, dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
-		cublasDaxpy(handle, num_node * 3, fac_corr + 1, dwg, 1, wgold, 1);
-		cublasDaxpy(handle, num_node * 2, fac_corr + 1, dwg + num_node * 4, 1, wgold + num_node * 4, 1);
-		cublasDcopy(handle, num_node * 6, dwg, 1, dwgold, 1);
+		// cublasDaxpy(handle, num_node * 3, fac_corr + 0, dwgold, 1, wgold, 1);
+		// cublasDaxpy(handle, num_node * 2, fac_corr + 0, dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
+		// cublasDaxpy(handle, num_node * 3, fac_corr + 1, dwg, 1, wgold, 1);
+		// cublasDaxpy(handle, num_node * 2, fac_corr + 1, dwg + num_node * 4, 1, wgold + num_node * 4, 1);
+		// cublasDcopy(handle, num_node * 6, dwg, 1, dwgold, 1);
+
+		BLAS_CALL(axpy, num_node * 3, fac_corr + 0, dwgold, 1, wgold, 1);
+		BLAS_CALL(axpy, num_node * 2, fac_corr + 0, dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
+		BLAS_CALL(axpy, num_node * 3, fac_corr + 1, dwg, 1, wgold, 1);
+		BLAS_CALL(axpy, num_node * 2, fac_corr + 1, dwg + num_node * 4, 1, wgold + num_node * 4, 1);
+		BLAS_CALL(copy, num_node * 6, dwg, 1, dwgold, 1);
+
 		/* Particle update */
 		// ParticleContextUpdate(pctx);
 		/* Particle removal */
@@ -514,13 +329,13 @@ int main(int argc, char** argv) {
 			fprintf(stdout, "Save solution to %s\n", filename_buffer);
 			h5_handler = H5OpenFile(filename_buffer, "w");
 		
-			cudaMemcpy(buffer, wgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
-			cudaMemcpy(buffer + num_node * 3, dwgold + num_node * 3, num_node * SIZE_OF(f64), cudaMemcpyDeviceToHost);
+			cudaMemcpy(buffer, wgold, num_node * sizeof(value_type) * BS, cudaMemcpyDeviceToHost);
+			cudaMemcpy(buffer + num_node * 3, dwgold + num_node * 3, num_node * sizeof(value_type), cudaMemcpyDeviceToHost);
 			H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
 			H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
 			H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
 
-			cudaMemcpy(buffer, dwgold, num_node * SIZE_OF(f64) * BS, cudaMemcpyDeviceToHost);
+			cudaMemcpy(buffer, dwgold, num_node * sizeof(value_type) * BS, cudaMemcpyDeviceToHost);
 			H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
 			H5WriteDatasetf64(h5_handler, "p", num_node, buffer + num_node * 3);
 			H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
@@ -533,18 +348,17 @@ int main(int argc, char** argv) {
 	}
 
 
-	CDAM_NewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
-	CDAM_VecDestroy(vec);
-	CDAM_VecDestroy(dx);
-	CDAM_MatDestroy(mat);
+	// CdamVecDestroy(vec);
+	// CdamVecDestroy(dx);
+	CdamFree(vec, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamFree(dx, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamMatDestroy(mat);
 
-	CDAM_NewtonSolverGetLinearSolver(nssolver, &krylov);
-	CDAM_KrylovDestroy(krylov);
+	CdamNewtonSolverGetLinearSolver(nssolver, &krylov);
+	CdamKrylovDestroy(krylov);
 
-	CDAM_FormDestroy(vms);
-	CDAM_NewtonSolverDestroy(nssolver);
-	CDAM_MeshDestroy(mesh);
-
+	CdamNewtonSolverDestroy(nssolver);
+	CdamMeshDestroy(mesh);
 
 
 	Finalize();

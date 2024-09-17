@@ -13,7 +13,7 @@ $(error HDF5_ROOT is not set)
 endif
 
 ifeq ($(origin HYPRE_DIR), undefined)
-$(error HYPRE_DIR is not set)
+$(warning HYPRE_DIR is not set)
 endif
 
 ifeq ($(origin CUDA_ROOT), undefined)
@@ -54,7 +54,7 @@ FLAGS= -fPIC -Wall -Wextra \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			-Wno-deprecated-declarations
-DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE # -DDBG_TET
+DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE -DCDAM_USE_CUDA # -DDBG_TET
 CC=mpicc
 CFLAGS=-std=c99 $(FLAGS) $(DEFINES) $(C_OPT) # -fno-omit-frame-pointer
 

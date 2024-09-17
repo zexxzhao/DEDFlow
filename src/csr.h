@@ -6,7 +6,7 @@
 
 __BEGIN_DECLS__
 
-typedef struct Mesh3D Mesh3D;
+typedef struct CdamMesh CdamMesh;
 
 typedef index_type csr_index_type;
 typedef struct CSRAttr CSRAttr;
@@ -25,7 +25,7 @@ struct CSRAttr {
 #define CSRAttrRowPtr(attr) ((attr)->row_ptr)
 #define CSRAttrColInd(attr) ((attr)->col_ind)
 
-CSRAttr* CSRAttrCreate(const Mesh3D* mesh);
+CSRAttr* CSRAttrCreate(CdamMesh* mesh);
 void CSRAttrDestroy(CSRAttr *attr);
 
 CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_index_type block_col);

@@ -2,8 +2,6 @@
 #define __MATRIX_H__
 
 
-#include <cublas_v2.h>
-#include <cusparse.h>
 #include "csr.h"
 
 __BEGIN_DECLS__
@@ -146,6 +144,8 @@ void MatrixCSRDestroy(Matrix *matrix);
 MatrixFS* MatrixFSCreate(index_type n_offset, const index_type *offset, void*);
 void MatrixFSDestroy(Matrix *matrix);
 
+
+typedef Matrix CdamMat;
 
 __END_DECLS__
 

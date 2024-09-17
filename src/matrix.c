@@ -1,5 +1,4 @@
 #include <string.h>
-#include <cublas_v2.h>
 #include "alloc.h"
 #include "vec.h"
 #include "matrix.h"

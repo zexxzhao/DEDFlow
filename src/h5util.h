@@ -49,6 +49,9 @@ void H5ReadDatasetf64(H5FileInfo* h5file, const char *dataset_name, f64* data);
 void H5ReadDatasetInd(H5FileInfo* h5file, const char *dataset_name, index_type* data);
 void H5ReadDatasetVal(H5FileInfo* h5file, const char *dataset_name, value_type* data);
 
+void H5ReadDatasetValIndexed(H5FileInfo* h5file, const char *dataset_name, index_type len,
+														 index_type* block_len, index_type* indices, value_type* data);
+
 /* Write h5 file */
 void H5WriteDataseti32(H5FileInfo* h5file, const char *dataset_name, index_type len, const i32* data);
 void H5WriteDatasetu32(H5FileInfo* h5file, const char *dataset_name, index_type len, const u32* data);

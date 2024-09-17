@@ -34,4 +34,28 @@ static inline cJSON* JSONGetItem(cJSON* root, const char* key) {
 	return item;
 }
 
+/* Check the existence of the key in the JSON object */
+static inline b32 JSONHasKey(cJSON* root, const char* key) {
+	
+	const char delim[] = ".";
+	cJSON* item = root;
+	char* token = NULL;
+	char* keyDup = strdup(key);
+	if (keyDup && keyDup[0] == '.') {
+		keyDup++;
+	}
+	token = strtok(keyDup, delim);
+	
+	while (token != NULL) {
+		item = cJSON_GetObjectItem(item, token);
+		if (item == NULL) {
+			break;
+		}
+		token = strtok(NULL, delim);
+	}
+	
+	free(keyDup);
+	return item != NULL;
+}
+
 #endif /* __JSON_H__ */

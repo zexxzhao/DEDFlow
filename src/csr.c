@@ -79,15 +79,14 @@ static index_type CSRHashMapPush(CSRHashMap* map, index_type key, index_type val
 }
 
 static CSRHashMap*
-GetNodalGraphFromMesh(const Mesh3D* mesh) {
-	Mesh3DData* host = Mesh3DHost(mesh);
-	index_type num_node = Mesh3DNumNode(host);
-	index_type num_tet = Mesh3DNumTet(host);
-	index_type num_prism = Mesh3DNumPrism(host);
-	index_type num_hex = Mesh3DNumHex(host);
-	index_type* ien_tet = Mesh3DDataTet(host);
-	index_type* ien_prism = Mesh3DDataPrism(host);
-	index_type* ien_hex = Mesh3DDataHex(host);
+GetNodalGraphFromMesh(const CdamMesh* mesh) {
+	index_type num_node = CdamMeshNumNode(mesh);
+	index_type num_tet = CdamMeshNumTet(mesh);
+	index_type num_prism = CdamMeshNumPrism(mesh);
+	index_type num_hex = CdamMeshNumHex(mesh);
+	index_type* ien_tet = CdamMeshTet(mesh);
+	index_type* ien_prism = CdamMeshPrism(mesh);
+	index_type* ien_hex = CdamMeshHex(mesh);
 	
 	index_type i, j, k;
 	index_type* elem;
@@ -134,16 +133,11 @@ GetNodalGraphFromMesh(const Mesh3D* mesh) {
 
 #include "csr_impl.h"
 
-// CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
-// 	CSRAttr* attr = (CSRAttr*)CdamMallocHost(SIZE_OF(CSRAttr));
-// 
-// 	GenerateCSRFromMesh(mesh, attr);
-// }
 
-CSRAttr* CSRAttrCreate(const Mesh3D* mesh) {
+CSRAttr* CSRAttrCreate(CdamMesh* mesh) {
 	CSRAttr* attr = (CSRAttr*)CdamMallocHost(SIZE_OF(CSRAttr));
 	memset(attr, 0, SIZE_OF(CSRAttr));
-	index_type num_node = Mesh3DNumNode(mesh);
+	index_type num_node = CdamMeshNumNode(mesh);
 	index_type i, j;
 	index_type nnz = 0;
 	CSRAttrNumRow(attr) = num_node;

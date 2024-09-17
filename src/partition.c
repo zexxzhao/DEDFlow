@@ -13,6 +13,7 @@ typedef int idx_t;
 
 __BEGIN_DECLS__
 
+#ifdef DEBUG
 void PartitionMesh3DMETIS(Mesh3D* mesh, index_type num_part) {
 #ifdef USE_METIS
 	Mesh3DData* host = Mesh3DHost(mesh);
@@ -75,6 +76,7 @@ void PartitionMesh3DMETIS(Mesh3D* mesh, index_type num_part) {
 	CdamFreeHost(npart, SIZE_OF(idx_t) * num_node);
 #endif
 }
+#endif
 
 void PartitionMeshMetis(index_type num[], index_type* ien, index_type num_part,
 											  index_type* epart, index_type* npart) {

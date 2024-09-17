@@ -7,39 +7,36 @@ int ffs(int);
 
 #include "alloc.h"
 #include "Mesh.h"
+#include "json.h"
 #include "vec.h"
 
 __BEGIN_DECLS__
 
 
-void CDAM_VecCreate(MPI_Comm comm, void* mesh, CDAM_Vec** vec) {
-	Mesh3D* mesh3d = (Mesh3D*)mesh;
-	*vec = (CDAM_Vec*)CdamMallocHost(sizeof(CDAM_Vec));
-	memset(*vec, 0, sizeof(CDAM_Vec));
-	CDAM_VecComm(*vec) = comm;
+void CdamVecCreate(MPI_Comm comm, void* mesh, CdamVec** vec) {
+	CdamMesh* mesh3d = (CdamMesh*)mesh;
+	*vec = (CdamVec*)CdamMallocHost(sizeof(CdamVec));
+	memset(*vec, 0, sizeof(CdamVec));
+	CdamVecComm(*vec) = comm;
 
-	CDAM_VecPartitionLower(*vec) = CDAM_MeshLocalNodeBegin(mesh3d);
-	CDAM_VecPartitionUpper(*vec) = CDAM_MeshLocalNodeEnd(mesh3d);
+	CdamVecPartitionLower(*vec) = CdamMeshLocalNodeBegin(mesh3d);
+	CdamVecPartitionUpper(*vec) = CdamMeshLocalNodeEnd(mesh3d);
 }
 
-void CDAM_VecSetNumComponents(CDAM_Vec* vec, index_type num_components) {
-	CDAM_VecNumComponents(vec) = num_components;
-	CDAM_VecComponentSize(vec) = (index_type*)CdamMallocHost((num_components) * sizeof(index_type));
-	memset(CDAM_VecComponentSize(vec), 0, (num_components) * sizeof(index_type));
-	CDAM_VecSub(vec) = (HYPRE_IJVector*)CdamMallocHost(num_components * sizeof(HYPRE_IJVector));
-	memset(CDAM_VecSub(vec), 0, num_components * sizeof(HYPRE_IJVector));
+void CdamVecSetNumComponents(CdamVec* vec, index_type num_components) {
+	CdamVecNumComponents(vec) = num_components;
 }
 
-void CDAM_VecSetComponentSize(CDAM_Vec* vec, index_type component, index_type size) {
-	CDAM_VecComponentSize(vec)[component] = size;
+void CdamVecSetComponentSize(CdamVec* vec, index_type component, index_type size) {
+	CdamVecComponentSize(vec)[component] = size;
 }
 
-void CDAM_VecInitialize(CDAM_Vec* vec) {
+void CdamVecInitialize(CdamVec* vec) {
 	index_type i, bs;
-	index_type num_components = CDAM_VecNumComponents(vec);
-	index_type jlower = CDAM_VecPartitionLower(vec);
-	index_type jupper = CDAM_VecPartitionUpper(vec);
-	MPI_Comm comm = CDAM_VecComm(vec);
+	index_type num_components = CdamVecNumComponents(vec);
+	index_type jlower = CdamVecPartitionLower(vec);
+	index_type jupper = CdamVecPartitionUpper(vec);
+	MPI_Comm comm = CdamVecComm(vec);
 	HYPRE_IJVector subvec;
 	HYPRE_MemoryLocation mem_location;
 #if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP)
@@ -51,66 +48,64 @@ void CDAM_VecInitialize(CDAM_Vec* vec) {
 	index_type* offset = (index_type*)CdamMallocHost((num_components + 1) * sizeof(index_type));
 	offset[0] = 0;
 	for(i = 0; i < num_components; i++) {
-		offset[i + 1] = offset[i] + CDAM_VecComponentSize(vec)[i];
+		offset[i + 1] = offset[i] + CdamVecComponentSize(vec)[i];
 	}
 	value_type* buffer = hypre_CTAlloc(value_type, offset[num_components], mem_location);
 
-	for(i = 0; i < CDAM_VecNumComponents(vec); i++) {
-		bs = CDAM_VecComponentSize(vec)[i];
-		subvec = CDAM_VecSub(vec)[i];
+	for(i = 0; i < CdamVecNumComponents(vec); i++) {
+		bs = CdamVecComponentSize(vec)[i];
+		subvec = CdamVecSub(vec)[i];
 		HYPRE_IJVectorCreate(comm, jlower * bs, jupper * bs, &subvec);
 		HYPRE_IJVectorSetObjectType(subvec, HYPRE_PARCSR);
 		HYPRE_IJVectorInitialize(subvec);
-		ASSERT(hypre_IJVectorMemoryLocation(CDAM_VecSub(vec)[i]) == mem_location && "Memory location mismatch.\n");
+		ASSERT(hypre_IJVectorMemoryLocation(CdamVecSub(vec)[i]) == mem_location && "Memory location mismatch.\n");
 
 		/* Free the old buffer and allocate a new one to ensure contiguous memory */
-		hypre_TFree(CDAM_VecRawPtr(vec, i), mem_location);
-		CDAM_VecRawPtr(vec, i) =  buffer + offset[i] * (jupper - jlower);
+		hypre_TFree(CdamVecRawPtr(vec, i), mem_location);
+		CdamVecRawPtr(vec, i) =  buffer + offset[i] * (jupper - jlower);
 	}
 
 	CdamFreeHost(offset, (num_components + 1) * sizeof(index_type));
 }
 
-void CDAM_VecDestroy(CDAM_Vec* vec) {
+void CdamVecDestroy(CdamVec* vec) {
 	index_type i;
 	/* Retrieve the buffer pointer to avoid mem leak */
-	value_type* buffer = CDAM_VecRawPtr(vec, 0);
+	value_type* buffer = CdamVecRawPtr(vec, 0);
 	HYPRE_MemoryLocation mem_location;
 #if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP)
 	mem_location = HYPRE_MEMORY_DEVICE;
 #else
 	mem_location = HYPRE_MEMORY_HOST;
 #endif
-	for(i = 0; i < CDAM_VecNumComponents(vec); i++) {
+	for(i = 0; i < CdamVecNumComponents(vec); i++) {
 		/* Set the buffer pointer to NULL to avoid double-free */
-		CDAM_VecRawPtr(vec, i) = NULL;
-		HYPRE_IJVectorDestroy(CDAM_VecSub(vec)[i]);
+		CdamVecRawPtr(vec, i) = NULL;
+		HYPRE_IJVectorDestroy(CdamVecSub(vec)[i]);
 	}
-	CdamFreeHost(CDAM_VecComponentSize(vec), CDAM_VecNumComponents(vec) * sizeof(index_type));
-	CdamFreeHost(CDAM_VecSub(vec), CDAM_VecNumComponents(vec) * sizeof(HYPRE_IJVector));
-	CdamFreeHost(vec, sizeof(CDAM_Vec));
+	CdamFreeHost(vec, sizeof(CdamVec));
 	hypre_TFree(buffer, mem_location); 
 }
 
-void CDAM_VecGetArray(CDAM_Vec* vec, value_type** array) {
+void CdamVecGetArray(CdamVec* vec, value_type** array) {
 	index_type i;
-	*array = CDAM_VecRawPtr(vec, 0);
-	for(i = 0; i < CDAM_VecNumComponents(vec); i++) {
-		CDAM_VecRawPtr(vec, i) = NULL;
+	*array = CdamVecRawPtr(vec, 0);
+	for(i = 0; i < CdamVecNumComponents(vec); i++) {
+		CdamVecRawPtr(vec, i) = NULL;
 	}
 }
-void CDAM_VecRestoreArray(CDAM_Vec* vec, value_type** array) {
+void CdamVecRestoreArray(CdamVec* vec, value_type** array) {
 	index_type i, bs;
-	index_type jlower = CDAM_VecPartitionLower(vec);
-	index_type jupper = CDAM_VecPartitionUpper(vec);
-	for(i = 0; i < CDAM_VecNumComponents(vec); i++) {
-		bs = CDAM_VecComponentSize(vec)[i];
-		CDAM_VecRawPtr(vec, i) = *array + bs * (jupper - jlower);
+	index_type jlower = CdamVecPartitionLower(vec);
+	index_type jupper = CdamVecPartitionUpper(vec);
+	for(i = 0; i < CdamVecNumComponents(vec); i++) {
+		bs = CdamVecComponentSize(vec)[i];
+		CdamVecRawPtr(vec, i) = *array + bs * (jupper - jlower);
 	}
 	*array = NULL;
 }
 
-void CDAM_VecCopy(CDAM_Vec* src, CDAM_Vec* dest) {
+void CdamVecCopy(CdamVec* src, CdamVec* dest) {
 	value_type* src_array, *dest_array;
 	index_type len;
 	index_type i;
@@ -122,63 +117,160 @@ void CDAM_VecCopy(CDAM_Vec* src, CDAM_Vec* dest) {
 #endif
 
 	len = 0;
-	for(i = 0; i < CDAM_VecNumComponents(src); i++) {
-		len += CDAM_VecComponentSize(src)[i];
+	for(i = 0; i < CdamVecNumComponents(src); i++) {
+		len += CdamVecComponentSize(src)[i];
 	}
-	len *= (CDAM_VecPartitionUpper(src) - CDAM_VecPartitionLower(src));
+	len *= (CdamVecPartitionUpper(src) - CdamVecPartitionLower(src));
 
-	CDAM_VecGetArray(src, &src_array);
-	CDAM_VecGetArray(dest, &dest_array);
+	CdamVecGetArray(src, &src_array);
+	CdamVecGetArray(dest, &dest_array);
 
 	hypre_TMemcpy(dest_array, src_array, value_type, len, mem_location, mem_location);
 
-	CDAM_VecRestoreArray(src, &src_array);
-	CDAM_VecRestoreArray(dest, &dest_array);
+	CdamVecRestoreArray(src, &src_array);
+	CdamVecRestoreArray(dest, &dest_array);
 }
 
-void CDAM_VecAssemble(CDAM_Vec* vec) {
+void CdamVecAssemble(CdamVec* vec) {
 	index_type i;
-	for(i = 0; i < CDAM_VecNumComponents(vec); i++) {
-		HYPRE_IJVectorAssemble(CDAM_VecSub(vec)[i]);
+	for(i = 0; i < CdamVecNumComponents(vec); i++) {
+		HYPRE_IJVectorAssemble(CdamVecSub(vec)[i]);
 	}
 }
 
-void CDAM_VecAXPY(value_type alpha, CDAM_Vec* x, CDAM_Vec* y) {
+void CdamVecAXPY(value_type alpha, CdamVec* x, CdamVec* y) {
 	index_type i;
-	for(i = 0; i < CDAM_VecNumComponents(x); i++) {
-		hypre_SeqVectorAxpy(alpha, CDAM_VecSubSeqVec(x, i), CDAM_VecSubSeqVec(y, i));
+	for(i = 0; i < CdamVecNumComponents(x); i++) {
+		hypre_SeqVectorAxpy(alpha, CdamVecSubSeqVec(x, i), CdamVecSubSeqVec(y, i));
 	}
 }
 
-void CDAM_VecScale(CDAM_Vec* x, value_type alpha) {
+void CdamVecScale(CdamVec* x, value_type alpha) {
 	index_type i;
-	for(i = 0; i < CDAM_VecNumComponents(x); i++) {
-		hypre_SeqVectorScale(alpha, CDAM_VecSubSeqVec(x, i));
+	for(i = 0; i < CdamVecNumComponents(x); i++) {
+		hypre_SeqVectorScale(alpha, CdamVecSubSeqVec(x, i));
 	}
 }
 
-void CDAM_VecZero(CDAM_Vec* x) {
+void CdamVecZero(CdamVec* x) {
 	index_type i;
-	for(i = 0; i < CDAM_VecNumComponents(x); i++) {
-		hypre_SeqVectorSetConstantValues(CDAM_VecSubSeqVec(x, i), (value_type)0.0);
+	for(i = 0; i < CdamVecNumComponents(x); i++) {
+		hypre_SeqVectorSetConstantValues(CdamVecSubSeqVec(x, i), (value_type)0.0);
 	}
 }
 
-void CDAM_VecInnerProd(CDAM_Vec* x, CDAM_Vec* y, value_type* result) {
+void CdamVecInnerProd(CdamVec* x, CdamVec* y, value_type* result, value_type* separated_results) {
 	index_type i;
 	value_type local_result = 0.0;
-	for(i = 0; i < CDAM_VecNumComponents(x); i++) {
-		local_result += hypre_SeqVectorInnerProd(CDAM_VecSubSeqVec(x, i), CDAM_VecSubSeqVec(y, i));
+	value_type local_separated_results[CDAM_VEC_MAX_NUM_COMPONENTS];
+	for(i = 0; i < CdamVecNumComponents(x); i++) {
+		local_separated_results[i] = hypre_SeqVectorInnerProd(CdamVecSubSeqVec(x, i), CdamVecSubSeqVec(y, i));
+		local_result += local_separated_results[i];
 	}
-	hypre_MPI_Allreduce(&local_result, result, 1, HYPRE_MPI_REAL,
-                       hypre_MPI_SUM, CDAM_VecComm(x));
+	if(result) {
+		hypre_MPI_Allreduce(&local_result, result, 1, HYPRE_MPI_REAL,
+												 hypre_MPI_SUM, CdamVecComm(x));
+	}
+	if(separated_results) {
+		hypre_MPI_Allreduce(local_separated_results, separated_results, 
+												CdamVecNumComponents(x), HYPRE_MPI_REAL,
+												hypre_MPI_SUM, CdamVecComm(x));
+	}
 }
 
-void CDAM_VecNorm(CDAM_Vec* x, value_type* result) {
-	CDAM_VecInnerProd(x, x, result);
-	*result = sqrt(*result);
+void CdamVecNorm(CdamVec* x, value_type* result, value_type* separated_results) {
+	index_type i;
+	CdamVecInnerProd(x, x, result, separated_results);
+	if(result) {
+		*result = sqrt(*result);
+	}
+	if(separated_results) {
+		for(i = 0; i < CdamVecNumComponents(x); i++) {
+			separated_results[i] = sqrt(separated_results[i]);
+		}
+	}
 }
 
-void CDAM_VecView(CDAM_Vec* x, FILE* ostream) {}
+void CdamVecView(CdamVec* x, FILE* ostream) {}
+
+void CdamVecLayoutCreate(CdamVecLayout** layout, void* config) {
+	*layout = CdamTMalloc(CdamVecLayout, 1, HOST_MEM);
+	CdamMemset(*layout, 0, sizeof(CdamVecLayout), HOST_MEM);
+	cJSON* json = (cJSON*)config;
+	b32 has_ns = JSONGetItem(json, "VMS.IncompressibleNS.Included")->valuedouble > 0.0;
+	b32 has_t = JSONGetItem(json, "VMS.Temperature.Included")->valuedouble > 0.0;
+	b32 has_phi = JSONGetItem(json, "VMS.Levelset.Included")->valuedouble > 0.0;
+
+	index_type num_components = 0;
+
+	if(has_ns) {
+		num_components++;
+		CdamVecLayoutComponentOffset(*layout)[num_components] = CdamVecLayoutComponentOffset(*layout)[num_components - 1] + 4;
+	}
+
+	if(has_t) {
+		num_components++;
+		CdamVecLayoutComponentOffset(*layout)[num_components] = CdamVecLayoutComponentOffset(*layout)[num_components - 1] + 1;
+	}
+
+	if(has_phi) {
+		num_components++;
+		CdamVecLayoutComponentOffset(*layout)[num_components] = CdamVecLayoutComponentOffset(*layout)[num_components - 1] + 1;
+	}
+
+	CdamVecLayoutNumComponents(*layout) = num_components;
+
+}
+
+void CdamVecLayoutDestroy(CdamVecLayout* layout) {
+	CdamFree(layout, sizeof(CdamVecLayout), HOST_MEM);
+}
+
+void CdamVecLayoutSetup(CdamVecLayout* layout, void* mesh) {
+	CdamMesh* mesh3d = (CdamMesh*)mesh;
+	CdamVecLayoutNumOwned(layout) = CdamMeshLocalNodeEnd(mesh3d) - CdamMeshLocalNodeBegin(mesh3d);
+	CdamVecLayoutNumGhost(layout) = CdamMeshNumNode(mesh3d) - CdamVecLayoutNumOwned(layout);
+}
+
+void VecDot(void* x, void* y, void* layout, void* result, void* results) {
+	value_type* vx = (value_type*)x;
+	value_type* vy = (value_type*)y;
+	CdamVecLayout* lo = (CdamVecLayout*)layout;
+	value_type* r = (value_type*)result;
+	value_type* rs = (value_type*)results;
+
+	value_type local_result[CDAM_VEC_MAX_NUM_COMPONENTS];
+
+	index_type i, n = CdamVecLayoutNumComponents(lo);
+	index_type num_owned = CdamVecLayoutNumOwned(lo);
+	index_type num_ghost = CdamVecLayoutNumGhost(lo);
+	index_type num = num_owned + num_ghost;
+	index_type begin, end;
+	for(i = 0; i < n; i++) {
+		local_result[i] = 0.0;
+		begin = CdamVecLayoutComponentOffset(lo)[i];
+		end = CdamVecLayoutComponentOffset(lo)[i + 1];
+		BLAS_CALL(dot, CdamLayoutNumOwned(lo) * (end - begin),
+							vx + begin * num, 1,
+							vy + begin * num, 1, local_result);																
+	}
+	MPI_Allreduce(MPI_IN_PLACE, local_result, n, MPI_VALUE_TYPE, MPI_SUM, MPI_COMM_WORLD);
+
+	if(r) {
+		*r = 0.0;
+		for(i = 0; i < n; i++) {
+			*r += local_result[i];
+		}
+	}
+	if(rs) {
+		for(i = 0; i < n; i++) {
+			rs[i] = local_result[i];
+		}
+	}
+}
+
+void VecNorm(void* x, void* layout, void* result, void* results) {
+	VecDot(x, x, layout, result, results);
+}
 
 __END_DECLS__

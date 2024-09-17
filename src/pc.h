@@ -12,7 +12,7 @@ __BEGIN_DECLS__
  * y = x / diag(A)
  */
 
-enum PCType {
+enum CdamPCType {
 	PC_NONE = 0x0,
 	PC_JACOBI = 0x1,
 	PC_DECOMPOSITION = 0x2,
@@ -20,50 +20,50 @@ enum PCType {
 	PC_CUSTOM = 0x4
 };
 
-typedef enum PCType PCType;
+typedef enum CdamPCType CdamPCType;
 
-typedef struct PC PC;
-typedef struct PCNone PCNone;
-typedef struct PCJacobi PCJacobi;
-typedef struct PCDecomposition PCDecomposition;
-typedef struct PCAMGX PCAMGX;
+typedef struct CdamPC CdamPC;
+typedef struct CdamPCNone CdamPCNone;
+typedef struct CdamPCJacobi CdamPCJacobi;
+typedef struct CdamPCDecomposition CdamPCDecomposition;
+typedef struct CdamPCAMGX CdamPCAMGX;
 
 
-typedef struct PCOps PCOps;
-struct PCOps {
-	void (*setup)(PC*);
-	void (*destroy)(PC*);
+typedef struct CdamPCOps CdamPCOps;
+struct CdamPCOps {
+	void (*setup)(CdamPC*, void*);
+	void (*destroy)(CdamPC*);
 
-	void (*apply)(PC*, value_type*, value_type*);
+	void (*apply)(CdamPC*, value_type*, value_type*);
 };
 
 
-struct PC {
-	PCType type;
+struct CdamPC {
+	CdamPCType type;
 	void* mat;
-	PCOps op[1];
+	CdamPCOps op[1];
 	void* data;
-	void* cublas_handle;
 };
 
-struct PCNone {
+struct CdamPCNone {
 	index_type n;
+	value_type w;
 };
 
 
-struct PCJacobi {
+struct CdamPCJacobi {
 	index_type n;
 	index_type bs;
 	void* diag;
 };
 
-struct PCDecomposition {
+struct CdamPCDecomposition {
 	index_type n_sec;
 	index_type* offset;
-	PC** pc;
+	CdamPC** pc;
 };
 
-struct PCAMGX {
+struct CdamPCAMGX {
 #ifdef USE_AMGX
 	AMGX_config_handle cfg;
 	AMGX_matrix_handle A;
@@ -75,17 +75,17 @@ struct PCAMGX {
 #endif
 };
 
-struct PCCustom {
+struct CdamPCCustom {
 	void* ctx;
 };
 
-PC* PCCreateNone(Matrix* mat, index_type n);
-PC* PCCreateJacobi(Matrix* mat, index_type bs, void* cublas_handle);
-PC* PCCreateDecomposition(Matrix* mat, index_type n, const index_type* offset, void* cublas_handle);
-PC* PCCreateAMGX(Matrix* mat, void* options);
-void PCSetup(PC* pc);
-void PCDestroy(PC* pc);
-void PCApply(PC* pc, f64* x, f64* y);
+CdamPC* CdamPCCreateNone(Matrix* mat, index_type n);
+CdamPC* CdamPCCreateJacobi(Matrix* mat, index_type bs, void* cublas_handle);
+CdamPC* CdamPCCreateDecomposition(Matrix* mat, index_type n, const index_type* offset, void* cublas_handle);
+CdamPC* CdamPCCreateAMGX(Matrix* mat, void* options);
+void CdamPCSetup(CdamPC* pc, void* config);
+void CdamPCDestroy(CdamPC* pc);
+void CdamPCApply(CdamPC* pc, f64* x, f64* y);
 
 
 __END_DECLS__
