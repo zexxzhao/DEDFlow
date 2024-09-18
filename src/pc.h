@@ -14,13 +14,23 @@ __BEGIN_DECLS__
 
 enum CdamPCType {
 	PC_NONE = 0x0,
-	PC_JACOBI = 0x1,
-	PC_DECOMPOSITION = 0x2,
-	PC_AMGX = 0x3,
-	PC_CUSTOM = 0x4
+	PC_RICHARDSON = 0x1,
+	PC_JACOBI = 0x2,
+	PC_DECOMPOSITION = 0x4,
+	PC_CUSTOM = 0x8
 };
 
 typedef enum CdamPCType CdamPCType;
+
+enum CdamPCDecomposeType {
+	PC_DECOMPOSE_ADDITIVE = 0x0,
+	PC_DECOMPOSE_MULTIPLICATIVE = 0x1,
+	PC_DECOMPOSE_SCHUR_FULL = 0x2,
+	PC_DECOMPOSE_SCHUR_DIAG = 0x3,
+	PC_DECOMPOSE_SCHUR_UPPER = 0x4
+};
+
+typedef enum CdamPCDecomposeType CdamPCDecomposeType;
 
 typedef struct CdamPC CdamPC;
 typedef struct CdamPCNone CdamPCNone;
@@ -37,6 +47,35 @@ struct CdamPCOps {
 	void (*apply)(CdamPC*, value_type*, value_type*);
 };
 
+
+struct CdamPC {
+
+	CdamPC* next;
+	CdamPC* prev;
+	CdamPC* child;
+
+	CdamPCOps op[1];
+	CdamPCType type;
+
+	void* ksp;
+	void* mat;
+
+	index_type n;
+
+	/* Richardson */
+	value_type omega;
+
+	/* Jacobi */
+	index_type bs;
+	value_type* diag;
+
+	/* Decomposition */
+	index_type n_sec;
+	index_type* offset;
+
+	/* Custom */
+	void* ctx;
+};
 
 struct CdamPC {
 	CdamPCType type;

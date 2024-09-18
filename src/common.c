@@ -10,8 +10,10 @@
 __BEGIN_DECLS__
 
 struct GlobalCtx {
+#ifdef CDAM_USE_CUDA
 	cusparseHandle_t cusparse_handle;	
 	cublasHandle_t cublas_handle;
+#endif
 };
 typedef struct GlobalCtx GlobalCtx;
 

@@ -5,21 +5,29 @@
 
 #ifdef CDAM_USE_CUDA
 #include <cublas_v2.h>
-#define BLASTrans cublasOperation_t
+typedef cublasOperation_t BLASTrans;
 #define BLAS_T CUBLAS_OP_T
 #define BLAS_N CUBLAS_OP_N
 #define BLAS_C CUBLAS_OP_C
 
-#define BLASUpLo cublasFillMode_t
+typedef cublasFillMode_t BLASUpLo;
 #define BLAS_UP CUBLAS_FILL_MODE_UPPER
 #define BLAS_LO CUBLAS_FILL_MODE_LOWER
 
-#define BLASDiag cublasDiagType_t
+typedef cublasDiagType_t BLASDiag;
 #define BLAS_U CUBLAS_DIAG_UNIT
 #define BLAS_NU CUBLAS_DIAG_NON_UNIT
 
-#else
-#include <cblas.h>
+#include <cusparse.h>
+typedef cusparseOperation_t SPTrans;
+#define SP_N CUSPARSE_OPERATION_NON_TRANSPOSE
+#define SP_T CUSPARSE_OPERATION_TRANSPOSE
+#define SP_C CUSPARSE_OPERATION_CONJUGATE_TRANSPOSE
+typedef cusparseMatDescr_t SPMatDesc;
+
+
+#elif defined(CDAM_USE_MKL)
+#include "mkl.h"
 #define BLASTrans CBLAS_TRANSPOSE
 #define BLAS_T CblasTrans
 #define BLAS_N CblasNoTrans
@@ -33,6 +41,15 @@
 #define BLAS_U CblasUnit
 #define BLAS_NU CblasNonUnit
 
+#include "mkl_spblas.h"
+typedef sparse_operation_t SPTrans;
+#define SP_N SPARSE_OPERATION_NON_TRANSPOSE
+#define SP_T SPARSE_OPERATION_TRANSPOSE
+#define SP_C SPARSE_OPERATION_CONJUGATE_TRANSPOSE
+typedef sparse_matrix_t SPMatDesc;
+
+#else 
+#error "No BLAS library specified"
 #endif
 
 __BEGIN_DECLS__
@@ -78,6 +95,12 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
 void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
+
+/* Sparse BLAS */
+
+void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize);
+void dspmvPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
+void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
 
 __END_DECLS__
 

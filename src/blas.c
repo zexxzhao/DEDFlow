@@ -7,6 +7,10 @@ static cublasHandle_t GetCublasHandle() {
 	return *(cublasHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUBLAS_HANDLE);
 }
 
+static cusparseHandle_t GetCusparseHandle() {
+	return *(cusparseHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUSPARSE_HANDLE);
+}
+
 /* BLAS Level 1 */
 void dscal(int n, double alpha, double *x, int incx) {
 	cublasDscal(GetCublasHandle(), n, &alpha, x, incx);	
@@ -90,10 +94,56 @@ void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int 
 	cublasDgetriBatched(GetCublasHandle(), n, Aarray, lda, PivotArray, infoArray, batchSize);
 }
 
+/* Sparse BLAS */
+void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize) {
+	cusparseDnVecDescr_t xDescr, yDescr;
+	i64 n_row, n_col;
+	cusparseSpMatGetSize(matA, &n_row, &n_col);
+	cusparseCreateDnVec(&xDescr, n_col, x);
+	cusparseCreateDnVec(&yDescr, n_row, y);
+
+	cusparseSPMV_bufferSize(GetCusparseHandle(), trans,
+													&alpha, matA, xDescr, &beta, yDescr,
+													CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, bufferSize);
+
+	cusparseDestroyDnVec(xDescr);
+	cusparseDestroyDnVec(yDescr);
+}
+
+void dspmvPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer) {
+#if defined(CUSPARSE_VERSION) && CUSPARSE_VERSION > 12300
+	cusparseDnVecDescr_t xDescr, yDescr;
+	i64 n_row, n_col;
+	cusparseSpMatGetSize(matA, &n_row, &n_col);
+	cusparseCreateDnVec(&xDescr, n_col, x);
+	cusparseCreateDnVec(&yDescr, n_row, y);
+
+	cusparseSPMV_preprocess(GetCusparseHandle(), trans,
+													&alpha, matA, xDescr, &beta, yDescr,
+													CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer);
+
+	cusparseDestroyDnVec(xDescr);
+	cusparseDestroyDnVec(yDescr);
+#endif
+}
+
+void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer) {
+	cusparseDnVecDescr_t xDescr, yDescr;
+	i64 n_row, n_col;
+	cusparseSpMatGetSize(matA, &n_row, &n_col);
+	cusparseCreateDnVec(&xDescr, n_col, x);
+	cusparseCreateDnVec(&yDescr, n_row, y);
+
+	cusparseSPMV(GetCusparseHandle(), trans,
+							 &alpha, matA, xDescr, &beta, yDescr,
+							 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer);
+
+	cusparseDestroyDnVec(xDescr);
+	cusparseDestroyDnVec(yDescr);
+}
 
 
-#else
-#include <cblas.h>
+#elif defined(CDAM_USE_MKL)
 
 /* BLAS Level 1 */
 void dscal(int n, double alpha, double *x, int incx) {
@@ -185,6 +235,30 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 	for (i = 0; i < batchCount; i++) {
 		dgemm(transA, transB, m, n, k, alpha, A + i * strideA, lda, B + i * strideB, ldb, beta, C + i * strideC, ldc);
 	}
+}
+
+/* LAPACK */
+void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
+	int i;
+	for (i = 0; i < batchSize; i++) {
+		infoArray[i] = LAPACKE_dgetrf(LAPACK_COL_MAJOR, n, n, Aarray[i], lda, PivotArray + i * n);
+	}
+}
+
+void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
+	int i;
+	for (i = 0; i < batchSize; i++) {
+		infoArray[i] = LAPACKE_dgetri(LAPACK_COL_MAJOR, n, Aarray[i], lda, PivotArray + i * n);
+	}
+}
+
+/* Sparse BLAS */
+void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize) {
+	*bufferSize = 0;
+}
+
+void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer) {
+	mkl_sparse_d_mv(trans, alpha, matA, x, beta, y);
 }
 
 #endif /* CDAM_USE_CUDA */
