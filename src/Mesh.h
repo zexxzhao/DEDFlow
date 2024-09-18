@@ -5,10 +5,10 @@
 
 #include <mpi.h>
 #include "common.h"
+#include "h5util.h"
 #include "color.h"
 
 __BEGIN_DECLS__
-typedef struct H5FileInfo H5FileInfo;
 
 typedef struct CdamMesh CdamMesh;
 struct CdamMesh {

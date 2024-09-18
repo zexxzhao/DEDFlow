@@ -191,7 +191,7 @@ void* GlobalContextGet(GlobalContextType type);
 	} while (0)
 
 
-#elif defined(CDAM_USE_OPENBLAS)
+#else
 #include <cblas.h>
 #include <lapacke.h>
 

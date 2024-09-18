@@ -5,6 +5,8 @@
 
 #include "alloc.h"
 #include "h5util.h"
+#include "indexing.h"
+#include "partition.h"
 #include "Mesh.h"
 
 
@@ -58,7 +60,7 @@ static void LoadCoord(H5FileInfo* h5f, const char* group_name, index_type num[],
 
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/xg", group_name);
 	*coord = CdamTMalloc(value_type, num[0] * 3, HOST_MEM);
-	H5ReadDataset(h5f, dataset_name, *coord);
+	H5ReadDatasetVal(h5f, dataset_name, *coord);
 }
 
 static void LoadElementConnectivity(H5FileInfo* h5f, const char* group_name, index_type num[], index_type** ien) {
@@ -195,6 +197,7 @@ static int QsortCmpNpart(const void* a, const void* b) {
 void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	index_type i;
 	int rank, size;
+	char dataset_name[256];
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	index_type* epart_count = NULL;
@@ -354,7 +357,8 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	}
 
 	CdamMeshCoord(mesh) = CdamTMalloc(value_type, num[0] * 3, HOST_MEM);
-	H5DatasetReadValIndexed(h5f, group_name, "xg", num[0],
+	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/xg", group_name);
+	H5ReadDatasetValIndexed(h5f, group_name, num[0],
 													block_len, mesh->nodal_map_l2g_interior, CdamMeshCoord(mesh));
 
 	CdamFree(block_len, sizeof(index_type) * num[0], HOST_MEM);
@@ -400,6 +404,7 @@ void CdamMeshToDevice(CdamMesh *mesh) {
 }
 
 void CdamMeshColor(CdamMesh* mesh, Arena scratch) {
+	index_type i;
 	/* Assign color to each element */
 	index_type num_elem = mesh->num[1] + mesh->num[2] + mesh->num[3];
 	mesh->color = CdamTMalloc(index_type, num_elem, DEVICE_MEM);
@@ -411,13 +416,18 @@ void CdamMeshColor(CdamMesh* mesh, Arena scratch) {
 	mesh->color_batch_offset[0] = 0;
 	mesh->color_batch_ind = CdamTMalloc(index_type, num_elem, HOST_MEM);
 
-	for(index_type i = 0; i < max_color; ++i) {
-		index_type count = CountValueI(mesh->color, num_elem, i);
+	for(i = 0; i < max_color; ++i) {
+		index_type count = CountValueI(mesh->color, num_elem, i, scratch);
 		mesh->color_batch_offset[i + 1] = mesh->color_batch_offset[i] + count;
-		FilterValueI(mesh->color, num_elem, i, mesh->color_batch_ind + mesh->color_batch_offset[i]);	
+		// FilterValueI(mesh->color, num_elem, i, mesh->color_batch_ind + mesh->color_batch_offset[i]);	
 	}
-	MoveToDevice((void**)&(mesh->color), sizeof(index_type) * num_elem);
+	/* iota to mesh->color_batch_ind */
+	for(i = 0; i < num_elem; ++i) {
+		mesh->color_batch_ind[i] = i;
+	}
 	MoveToDevice((void**)&(mesh->color_batch_ind), sizeof(index_type) * num_elem);
+	/* Sort the element id by color */
+	SortByKeyI(mesh->color, mesh->color_batch_ind, num_elem, scratch);
 }
 
 

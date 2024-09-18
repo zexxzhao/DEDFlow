@@ -3,7 +3,6 @@
 
 #include <mpi.h>
 #include <strings.h>
-#include <_hypre_IJ_mv.h>
 #include "common.h"
 
 __BEGIN_DECLS__
@@ -16,17 +15,12 @@ enum CdamVecType {
 };
 typedef enum CdamVecType CdamVecType;
 
-typedef struct hypre_IJVector_struct hypre_IJVector;
-typedef struct hypre_IJVector_struct* HYPRE_IJVector;
-typedef struct hypre_ParVector_struct hypre_ParVector;
-typedef struct hypre_ParVector_struct* HYPRE_ParVector;
 typedef struct CdamVec CdamVec;
 struct CdamVec {
 	MPI_Comm comm;
 	index_type partition[3];
 	index_type num_components;
 	index_type bs[CDAM_VEC_MAX_NUM_COMPONENTS];
-	HYPRE_IJVector vecs[CDAM_VEC_MAX_NUM_COMPONENTS];
 	
 };
 

@@ -1,9 +1,9 @@
 #include <mpi.h>
 #include "json.h"
 #include "alloc.h"
-#include "vec.h"
 
 #include "Mesh.h"
+#include "vec.h"
 #include "NewtonSolver.h"
 
 void CdamKrylovSolve(CdamKrylov* solver, void* A, void* x, void* b); 

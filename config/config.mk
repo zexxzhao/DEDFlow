@@ -16,6 +16,7 @@ ifeq ($(origin HYPRE_DIR), undefined)
 $(warning HYPRE_DIR is not set)
 endif
 
+
 ifeq ($(origin CUDA_ROOT), undefined)
 CUDA_DIR=/usr/local/cuda
 else
@@ -54,7 +55,7 @@ FLAGS= -fPIC -Wall -Wextra \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			-Wno-deprecated-declarations
-DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE -DCDAM_USE_CUDA # -DDBG_TET
+DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE # -DCDAM_USE_CUDA # -DDBG_TET
 CC=mpicc
 CFLAGS=-std=c99 $(FLAGS) $(DEFINES) $(C_OPT) # -fno-omit-frame-pointer
 
@@ -63,6 +64,11 @@ LIB=-lm
 
 INC+=-I$(HDF5_ROOT)/include -I$(HYPRE_DIR)/include
 LIB+=-L$(HDF5_ROOT)/lib -lhdf5 -L$(HYPRE_DIR)/lib -lHYPRE
+
+ifndef CDAM_USE_CUDA
+INC+=-I$(BLAS_DIR)/include -I$(LAPACK_DIR)/include
+LIB+=-L$(BLAS_DIR)/lib -lblas -L$(LAPACK_DIR)/lib -llapack
+endif
 
 # if MK_METIS_DIR is not set, then METIS will not be used
 ifneq ($(MK_METIS_DIR),)
@@ -77,6 +83,8 @@ INC+=-I$(AMGX_DIR)/include
 LIB+=-L$(AMGX_DIR)/lib -lamgx -lcusolver -lnvToolsExt
 endif
 
+ifdef CDAM_USE_CUDA
+DEFINES+= -DCDAM_USE_CUDA
 NVCC=nvcc
 ifndef CU_ARCH # if not set, use the default value
 CU_ARCH=$(shell __nvcc_device_query)
@@ -92,6 +100,12 @@ NVCCFLAGS+= --generate-code arch=compute_${CU_ARCH},code=sm_${CU_ARCH} --compile
 endif
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand 
+else
+NVCC=$(CC)
+NVCCFLAGS=$(CFLAGS)
+CU_INC=$(INC)
+CU_LIB=$(LIB)
+endif
 
 LINKER=mpicxx
 

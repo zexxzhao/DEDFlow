@@ -10,10 +10,10 @@
 
 __BEGIN_DECLS__
 
-typedef struct CdamMesh CdamMesh;
-void ColorMeshTet(CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
-void ColorMeshPrism(CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
-void ColorMeshHex(CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
+struct CdamMesh;
+void ColorMeshTet(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
+void ColorMeshPrism(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
+void ColorMeshHex(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
 
 index_type GetMaxColor(const index_type* color, index_type num_elem);
 __END_DECLS__
