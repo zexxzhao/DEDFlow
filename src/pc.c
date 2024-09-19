@@ -353,41 +353,41 @@ static void PCBuildPrivate(CdamPC* pc, void* A, void* config) {
 
 }
 
+
 static void PCApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
+
+	index_type displ = pc->displ;
+	index_type count = pc->count;
+
 	if(pc->type == PC_TYPE_RICHARDSON) {
-		CdamMemcpy(y, x, pc->n * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
-		dscal(pc->n, pc->omega, y, 1);
+		CdamMemcpy(y + displ, x + displ, count * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+		dscal(count, pc->omega, y, 1);
 	}
 	else if(pc->type == PC_TYPE_JACOBI) {
 		int bs = pc->bs;
 		if(bs == 1) {
-			VecPointwiseMult(x, pc->diag, y, pc->n);
+			VecPointwiseMult(x + displ, pc->diag, y + displ, count);
 		}
 		else if(bs > 1) {
 			dgemvStridedBatched(BLAS_N, bs, bs, 1.0,
 													pc->diag, bs, bs * bs,
-													x, 1, bs,
-													y, 1, bs,
-													pc->n / bs);
+													x + displ, 1, bs,
+													y + displ, 1, bs,
+													count / bs);
 		}
 	}
 	else if(pc->type == PC_TYPE_DECOMPOSITION) {
-		index_type i;
-		index_type n_sec = pc->n_sec;
-		index_type* offset = pc->offset;
-		value_type* x_sec, *y_sec;
-		for(i = 0; i < n_sec; i++) {
-			x_sec = x + offset[i];
-			y_sec = y + offset[i];
-			PCApplyPrivate(pc->child[i], x_sec, y_sec);
-		}
+		PCApplyPrivate(pc->child, x, y);
+	}
+	else if(pc->type == PC_TYPE_KSP) {
+		CdamKrylovSolve((CdamKrylov*)pc->ksp, (Matrix*)pc->mat, y + displ, x + displ);
 	}
 	else if(pc->type == PC_TYPE_CUSTOM) {
 		pc->op[0]->apply(pc, x, y);
 	}
-	else {
-		fprintf(stderr, "Unknown preconditioner type\n");
-		exit(1);
+
+	if(pc->next) {
+		PCApplyPrivate(pc->next, x, y);
 	}
 }
 

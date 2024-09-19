@@ -17,7 +17,8 @@ enum CdamPCType {
 	PC_RICHARDSON = 0x1,
 	PC_JACOBI = 0x2,
 	PC_DECOMPOSITION = 0x4,
-	PC_CUSTOM = 0x8
+	PC_KSP = 0x8,
+	PC_CUSTOM = 0x10,
 };
 
 typedef enum CdamPCType CdamPCType;
@@ -50,17 +51,16 @@ struct CdamPCOps {
 
 struct CdamPC {
 
-	CdamPC* next;
 	CdamPC* prev;
-	CdamPC* child;
+	CdamPC* next;
 
-	CdamPCOps op[1];
 	CdamPCType type;
 
-	void* ksp;
 	void* mat;
 
 	index_type n;
+	index_type displ;
+	index_type count;
 
 	/* Richardson */
 	value_type omega;
@@ -70,10 +70,13 @@ struct CdamPC {
 	value_type* diag;
 
 	/* Decomposition */
-	index_type n_sec;
-	index_type* offset;
+	CdamPC* child;
+
+	/* KSP */
+	void* ksp;
 
 	/* Custom */
+	CdamPCOps op[1];
 	void* ctx;
 };
 
