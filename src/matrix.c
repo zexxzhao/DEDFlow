@@ -211,6 +211,12 @@ static void MatrixCSRMatVecWithMask(Matrix* mat, value_type* x, value_type* y,
 	MatrixCSRAMVPBYWithMask(mat, alpha, x, beta, y, left_mask, right_mask);
 }
 
+static void MatrixCSRSubmatVec(Matrix* mat, index_type i, index_type *ix,
+															 index_type j, index_type *jx,
+															 value_type* x, value_type* y) {
+	ASSERT(0 && "Not implemented");
+}
+
 /* diag = diag(A) */
 static void MatrixCSRGetDiag(Matrix* mat, value_type* diag, index_type bs) {
 	MatrixCSR* mat_csr = (MatrixCSR*)mat->data;
@@ -528,6 +534,47 @@ static void MatrixFSMatVecWithMask(Matrix* mat, value_type* x, value_type* y,
 	MatrixFSAMVPBYWithMask(mat, alpha, x, beta, y, left_mask, right_mask);
 }
 
+static void MatrixFSSubmatVec(Matrix* mat, index_type i, index_type *ix,
+															index_type j, index_type *jx,
+															value_type *x, value_type *y) {
+	MatrixFS* mat_fs = (MatrixFS*)mat->data;
+	index_type n_offset = mat_fs->n_offset;
+	const index_type* offset = mat_fs->offset;
+	index_type num_row = mat_fs->spy1x1->num_row;
+	index_type num_col = mat_fs->spy1x1->num_col;
+	index_type ik = 0, jk = 0;
+	index_type bs;
+	value_type *ytmp, *xtmp;
+
+	Matrix** mat_list = mat_fs->mat;
+
+	/* Zero out y[:] */
+
+	bs = 0;
+	ytmp = y;
+	for(ik = 0; ik < j; ik++) {
+		bs = offset[ix[ik + 1]] - offset[ix[ik]];
+		ytmp += bs * num_row;
+		CdamMemset(ytmp, 0, num_row * bs * sizeof(value_type));
+	}
+
+
+	ytmp = y;
+	for(ik = 0; ik < i; ++ik) {
+		ytmp += (offset[ix[ik + 1]] - offset[ix[ik]]) * num_row;
+
+		xtmp = x;
+		for(jk = 0; jk < j; ++jk) {
+			if(mat_list[ix[ik] * n_offset + jx[jk]] == NULL) {
+				continue;
+			}
+			xtmp += (offset[jx[jk + 1]] - offset[jx[jk]]) * num_col;
+			MatrixMatVec(mat_list[ix[ik] * n_offset + jx[jk]], xtmp, ytmp);
+		}
+	}
+}
+
+
 static void MatrixFSGetDiag(Matrix* mat, value_type* diag, index_type bs) {
 	MatrixFS* mat_fs = (MatrixFS*)mat->data;
 	index_type n_offset = mat_fs->n_offset;
@@ -671,6 +718,7 @@ Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void* ctx) {
 	mat->op->amvpby_mask = MatrixCSRAMVPBYWithMask;
 	mat->op->matvec = MatrixCSRMatVec;
 	mat->op->matvec_mask = MatrixCSRMatVecWithMask;
+	mat->op->submatvec = MatrixCSRSubmatVec;
 
 	mat->op->get_diag = MatrixCSRGetDiag;
 
@@ -710,6 +758,7 @@ Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void* 
 	mat->op->amvpby_mask = MatrixFSAMVPBYWithMask;
 	mat->op->matvec = MatrixFSMatVec;
 	mat->op->matvec_mask = MatrixFSMatVecWithMask;
+	mat->op->submatvec = MatrixFSSubmatVec;
 
 	mat->op->get_diag = MatrixFSGetDiag;
 
@@ -786,6 +835,17 @@ void MatrixMatVecWithMask(Matrix* mat, value_type* x, value_type* y, value_type*
 	ASSERT(x && "x is NULL");
 	ASSERT(y && "y is NULL");
 	MATRIX_CALL(mat, matvec_mask, x, y, left_mask, right_mask);
+}
+
+void MatrixSubmatVec(Matrix* mat, index_type i, index_type *ix,
+										 index_type j, index_type *jx,
+										 value_type *x, value_type *y) {
+	ASSERT(mat && "Matrix is NULL");
+	ASSERT(ix && "ix is NULL");
+	ASSERT(jx && "jx is NULL");
+	ASSERT(x && "x is NULL");
+	ASSERT(y && "y is NULL");
+	MATRIX_CALL(mat, submatvec, i, ix, j, jx, x, y);
 }
 
 void MatrixGetDiag(Matrix* mat, value_type* diag, index_type bs) {

@@ -4,6 +4,41 @@
 #include "pc.h"
 
 __BEGIN_DECLS__
+struct CdamPCNone {
+	index_type n;
+	value_type w;
+};
+
+
+struct CdamPCJacobi {
+	index_type n;
+	index_type bs;
+	void* diag;
+};
+
+struct CdamPCDecomposition {
+	index_type n_sec;
+	index_type* offset;
+	CdamPC** pc;
+};
+
+struct CdamPCAMGX {
+#ifdef USE_AMGX
+	AMGX_config_handle cfg;
+	AMGX_matrix_handle A;
+	AMGX_vector_handle x;
+	AMGX_vector_handle y;
+	AMGX_solver_handle solver;
+	AMGX_resources_handle rsrc;
+	AMGX_Mode mode;
+#endif
+};
+
+struct CdamPCCustom {
+	void* ctx;
+};
+
+
 /* PCXXXAlloc allocte the space on memory */
 /* PCXXXSetup fill the space with the data */
 /* PCXXXApply apply the preconditioner */
@@ -335,6 +370,9 @@ static void PCBuildPrivate(CdamPC* pc, void* A, void* config) {
 	CdamMemset(pc, 0, sizeof(CdamPC), HOST_MEM);
 	pc->mat = A;
 
+	pc->displ = JSONGetItem(json, "Displ")->valueint;
+	pc->count = JSONGetItem(json, "Count")->valueint;
+
 	if(streq_c(JSONGetItem(json, "Type")->valuestring, "Richardson")) {
 		pc->type = PC_TYPE_RICHARDSON;
 		pc->omega = JSONGetItem(json, "omega")->valuedouble;
@@ -342,13 +380,70 @@ static void PCBuildPrivate(CdamPC* pc, void* A, void* config) {
 	else if(streq_c(JSONGetItem(json, "Type")->valuestring, "Jacobi")) {
 		pc->type = PC_TYPE_JACOBI;
 		pc->bs = JSONGetItem(json, "bs")->valueint;
-		if(!streq_c(JSONGetItem(json, "LinearSolver.Type")->valuestring, "None")) {
-			CdamKrylovCreate(A, JSONGetItem(json, "LinearSolver"), &pc->ksp);
+		int bs = pc->bs;
+		pc->diag = CdamTMalloc(value_type, pc->count, DEVICE_MEM);
+		MatrixGetDiag(mat, pc->diag, bs);
+		if(bs == 1) {
+			VecPointwiseInv(pc->diag, pc->count);
+		}
+		else if(bs > 1) {
+			int num_node = pc->count / bs;
+			value_type* inv = CdamTMalloc(value_type, num_node * bs * bs, DEVICE_MEM);
+			value_type** input_batch = CdamTMalloc(value_type*, num_node * 2, DEVICE_MEM);
+			value_type** output_batch = input_batch + num_node;
+			int* info = CdamTMalloc(int, num_node * (bs + 1), DEVICE_MEM);
+			int* pivot = info + num_node;
+
+			value_type** h_batch = CdamTMalloc(value_type*, num_node, HOST_MEM);
+			for(int i = 0; i < num_node; i++) {
+				h_batch[i] = pc->diag + i * bs * bs;
+			}
+			CdamMemcpy(input_batch, h_batch, num_node * sizeof(value_type*), DEVICE_MEM, HOST_MEM);
+			for(int i = 0; i < num_node; i++) {
+				h_batch[i] = inv + i * bs * bs;
+			}
+			CdamMemcpy(output_batch, h_batch, num_node * sizeof(value_type*), DEVICE_MEM, HOST_MEM);
+			dgetrfBatched(bs, input_batch, bs, pivot, info, num_node);
+			dgetriBatched(bs, (const value_type* const*)input_batch, bs, pivot, output_batch, bs, info, num_node);
+			CdamMemcpy(pc->diag, inv, num_node * bs * bs * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+
+
+			CdamFree(inv, num_node * bs * bs * sizeof(value_type), DEVICE_MEM);
+			CdamFree(input_batch, num_node * sizeof(value_type*) * 2, DEVICE_MEM);
+			CdamFree(info, num_node * sizeof(int) * (bs + 1), DEVICE_MEM);
+			CdamFree(h_batch, num_node * sizeof(value_type*), HOST_MEM);
 		}
 	}
 	else if(streq_c(JSONGetItem(json, "Type")->valuestring, "FieldSplit")) {
 		pc->type = PC_TYPE_DECOMPOSITION;
+		if(streq_c(JSONGetItem(json, "FieldSplitType")->valuestring, "Additive")) {
+			pc->dtype = PC_DECOMPOSITION_ADDITIVE;
+		}
+		else if(streq_c(JSONGetItem(json, "FieldSplitType")->valuestring, "Multiplicative")) {
+			pc->dtype = PC_DECOMPOSITION_MULTIPLICATIVE;
+		}
+		else if(streq_c(JSONGetItem(json, "FieldSplitType")->valuestring, "SchurFull")) {
+			pc->dtype = PC_DECOMPOSITION_SCHUR_FULL;
+		}
+		else if(streq_c(JSONGetItem(json, "FieldSplitType")->valuestring, "SchurDiag")) {
+			pc->dtype = PC_DECOMPOSITION_SCHUR_DIAG;
+		}
+		else if(streq_c(JSONGetItem(json, "FieldSplitType")->valuestring, "SchurUpper")) {
+			pc->dtype = PC_DECOMPOSITION_SCHUR_UPPER;
+		}
+		else {
+			fprintf(stderr, "Unknown FieldSplitType\n");
+			exit(1);
+		}
 
+	}
+	else if(streq_c(JSONGetItem(json, "Type")->valuestring, "KSP")) {
+		pc->type = PC_TYPE_KSP;
+		/* TODO: Implement KSP */
+	}
+	else {
+		fprintf(stderr, "Unknown PC type\n");
+		exit(1);
 	}
 
 }
@@ -377,7 +472,48 @@ static void PCApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 		}
 	}
 	else if(pc->type == PC_TYPE_DECOMPOSITION) {
-		PCApplyPrivate(pc->child, x, y);
+		if(pc->dtype == PC_DECOMPOSITION_ADDITIVE) {
+			CdamPC* pc_head = pc->child;
+			while(pc_head) {
+				PCApplyPrivate(pc_head, x, pc_head->tmp);
+				pc_head = pc_head->next;
+			}
+			CdamMemset(y + displ, 0, count * sizeof(value_type), DEVICE_MEM);
+			pc_head = pc->child;
+			while(pc_head) {
+				daxpy(count, 1.0, pc_head->tmp, 1, y + displ, 1);
+				pc_head = pc_head->next;
+			}
+		}
+		else if(pc->dtype = PC_DECOMPOSITION_MULTIPLICATIVE) {
+			CdamPC* pc_head = pc->child;
+			CdamMemcpy(pc_head->tmp, x, pc_head->n * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+			while(pc_head) {
+				PCApplyPrivate(pc_head, pc_head->tmp, y);
+				pc_head = pc_head->next;
+				if(pc_head) {
+					CdamMemcpy(pc_head->tmp, y, pc_head->n * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+				}
+			}
+		}
+		else if(pc->dtype = PC_DECOMPOSITION_SCHUR_FULL
+						|| pc->dtype == PC_DECOMPOSITION_SCHUR_DIAG
+						|| pc->dtype == PC_DECOMPOSITION_SCHUR_UPPER) {
+			/* Solve [I inv{A}*B; O I] [y0, y1] = [x0, x1] */
+			if(pc->dtype & PC_DECOMPOSITION_SCHUR_UPPER) {
+				CdamMemcpy(pc->tmp, x, pc->n * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+				/* TODO: pc->tmp[displ:displ+count] -= Ap * B * pc->tmp[displ1:displ1+count1] */
+
+			}
+			/* Solve [A O; O S] [y0, y1] = [x0, x1] */
+			/* TODO: tmp[displ:displ+count] *= inv{Ap} */
+			/* TODO: Implement Schur complement */
+			/* TODO: tmp[displ1+displ1+count1] *= inv{S} */
+
+			/* Solve [I O; -C*inv{A} I] [y0, y1] = [x0, x1]*/
+			if(pc->dtype & PC_DECOMPOSITION_SCHUR_LOWER) {
+			}
+		}
 	}
 	else if(pc->type == PC_TYPE_KSP) {
 		CdamKrylovSolve((CdamKrylov*)pc->ksp, (Matrix*)pc->mat, y + displ, x + displ);
@@ -392,3 +528,4 @@ static void PCApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 }
 
 __END_DECLS__
+

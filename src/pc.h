@@ -18,20 +18,22 @@ enum CdamPCType {
 	PC_JACOBI = 0x2,
 	PC_DECOMPOSITION = 0x4,
 	PC_KSP = 0x8,
-	PC_CUSTOM = 0x10,
+	PC_COMPOSITE = 0x10,
+	PC_CUSTOM = 0xff
 };
 
 typedef enum CdamPCType CdamPCType;
 
-enum CdamPCDecomposeType {
-	PC_DECOMPOSE_ADDITIVE = 0x0,
-	PC_DECOMPOSE_MULTIPLICATIVE = 0x1,
-	PC_DECOMPOSE_SCHUR_FULL = 0x2,
-	PC_DECOMPOSE_SCHUR_DIAG = 0x3,
-	PC_DECOMPOSE_SCHUR_UPPER = 0x4
-};
+enum CdamPCDecompositionType {
+	PC_DECOMPOSITION_SCHUR_DIAG = 0x0,
+	PC_DECOMPOSITION_SCHUR_UPPER = 0x1
+	PC_DECOMPOSITION_SCHUR_LOWER = 0x2,
+	PC_DECOMPOSITION_SCHUR_FULL = PC_DECOMPOSITION_SCHUR_UPPER | PC_DECOMPOSITION_SCHUR_LOWER,
+}	PC_DECOMPOSITION_ADDITIVE = 0x100,
+	PC_DECOMPOSITION_MULTIPLICATIVE = 0x101
+;
 
-typedef enum CdamPCDecomposeType CdamPCDecomposeType;
+typedef enum CdamPCDecompositionType CdamPCDecompositionType;
 
 typedef struct CdamPC CdamPC;
 typedef struct CdamPCNone CdamPCNone;
@@ -70,7 +72,11 @@ struct CdamPC {
 	value_type* diag;
 
 	/* Decomposition */
+	CdamPCDecompositionType dtype;
 	CdamPC* child;
+	value_type* tmp;
+	index_type displ1;
+	index_type count1;
 
 	/* KSP */
 	void* ksp;
@@ -80,46 +86,12 @@ struct CdamPC {
 	void* ctx;
 };
 
-struct CdamPC {
-	CdamPCType type;
-	void* mat;
-	CdamPCOps op[1];
-	void* data;
-};
-
-struct CdamPCNone {
-	index_type n;
-	value_type w;
-};
-
-
-struct CdamPCJacobi {
-	index_type n;
-	index_type bs;
-	void* diag;
-};
-
-struct CdamPCDecomposition {
-	index_type n_sec;
-	index_type* offset;
-	CdamPC** pc;
-};
-
-struct CdamPCAMGX {
-#ifdef USE_AMGX
-	AMGX_config_handle cfg;
-	AMGX_matrix_handle A;
-	AMGX_vector_handle x;
-	AMGX_vector_handle y;
-	AMGX_solver_handle solver;
-	AMGX_resources_handle rsrc;
-	AMGX_Mode mode;
-#endif
-};
-
-struct CdamPCCustom {
-	void* ctx;
-};
+// struct CdamPC {
+// 	CdamPCType type;
+// 	void* mat;
+// 	CdamPCOps op[1];
+// 	void* data;
+// };
 
 CdamPC* CdamPCCreateNone(Matrix* mat, index_type n);
 CdamPC* CdamPCCreateJacobi(Matrix* mat, index_type bs, void* cublas_handle);

@@ -34,6 +34,7 @@ struct MatrixOp {
 	void (*matvec)(Matrix *matrix,  value_type *x, value_type *y);
 	void (*matvec_mask)(Matrix *matrix,  value_type *x, value_type *y,\
 											value_type* left_mask,  value_type *right_mask);
+	void (*submatvec)(Matrix *matrix, index_type i, index_type* ix, index_type j, index_type* jx, value_type* x, value_type* y);
 
 	void (*get_diag)(Matrix *matrix, value_type *diag, index_type bs);
 
@@ -113,6 +114,9 @@ void MatrixAMVPBYWithMask(Matrix* A,  value_type alpha, value_type* x, value_typ
 													 value_type* left_mask,  value_type* right_mask);
 void MatrixMatVec(Matrix *matrix,  value_type *x, value_type *y);
 void MatrixMatVecWithMask(Matrix *matrix,  value_type *x, value_type *y,  value_type *left_mask, value_type* right_mask);
+
+void MatrixSubMatVec(Matrix *matrix, index_type i, index_type* ix, index_type j, index_type* jx, value_type* x, value_type* y);
+
 void MatrixGetDiag(Matrix *matrix, value_type *diag, index_type bs);
 
 void MatrixSetValuesCOO(Matrix* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
