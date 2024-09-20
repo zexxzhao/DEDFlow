@@ -16,7 +16,7 @@ enum CdamPCType {
 	PC_NONE = 0x0,
 	PC_RICHARDSON = 0x1,
 	PC_JACOBI = 0x2,
-	PC_DECOMPOSITION = 0x4,
+	PC_SCHUR = 0x4,
 	PC_KSP = 0x8,
 	PC_COMPOSITE = 0x10,
 	PC_CUSTOM = 0xff
@@ -24,45 +24,45 @@ enum CdamPCType {
 
 typedef enum CdamPCType CdamPCType;
 
-enum CdamPCDecompositionType {
-	PC_DECOMPOSITION_SCHUR_DIAG = 0x0,
-	PC_DECOMPOSITION_SCHUR_UPPER = 0x1
-	PC_DECOMPOSITION_SCHUR_LOWER = 0x2,
-	PC_DECOMPOSITION_SCHUR_FULL = PC_DECOMPOSITION_SCHUR_UPPER | PC_DECOMPOSITION_SCHUR_LOWER,
-}	PC_DECOMPOSITION_ADDITIVE = 0x100,
-	PC_DECOMPOSITION_MULTIPLICATIVE = 0x101
-;
+enum CdamPCSchurType {
+	PC_SCHUR_DIAG = 0x0,
+	PC_SCHUR_UPPER = 0x1
+	PC_SCHUR_LOWER = 0x2,
+	PC_SCHUR_FULL = PC_DECOMPOSITION_SCHUR_UPPER | PC_DECOMPOSITION_SCHUR_LOWER,
+};
 
-typedef enum CdamPCDecompositionType CdamPCDecompositionType;
+typedef enum CdamPCSchurType CdamPCSchurType;
+
+enum CdamPCCompositeType {
+	PC_COMPOSITE_ADDITIVE = 0x1,
+	PC_COMPOSITE_MULTIPLICATIVE = 0x2
+};
+
+typedef enum CdamPCCompositeType CdamPCCompositeType;
 
 typedef struct CdamPC CdamPC;
-typedef struct CdamPCNone CdamPCNone;
-typedef struct CdamPCJacobi CdamPCJacobi;
-typedef struct CdamPCDecomposition CdamPCDecomposition;
-typedef struct CdamPCAMGX CdamPCAMGX;
-
-
 typedef struct CdamPCOps CdamPCOps;
 struct CdamPCOps {
-	void (*setup)(CdamPC*, void*);
+	void (*alloc)(CdamPC*, void*, void*);
+	void (*setup)(CdamPC*, void*, void*);
 	void (*destroy)(CdamPC*);
-
 	void (*apply)(CdamPC*, value_type*, value_type*);
 };
 
 
 struct CdamPC {
 
-	CdamPC* prev;
 	CdamPC* next;
 
 	CdamPCType type;
 
 	void* mat;
 
-	index_type n;
+	index_type n_vert;
 	index_type displ;
 	index_type count;
+
+	value_type* buff;
 
 	/* Richardson */
 	value_type omega;
@@ -71,15 +71,18 @@ struct CdamPC {
 	index_type bs;
 	value_type* diag;
 
-	/* Decomposition */
-	CdamPCDecompositionType dtype;
-	CdamPC* child;
-	value_type* tmp;
+	/* Schur */
+	CdamPCSchurType schur_type;
+	void* schur_compl;
 	index_type displ1;
 	index_type count1;
 
 	/* KSP */
 	void* ksp;
+
+	/* Composite */
+	CdamPCCompositeType comp_type;
+	CdamPC* child;
 
 	/* Custom */
 	CdamPCOps op[1];

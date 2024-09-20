@@ -4,6 +4,11 @@
 #include "pc.h"
 
 __BEGIN_DECLS__
+typedef struct CdamPCNone CdamPCNone;
+typedef struct CdamPCJacobi CdamPCJacobi;
+typedef struct CdamPCDecomposition CdamPCDecomposition;
+typedef struct CdamPCAMGX CdamPCAMGX;
+
 struct CdamPCNone {
 	index_type n;
 	value_type w;
@@ -525,6 +530,104 @@ static void PCApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 	if(pc->next) {
 		PCApplyPrivate(pc->next, x, y);
 	}
+}
+
+static void PCRichardsonAllocPrivate(CdamPC* pc, void* A, void* config) {
+	UNUSED(pc);
+	UNUSED(A);
+	UNUSED(config);
+}
+
+static void PCRichardsonSetupPrivate(CdamPC* pc, void* A, void* config) {
+	pc->omega = JSONGetItem(json, "omega")->valuedouble;
+	UNUSED(A);
+}
+
+static void PCRichardsonDestroyPrivate(CdamPC* pc) {
+	UNUSED(pc);
+}
+
+static void PCRicahrdsonApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
+	index_type n = pc->n_vert;
+	index_type displ = pc->displ;
+	index_type count = pc->count;
+	value_type omega = pc->omega;
+	CdamMemcpy(y + displ * n, x + displ * n, n* count * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+	dscal(n * count, omega, y + displ * n, 1);
+}
+
+static void PCJacobiAllocPrivate(CdamPC* pc, void* A, void* config) {
+	Matrix* mat = (Matrix*)A;
+	cJSON* json = (cJSON*)config;
+	pc->mat = A;
+	pc->bs = JSONGetItem(json, "bs")->valueint;
+	pc->n_vert = MatrixNumRow(mat) / pc->bs;
+	pc->diag = CdamTMalloc(value_type, pc->n * pc->bs * pc->bs, DEVICE_MEM);
+}
+
+static void PCJacobiSetupPrivate(CdamPC* pc, void* A, void* config) {
+	Matrix* mat = (Matrix*)A;
+	cJSON* json = (cJSON*)config;
+	index_type bs = pc->bs;
+	index_type n = MatrixNumRow(mat) / bs;
+	value_type* pc_ctx = (value_type*)pc->diag;
+	MatrixGetDiag(mat, pc_ctx, bs);
+	value_type *inv, **input_batch, **output_batch, **h_batch;
+	int* info, *pivot;
+
+	if(bs == 1) {
+		VecPointwiseInv(pc_ctx, n);
+	}
+	else if(bs > 1) {
+		inv = CdamTMalloc(value_type, n * bs * bs, DEVICE_MEM);
+		input_batch = CdamTMalloc(value_type*, n * 2, DEVICE_MEM);
+		output_batch = input_batch + n;
+		info = CdamTMalloc(int, n * (bs + 1), DEVICE_MEM);
+		pivot = info + n;
+
+		h_batch = CdamTMalloc(value_type*, n, HOST_MEM);
+		for(int i = 0; i < n; i++) {
+			h_batch[i] = pc_ctx + i * bs * bs;
+		}
+		CdamMemcpy(input_batch, h_batch, n * sizeof(value_type*), DEVICE_MEM, HOST_MEM);
+		for(int i = 0; i < n; i++) {
+			h_batch[i] = inv + i * bs * bs;
+		}
+		CdamMemcpy(output_batch, h_batch, n * sizeof(value_type*), DEVICE_MEM, HOST_MEM);
+		dgetrfBatched(bs, input_batch, bs, pivot, info, n);
+		dgetriBatched(bs, (const value_type* const*)input_batch, bs, pivot, output_batch, bs, info, n);
+		CdamMemcpy(pc_ctx, inv, n * bs * bs * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
+
+		CdamFree(inv, n * bs * bs * sizeof(value_type), DEVICE_MEM);
+		CdamFree(input_batch, n * sizeof(value_type*) * 2, DEVICE_MEM);
+		CdamFree(info, n * sizeof(int) * (bs + 1), DEVICE_MEM);
+		CdamFree(h_batch, n * sizeof(value_type*), HOST_MEM);
+	}
+}
+
+static void PCJacobiDestroyPrivate(CdamPC* pc) {
+	CdamFree(pc->diag, pc->n * pc->bs * pc->bs * sizeof(value_type), DEVICE_MEM);
+}
+
+static void PCJacobiApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
+	index_type bs = pc->bs;
+	value_type* diag = (value_type*)pc->diag;
+	value_type one = 1.0, zero = 0.0;
+	
+	if(bs == 1) {
+		VecPointwiseMult(x, diag, y, pc->n);
+	}
+	else if(bs > 1) {
+		dgemvStridedBatched(BLAS_N, bs, bs, 1.0,
+												diag, bs, bs * bs,
+												x, 1, bs,
+												y, 1, bs,
+												pc->n);
+	}
+}
+
+static void PCSchurAllocPrivate(CdamPC* pc, void* A, void* config) {
+
 }
 
 __END_DECLS__
