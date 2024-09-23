@@ -3,6 +3,7 @@
 #include "alloc.h"
 
 #include "Mesh.h"
+#include "blas.h"
 #include "vec.h"
 #include "NewtonSolver.h"
 
@@ -59,7 +60,7 @@ static void UpdateSolutionPrivate(void* data, void *sol) {
 		relaxation *= -1.0;
 	}
 
-	BLAS_CALL(axpy, n, &relaxation, dx, 1, sol, 1);
+	daxpy(n, relaxation, dx, 1, sol, 1);
 	
 }
 

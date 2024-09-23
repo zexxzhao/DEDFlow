@@ -6,150 +6,196 @@
 
 __BEGIN_DECLS__
 
-typedef struct MatrixOp MatrixOp;
+typedef struct CdamMatOp CdamMatOp;
 
-enum MatType{
+typedef enum {
 	MAT_TYPE_NONE = 0,
 	MAT_TYPE_DENSE = 1, /* Dense matrix */
 	MAT_TYPE_CSR = 2,   /* Compressed Sparse Row matrix */
-	MAT_TYPE_FS = 4,    /* Field Splitting matrix */
-	MAT_TYPE_CUSTOM = 8 /* Custom matrix */
-};
+	MAT_TYPE_SELL = 4,  /* Sliced ELL matrix */
+	MAT_TYPE_FS = 8,    /* Field Splitting matrix */
+	MAT_TYPE_CUSTOM = 16 /* Custom matrix */
+} CdamMatType;
 
-typedef enum MatType MatType;
+typedef enum {
+	MAT_INITIAL = 0,
+	MAT_REUSE = 1
+}	CdamMatReuse;
 
-typedef struct Matrix Matrix;
-typedef struct MatrixCSR MatrixCSR;
-typedef struct MatrixFS MatrixFS;
+typedef enum {
+	MAT_ROW_MAJOR = 0,
+	MAT_COL_MAJOR = 1
+} CdamMatOrder;
 
-struct MatrixOp {
-	void (*setup)(Matrix *matrix);
 
-	void (*zero)(Matrix *matrix);
-	void (*zero_row)(Matrix *matrix, index_type , const index_type* row, index_type shift, value_type diag);
+struct CdamMatOp {
+	void (*setup)(CdamMat *matrix);
 
-	void (*amvpby)(Matrix* A,  value_type alpha, value_type* x, value_type beta, value_type* y);
-	void (*amvpby_mask)(Matrix* A,  value_type alpha, value_type* x, value_type beta, value_type* y,\
-											value_type* left_mask,  value_type* right_mask);
-	void (*matvec)(Matrix *matrix,  value_type *x, value_type *y);
-	void (*matvec_mask)(Matrix *matrix,  value_type *x, value_type *y,\
-											value_type* left_mask,  value_type *right_mask);
-	void (*submatvec)(Matrix *matrix, index_type i, index_type* ix, index_type j, index_type* jx, value_type* x, value_type* y);
+	void (*get_submat)(CdamMat *matrix, index_type nrow, index_type *row,
+										 index_type ncol, index_type *col, CdamMat *submat);
+	void (*zero)(CdamMat *matrix);
+	void (*zero_row)(CdamMat *matrix, index_type , const index_type* row, index_type shift, value_type diag);
 
-	void (*get_diag)(Matrix *matrix, value_type *diag, index_type bs);
+	void (*multadd)(value_type alpha, CdamMat* A, value_type* x, value_type beta, value_type* y);
+	void (*matmultadd)(value_type alpha, CdamMat* A, CdamMat* B, value_type beta, CdamMat* C, MatReuse reuse);
 
-	void (*set_values_coo)(Matrix* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
-	void (*set_values_ind)(Matrix* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
+	void (*get_diag)(CdamMat *matrix, value_type *diag, index_type bs);
 
-	void (*add_elem_value_batched)(Matrix* matrix, index_type nshl, \
+	void (*set_values_coo)(CdamMat* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
+	void (*set_values_ind)(CdamMat* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
+
+	void (*add_elem_value_batched)(CdamMat* matrix, index_type nshl, \
 																 index_type batch_size, const index_type* batch_ptr, const index_type* ien, \
 																 const value_type* val, const index_type* mask);
-	void (*add_elem_value_blocked_batched)(Matrix* matrix, index_type nshl, \
+	void (*add_elem_value_blocked_batched)(CdamMat* matrix, index_type nshl, \
 																				 index_type batch_size, const index_type* batch_ptr, const index_type* ien, \
 																				 index_type block_row_size, index_type block_col_size, \
 																				 const value_type* val, int lda, int stride, const index_type* mask);
-	void (*add_value_batched)(Matrix* matrix,
+	void (*add_value_batched)(CdamMat* matrix,
 														index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
 														const value_type* A);
-	void (*add_value_blocked_batched)(Matrix* matrix,
+	void (*add_value_blocked_batched)(CdamMat* matrix,
 																		index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
 																		index_type block_row, index_type block_col,
 																		const value_type* A, int lda, int stride);
 
-	void (*destroy)(Matrix *matrix);
+	void (*destroy)(CdamMat *matrix);
 };
 
-struct Matrix {
-	index_type size[2];
-	MatType type;
+struct CdamMat {
+	CdamMatType type;
+	index_type row_range[2];
+	index_type row_count[3];
+	index_type col_range[4];
+	index_type col_count[3];
 	void *data;
+#ifdef CDAM_USE_CUDA
 	cudaStream_t stream_ref;
-	MatrixOp op[1];
+#endif
+	CdamMatOp op[1];
 };
 
-#define MatrixNumRow(A) ((A)->size[0])
-#define MatrixNumCol(A) ((A)->size[1])
-#define MatrixType(A) ((A)->type)
+#define CdamMatType(A) ((A)->type)
+#define CdamMatRowBegin(A) ((A)->row_range[0])
+#define CdamMatRowEnd(A) ((A)->row_range[1])
+#define CdamMatNumExclusiveRow(A) ((A)->row_count[0])
+#define CdamMatNumSharedRow(A) ((A)->row_count[1])
+#define CdamMatNumGhostedRow(A) ((A)->row_count[2])
 
-struct MatrixCSR {
+#define CdamMatColBegin(A) ((A)->col_range[0])
+#define CdamMatColEnd(A) ((A)->col_range[1])
+#define CdamMatNumExclusiveCol(A) ((A)->col_count[0])
+#define CdamMatNumSharedCol(A) ((A)->col_count[1])
+#define CdamMatNumGhostedCol(A) ((A)->col_count[2])
+
+#define CdamMatImpl(A) ((A)->data)
+
+#define AsCdamMatType(A, type) ((type*)CdamMatImpl(A))
+
+struct CdamMatDense {
+	MatOrder order;
+	value_type *val;
+	index_type ld;
+};
+
+struct CdamMatCSR {
 	b32 external_attr;
 	const CSRAttr *attr;
 	value_type *val;
-	cusparseSpMatDescr_t descr;
+	SPMatDesc d_descr;
+
 	index_type buffer_size;
 	void* buffer;
 };
 
-#define MatrixCSRAttr(matrix) ((matrix)->attr)
-#define MatrixCSRRowPtr(matrix) (CSRAttrRowPtr(MatrixCSRAttr(matrix)))
-#define MatrixCSRColInd(matrix) (CSRAttrColInd(MatrixCSRAttr(matrix)))
-#define MatrixCSRData(matrix) ((matrix)->data)
-#define MatrixCSRNumRow(matrix) (CSRAttrNumRow(MatrixCSRAttr(matrix)))
-#define MatrixCSRNumCol(matrix) (CSRAttrNumCol(MatrixCSRAttr(matrix)))
-#define MatrixCSRNNZ(matrix) (CSRAttrNNZ(MatrixCSRAttr(matrix)))
-#define MatrixCSRDescr(matrix) ((matrix)->descr)
+struct CdamMatBSR {
+	CSRAttr *attr;
+	index_type block_size[2];
+	value_type *val;
+	
+	SPMatDesc d_descr;
+	index_type buffer_size;
+	void* buffer;
+};
 
-struct MatrixFS {
+#define CdamMatCSRAttr(matrix) ((matrix)->attr)
+#define CdamMatCSRRowPtr(matrix) (CSRAttrRowPtr(CdamMatCSRAttr(matrix)))
+#define CdamMatCSRColInd(matrix) (CSRAttrColInd(CdamMatCSRAttr(matrix)))
+#define CdamMatCSRData(matrix) ((matrix)->data)
+#define CdamMatCSRNumRow(matrix) (CSRAttrNumRow(CdamMatCSRAttr(matrix)))
+#define CdamMatCSRNumCol(matrix) (CSRAttrNumCol(CdamMatCSRAttr(matrix)))
+#define CdamMatCSRNNZ(matrix) (CSRAttrNNZ(CdamMatCSRAttr(matrix)))
+#define CdamMatCSRDescr(matrix) ((matrix)->descr)
+
+
+struct CdamMatFS {
 	index_type n_offset;
 	index_type *offset;
 	index_type *d_offset;
 
+#ifdef CDAM_USE_CUDA
 	cudaStream_t* stream;
+#endif
 
 	const CSRAttr* spy1x1;
 	value_type** d_matval;
-	Matrix** mat;
+	CdamMat** mat;
 };
 
 
-/* API for Matrix */
-Matrix* MatrixCreateTypeCSR(const CSRAttr* attr, void*);
-Matrix* MatrixCreateTypeFS(index_type n_offset, const index_type* offset, void*);
-void MatrixDestroy(Matrix *matrix);
-void MatrixSetup(Matrix *matrix);
-void MatrixZero(Matrix *matrix);
-void MatrixZeroRow(Matrix *matrix, index_type n, const index_type* row, index_type shift, value_type diag);
-void MatrixAMVPBY(Matrix* A, value_type alpha, value_type* x, value_type beta, value_type* y);
-void MatrixAMVPBYWithMask(Matrix* A,  value_type alpha, value_type* x, value_type beta, value_type* y,\
-													 value_type* left_mask,  value_type* right_mask);
-void MatrixMatVec(Matrix *matrix,  value_type *x, value_type *y);
-void MatrixMatVecWithMask(Matrix *matrix,  value_type *x, value_type *y,  value_type *left_mask, value_type* right_mask);
+/* API for CdamMat */
+CdamMat* CdamMatCreateTypeCSR(const CSRAttr* attr, void*);
+CdamMat* CdamMatCreateTypeFS(index_type n_offset, const index_type* offset, void*);
+void CdamMatDestroy(CdamMat *matrix);
+void CdamMatSetup(CdamMat *matrix);
+void CdamMatZero(CdamMat *matrix);
+void CdamMatZeroRow(CdamMat *matrix, index_type n, const index_type* row, index_type shift, value_type diag);
+void CdamMatAMVPBY(CdamMat* A, value_type alpha, value_type* x, value_type beta, value_type* y);
+void CdamMatMatVec(CdamMat *matrix,  value_type *x, value_type *y);
 
-void MatrixSubMatVec(Matrix *matrix, index_type i, index_type* ix, index_type j, index_type* jx, value_type* x, value_type* y);
+void CdamMatSubMatVec(CdamMat *matrix, index_type i, index_type* ix, index_type j, index_type* jx, value_type* x, value_type* y);
 
-void MatrixGetDiag(Matrix *matrix, value_type *diag, index_type bs);
+void CdamMatGetDiag(CdamMat *matrix, value_type *diag, index_type bs);
 
-void MatrixSetValuesCOO(Matrix* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
-void MatrixSetValuesInd(Matrix* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
+void CdamMatSetValuesCOO(CdamMat* matrix, value_type alpha, index_type n, const index_type* row, const index_type* col, const value_type* val, value_type beta);
+void CdamMatSetValuesInd(CdamMat* matrix, value_type alpha, index_type n, const index_type* ind, const value_type* val, value_type beta);
 
-void MatrixAddElemValueBatched(Matrix* matrix, index_type nshl,
+void CdamMatAddElemValueBatched(CdamMat* matrix, index_type nshl,
 															 index_type num_batch, const index_type* batch_ptr, const index_type* ien,
 															 const value_type* val, const index_type* mask);
-void MatrixAddElemValueBlockedBatched(Matrix* matrix, index_type nshl,
+void CdamMatAddElemValueBlockedBatched(CdamMat* matrix, index_type nshl,
 																			index_type num_batch, const index_type* batch_ptr, const index_type* ien,
 																			index_type block_row_size, index_type block_col_size,
 																			const value_type* val, int lda, int stride, const index_type* mask);
 
-void MatrixAddValueBatched(Matrix* matrix,
+void CdamMatAddValueBatched(CdamMat* matrix,
 													 index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
 													 const value_type* A);
-void MatrixAddValueBlockedBatched(Matrix* matrix,
+void CdamMatAddValueBlockedBatched(CdamMat* matrix,
 																	index_type batch_size, const index_type* batch_row_ind, const index_type* batch_col_ind,
 																	index_type block_row_size, index_type block_col_size,
 																	const value_type* A, int lda, int stride);
 
 
 /* API for Type CSR */
-MatrixCSR* MatrixCSRCreate(const CSRAttr *attr, void*);
-void MatrixCSRDestroy(Matrix *matrix);
+CdamMatCSR* CdamMatCSRCreate(const CSRAttr *attr, void*);
+void CdamMatCSRDestroy(CdamMat *matrix);
 
 
 /* API for Type FS */
-MatrixFS* MatrixFSCreate(index_type n_offset, const index_type *offset, void*);
-void MatrixFSDestroy(Matrix *matrix);
+CdamMatFS* CdamMatFSCreate(index_type n_offset, const index_type *offset, void*);
+void CdamMatFSDestroy(CdamMat *matrix);
+
+void CdamMatCreate(CdamMat **mat, MatType type);
+
+void CdamMatDestroy(CdamMat *mat);
+
+void CdamMatGetSubMat(CdamMat *matrix, index_type nrow, index_type *row, index_type ncol, index_type *col, CdamMat *submat);
 
 
-typedef Matrix CdamMat;
+
+
+typedef CdamMat CdamMat;
 
 __END_DECLS__
 

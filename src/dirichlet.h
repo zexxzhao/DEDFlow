@@ -2,6 +2,8 @@
 #define __DIRICHLET_H__
 
 #include "common.h"
+#include "Mesh.h"
+#include "matrix.h"
 
 __BEGIN_DECLS__
 
@@ -13,12 +15,9 @@ enum BCType {
 };
 typedef enum BCType BCType;
 
-typedef struct Mesh3D Mesh3D;
-typedef struct Matrix Matrix;
-
 typedef struct Dirichlet Dirichlet;
 struct Dirichlet {
-	const Mesh3D* mesh;
+	const CdamMesh* mesh;
 	index_type face_ind;
 	index_type shape;
 	size_t buffer_size;
@@ -26,7 +25,7 @@ struct Dirichlet {
 	BCType bctype[0];
 };
 
-Dirichlet* DirichletCreate(const Mesh3D* mesh, index_type face_ind, index_type shape);
+Dirichlet* DirichletCreate(const CdamMesh* mesh, index_type face_ind, index_type shape);
 void DirichletDestroy(Dirichlet* dirichlet);
 
 void DirichletApplyVec(Dirichlet* dirichlet, value_type* b);

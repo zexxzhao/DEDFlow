@@ -1,14 +1,12 @@
 #ifndef __CSR_H__
 #define __CSR_H__
 
-#include <cusparse.h>
 #include "common.h"
+#include "blas.h"
 
 __BEGIN_DECLS__
 
-typedef struct CdamMesh CdamMesh;
 
-typedef index_type csr_index_type;
 typedef struct CSRAttr CSRAttr;
 struct CSRAttr {
 	index_type num_row;
@@ -25,15 +23,15 @@ struct CSRAttr {
 #define CSRAttrRowPtr(attr) ((attr)->row_ptr)
 #define CSRAttrColInd(attr) ((attr)->col_ind)
 
-CSRAttr* CSRAttrCreate(CdamMesh* mesh);
+CSRAttr* CSRAttrCreate(void* pmesh);
 void CSRAttrDestroy(CSRAttr *attr);
 
-CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_index_type block_col);
+CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, index_type block_row, index_type block_col);
 
-index_type CSRAttrLength(CSRAttr *attr, csr_index_type row);
-csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row);
+index_type CSRAttrLength(CSRAttr *attr, index_type row);
+index_type* CSRAttrRow(CSRAttr *attr, index_type row);
 
-void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, csr_index_type batch_size, const index_type* row, const index_type* col, index_type* ind);
+void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, index_type batch_size, const index_type* row, const index_type* col, index_type* ind);
 
 
 __END_DECLS__

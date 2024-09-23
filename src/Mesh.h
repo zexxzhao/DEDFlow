@@ -19,21 +19,21 @@ struct CdamMesh {
 	index_type* ien;
 
 	/* Bound */
-	/*
-	index_type num_bound[];
-	index_type bound_id[];
-	index_type bound_offset[];
-	index_type bound_f2e[];
-	index_type bound_forn[];
-	*/
+	index_type num_bound;
+	index_type* bound_id;
+	index_type* bound_offset;
+	index_type* bound_f2e;
+	index_type* bound_forn;
+	index_type* bound_node_offset;
+	index_type* bound_node;
 
 	/* Partitioned data */
 	index_type rank;
 	index_type num_procs;
 
 	index_type* nodal_offset;
+	index_type num_exclusive_node;
 
-	index_type nodal_map_size;
 	index_type* nodal_map_l2g_interior; /* Mapping to the global indices;              *
 																			 * used for linear systems;                    *
 																			 * owned nodes should have consecutive indices */
@@ -41,9 +41,6 @@ struct CdamMesh {
 																			 * used for output;                            *
 																			 *  same as the indices in the mesh file       */
 
-	index_type elem_map_size;
-	index_type* elem_map_l2g;
-	
 	/* Color */
 	index_type num_color;
 	index_type* color;
@@ -67,6 +64,16 @@ struct CdamMesh {
 #define CdamMeshTet(mesh) (CdamMeshIEN(mesh))
 #define CdamMeshPrism(mesh) (CdamMeshIEN(mesh) + CdamMeshNumTet(mesh)*4)
 #define CdamMeshHex(mesh) (CdamMeshIEN(mesh) + CdamMeshNumTet(mesh)*4 + CdamMeshNumPrism(mesh)*6)
+
+#define CdamMeshNumBound(mesh) (((CdamMesh*)(mesh))->num_bound)
+#define CdamMeshBoundID(mesh) (((CdamMesh*)(mesh))->bound_id)
+#define CdamMeshBoundOffset(mesh) (((CdamMesh*)(mesh))->bound_offset)
+#define CdamMeshBoundF2E(mesh) (((CdamMesh*)(mesh))->bound_f2e)
+#define CdamMeshBoundForn(mesh) (((CdamMesh*)(mesh))->bound_forn)
+
+#define CdamMeshBoundNodeOffset(mesh) (((CdamMesh*)(mesh))->bound_node_offset)
+#define CdamMeshBoundNumNode(mesh, i) (CdamMeshBoundNodeOffset(mesh)[i+1] - CdamMeshBoundNodeOffset(mesh)[i])
+#define CdamMeshBoundNode(mesh, i) (((CdamMesh*)(mesh))->bound_node + CdamMeshBoundNodeOffset(mesh)[i])
 
 
 #define CdamMeshNumColor(mesh) (((CdamMesh*)(mesh))->num_color)

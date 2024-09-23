@@ -109,7 +109,7 @@ CSRAttrGetNZIndBatchedKernel(I num_row, I num_col, const I* row_ptr, const I* co
 
 __BEGIN_DECLS__
 
-typedef csr_index_type index_t;
+typedef index_type index_t;
 // void GenerateCSRFromMesh(const Mesh3D* mesh, CSRAttr* attr) {
 // 	index_t num_node = Mesh3DNumNode(mesh);
 // 	index_t num_elem = Mesh3DNumTet(mesh);
@@ -156,13 +156,13 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 }
 
 void CSRAttrGetNZIndBatchedGPU(const CSRAttr* attr,
-																 csr_index_type batch_size, const csr_index_type* row, const csr_index_type* col,
-																 csr_index_type* ind) {
-	csr_index_type num_rows = CSRAttrNumRow(attr);
-	csr_index_type num_cols = CSRAttrNumCol(attr);
-	csr_index_type nnz = CSRAttrNNZ(attr);
-	const csr_index_type* row_ptr = CSRAttrRowPtr(attr);
-	const csr_index_type* col_ind = CSRAttrColInd(attr);
+																 index_type batch_size, const index_type* row, const index_type* col,
+																 index_type* ind) {
+	index_type num_rows = CSRAttrNumRow(attr);
+	index_type num_cols = CSRAttrNumCol(attr);
+	index_type nnz = CSRAttrNNZ(attr);
+	const index_type* row_ptr = CSRAttrRowPtr(attr);
+	const index_type* col_ind = CSRAttrColInd(attr);
 
 	int block_dim = 256;
 	int grid_dim = (batch_size + block_dim - 1) / block_dim;

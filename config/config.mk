@@ -1,24 +1,27 @@
+# Description: Configuration file for CDAM
+DEBUG=1
+CDAM_USE_CUDA=0
+CDAM_USE_MKL=0
+CDAM_USE_ACCELERATE=1
 
-###############################################################################
-# Prerequisites: HDF5, CUDA (runtime, cublas, cusparse), METIS
-###############################################################################
 
+# These packages are required
 # HDF5: https://www.hdfgroup.org/downloads/hdf5/
-# HYPRE: https://computation.llnl.gov/projects/hypre-scalable-linear-solvers-multigrid-methods/download
-# CUDA: https://developer.nvidia.com/cuda-downloads
-# METIS: http://glaros.dtc.umn.edu/gkhome/metis/metis/download
-
 ifeq ($(origin HDF5_ROOT), undefined)
 $(error HDF5_ROOT is not set)
 endif
 
-ifeq ($(origin HYPRE_DIR), undefined)
-$(warning HYPRE_DIR is not set)
+# METIS: http://glaros.dtc.umn.edu/gkhome/metis/metis/download
+ifeq ($(origin METIS_DIR), undefined)
+$(error METIS_DIR is not set)
 endif
 
 
+# These packages are optional
+ifeq ($(CDAM_USE_CUDA), 1)
+# CUDA: https://developer.nvidia.com/cuda-downloads
 ifeq ($(origin CUDA_ROOT), undefined)
-CUDA_DIR=/usr/local/cuda
+$(error CUDA_ROOT is not set, which is required for CDAM_USE_CUDA=ON)
 else
 CUDA_DIR=$(CUDA_ROOT)
 endif
@@ -27,12 +30,6 @@ ifeq ($(origin AMGX_DIR), undefined)
 $(warning AMGX_DIR is not set)
 endif
 
-ifeq ($(origin METIS_DIR), undefined)
-$(warning METIS_DIR is not set)
-$(warning METIS will not be used)
-MK_METIS_DIR=
-else
-MK_METIS_DIR=$(METIS_DIR)
 endif
 
 ifndef PREFIX
@@ -42,7 +39,6 @@ endif
 ###############################################################################
 # Compiler and flags
 ###############################################################################
-DEBUG=1
 ifdef DEBUG
 	C_OPT=-O0 -g3 -fsanitize=undefined
 	CU_OPT=-O0 -g -G
@@ -59,23 +55,23 @@ DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE # -DCDAM_USE_CUDA # -DDBG_TET
 CC=mpicc
 CFLAGS=-std=c99 $(FLAGS) $(DEFINES) $(C_OPT) # -fno-omit-frame-pointer
 
-INC=-I$(CUDA_DIR)/include
-LIB=-lm
+INC=
+LIB=
 
+DEFINES+= -DUSE_HDF5
 INC+=-I$(HDF5_ROOT)/include -I$(HYPRE_DIR)/include
 LIB+=-L$(HDF5_ROOT)/lib -lhdf5 -L$(HYPRE_DIR)/lib -lHYPRE
 
-ifndef CDAM_USE_CUDA
+DEFINES+= -DUSE_METIS
+INC+=-I$(METIS_DIR)/include
+LIB+=-L$(METIS_DIR)/lib -lmetis
+
+ifeq ($(CDAM_USE_CUDA), 1)
+DEFINES+= -DCDAM_USE_CUDA
+INC+=-I$(CUDA_DIR)/include
+LIB+=-lm
 INC+=-I$(BLAS_DIR)/include -I$(LAPACK_DIR)/include
 LIB+=-L$(BLAS_DIR)/lib -lblas -L$(LAPACK_DIR)/lib -llapack
-endif
-
-# if MK_METIS_DIR is not set, then METIS will not be used
-ifneq ($(MK_METIS_DIR),)
-DEFINES+= -DUSE_METIS
-INC+=-I$(MK_METIS_DIR)/include
-LIB+=-L$(MK_METIS_DIR)/lib -lmetis
-endif
 
 ifneq ($(AMGX_DIR),)
 DEFINES+= -DUSE_AMGX
@@ -83,8 +79,18 @@ INC+=-I$(AMGX_DIR)/include
 LIB+=-L$(AMGX_DIR)/lib -lamgx -lcusolver -lnvToolsExt
 endif
 
-ifdef CDAM_USE_CUDA
-DEFINES+= -DCDAM_USE_CUDA
+else ifeq ($(CDAM_USE_MKL), 1)
+DEFINES+= -DCDAM_USE_MKL
+INC+=-I$(MKLROOT)/include
+LIB+=-L$(MKLROOT)/lib/intel64 -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
+else ifeq ($(CDAM_USE_ACCELERATE), 1)
+DEFINES+= -DCDAM_USE_ACCELERATE
+LIB+=-framework Accelerate
+endif
+
+
+
+ifeq ($(CDAM_USE_CUDA), 1)
 NVCC=nvcc
 ifndef CU_ARCH # if not set, use the default value
 CU_ARCH=$(shell __nvcc_device_query)
@@ -100,7 +106,9 @@ NVCCFLAGS+= --generate-code arch=compute_${CU_ARCH},code=sm_${CU_ARCH} --compile
 endif
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand 
+
 else
+
 NVCC=$(CC)
 NVCCFLAGS=$(CFLAGS)
 CU_INC=$(INC)

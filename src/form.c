@@ -1,4 +1,4 @@
-#include <cuda_profiler_api.h>
+// #include <cuda_profiler_api.h>
 
 #include "alloc.h"
 #include "json.h"
@@ -17,7 +17,7 @@
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
 
 #define NQR (4)
-#define BS (6)
+// #define BS (6)
 #define M2D(aa, ii) ((aa) * BS + (ii))
 #define M4D(aa, bb, ii, jj) \
 	(((aa) * (NSHL) + bb) * (BS * BS) + (ii) * BS + (jj))
@@ -31,6 +31,23 @@
 
 
 __BEGIN_DECLS__
+void LoadElementValue(index_type batch_size, index_type* batch_index_ptr,
+											index_type* ien, index_type nshl, index_type elem_size,
+											void* x, index_type xstride,
+											void* y, index_type ystride); 
+void GetElemInvJ3D(index_type batch_size, index_type* batch_index_ptr,
+									 index_type* ien, value_type* coord, value_type* elem_metric, Arena scratch);
+void GetShapeGrad(index_type num_elem, value_type* elem_invJ, value_type* shgrad);
+
+void IntElemAssembly(index_type num_elem, value_type* elem_invJ, value_type* shgrad,
+											value_type* qr_wgalpha, value_type* qr_dwgalpha, value_type* qr_wggradalpha,
+											value_type* elem_F, value_type* elem_J, FEMOptions opt, index_type flag);
+void ElemRHSLocal2Global(index_type num_elem, index_type* batch_index_ptr, index_type* ien,
+												 index_type elem_size, value_type* elem_F, index_type Fstride,
+												 value_type* F, index_type Fstride_global, const index_type* map);
+
+void MatrixAddElementLHS(Matrix* J, index_type NSHL, index_type BS, index_type num_elem, index_type* ien,
+												 index_type* batch_index_ptr, value_type* elem_J, index_type Jstride);
 
 static void ParseFEMOptions(FEMOptions opt, cJSON* config) {
 	value_type rhoc;
@@ -116,61 +133,69 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 		shgradg = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * 3, &scratch, 0);
 		GetShapeGrad(color_batch_size, elem_invJ, shgradg);
 
-		BLAS_CALL(gemmStridedBatched, BLAS_T, BLAS_N,
+		dgemmStridedBatched(BLAS_T, BLAS_N,
 							3, 3, 3,
-							&one,
-							shgradg + 3, 3, (long long)(NSHL * 3),
-							shgradg + 3, 3, (long long)(NSHL * 3),
-							&zero,
-							elem_invJ, 3, (long long)(NSHL * 3),
+							one,
+							shgradg + 3, 3, NSHL * 3,
+							shgradg + 3, 3, NSHL * 3,
+							zero,
+							elem_invJ, 3, NSHL * 3,
 							color_batch_size);
 
 		buffer = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
 		/* Interpolate the field values */
-		LoadElementValue(color_batch_size, color_batch_index_ptr, ien, 3,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, 3 * sizeof(value_type),
 										 wgalpha_dptr, 3, buffer, bs * NSHL);
-		LoadElementValue(color_batch_size, color_batch_index_ptr, ien, 1,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 3, 1, buffer + 3 * NSHL, bs * NSHL);
-		LoadElementValue(color_batch_size, color_batch_index_ptr, ien, 1,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 4, 1, buffer + 4 * NSHL, bs * NSHL);
-		LoadElementValue(color_batch_size, color_batch_index_ptr, ien, 1,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
 		qr_wggradalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * 3 * bs, &scratch, 0);
-		BLAS_CALL(gemmStridedBatched, BLAS_N, BLAS_N,
+		dgemmStridedBatched(BLAS_N, BLAS_N,
 							3, bs, NSHL,
-							&one,
-							shgradg, 3, (long long)(NSHL* 3),
-							buffer, NSHL, (long long)(NSHL * bs),
-							&zero,
-							qr_wggradalpha, 3, (long long)(bs * 3),
+							one,
+							shgradg, 3, NSHL* 3,
+							buffer, NSHL, NSHL * bs,
+							zero,
+							qr_wggradalpha, 3, bs * 3,
 							color_batch_size);
 		 
 		qr_wgalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
-		BLAS_CALL(gemm, BLAS_N, BLAS_N,
+		dgemm( BLAS_N, BLAS_N,
 							NQR, color_batch_size * bs, NSHL,
-							&one,
+							one,
 							d_shlu, NQR,
 							buffer, NSHL,
-							&zero,
+							zero,
 							qr_wgalpha, NQR);
 
-		LoadElementValue(color_batch_size, 3, color_batch_index_ptr, ien,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, 3 * sizeof(value_type),
 										 dwgalpha_dptr, 3, buffer, bs * NSHL);
-		LoadElementValue(color_batch_size, 1, color_batch_index_ptr, ien,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 3, 1, buffer + 3 * NSHL, bs * NSHL);
-		LoadElementValue(color_batch_size, 1, color_batch_index_ptr, ien,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 4, 1, buffer + 4 * NSHL, bs * NSHL);
-		LoadElementValue(color_batch_size, 1, color_batch_index_ptr, ien,
+		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
+										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
 		qr_dwgalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
-		BLAS_CALL(gemm, BLAS_T, BLAS_N,
+		dgemm( BLAS_T, BLAS_N,
 							NQR, color_batch_size * bs, NSHL,
-							&one,
+							one,
 							d_shlu, NQR,
 							buffer, NSHL,
-							&zero,
+							zero,
 							qr_dwgalpha, NQR);
 		ArenaPop(sizeof(value_type), color_batch_size * NSHL * bs, &scratch);
 

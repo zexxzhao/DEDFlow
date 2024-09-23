@@ -42,9 +42,9 @@ void MatrixGetDiagBlock(const value_type* matval,
 
 static void CGSolvePrivate(Matrix* A, f64* x, f64* b, void* ctx) {
 	index_type n = MatrixNumRow(A);
-	cusparseDnVecDescr_t vec_x, vec_b;
-	cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);
-	cusparseCreateDnVec(&vec_b, n, b, CUDA_R_64F);
+	// cusparseDnVecDescr_t vec_x, vec_b;
+	// cusparseCreateDnVec(&vec_x, n, x, CUDA_R_64F);
+	// cusparseCreateDnVec(&vec_b, n, b, CUDA_R_64F);
 
 	// cusparseSpMatDescr_t mat_A = CSRMatrixDescr(A);
 	// UNUSED(mat_A);

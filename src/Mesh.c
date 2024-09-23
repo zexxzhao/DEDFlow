@@ -44,10 +44,8 @@ void CdamMeshDestroy(CdamMesh* mesh) {
 	CdamFree(mesh->nodal_map_l2g_interior, sizeof(index_type) * CdamMeshNumNode(mesh), DEVICE_MEM);
 	CdamFree(mesh->nodal_map_l2g_exterior, sizeof(index_type) * CdamMeshNumNode(mesh), DEVICE_MEM);
 
-	CdamFree(mesh->elem_map_l2g, sizeof(index_type) * num_elem, DEVICE_MEM);
-
 	CdamFree(mesh->color, sizeof(index_type) * num_elem, DEVICE_MEM);
-	CdamFree(mesh->color_batch_offset, sizeof(index_type) * (mesh->num_color + 1), DEVICE_MEM);
+	CdamFree(mesh->color_batch_offset, sizeof(index_type) * (mesh->num_color + 1), HOST_MEM);
 	CdamFree(mesh->color_batch_ind, sizeof(index_type) * num_elem, DEVICE_MEM);
 	// CdamFree(mesh->batch_offset, sizeof(index_type) * (mesh->num_batch + 1), DEVICE_MEM);
 	// CdamFree(mesh->batch_ind, sizeof(index_type) * num_elem, DEVICE_MEM);
@@ -118,35 +116,35 @@ typedef struct cdam_mesh_part_struct CdamMeshPart;
 */
 
 struct QsortCtx {
-	index_type* ien;
-	index_type* epart;
-	index_type size;
+	index_type* begin;
+	index_type* key;
+	index_type stride;
 };
 
 
 static void* qsort_ctx = NULL;
 static int QsortCmpElem(const void* a, const void* b) {
-	const index_type* ien = ((struct QsortCtx*)qsort_ctx)->ien;
-	const index_type* epart = ((struct QsortCtx*)qsort_ctx)->epart;
-	index_type size = ((struct QsortCtx*)qsort_ctx)->size;
+	const index_type* begin = ((struct QsortCtx*)qsort_ctx)->begin;
+	const index_type* key = ((struct QsortCtx*)qsort_ctx)->key;
+	index_type stride = ((struct QsortCtx*)qsort_ctx)->stride;
 
 	const index_type* ia = (index_type*)a;
 	const index_type* ib = (index_type*)b;
 
-	return epart[(ia - ien) / size] - epart[(ib - ien) / size];
+	return key[(ia - begin) / stride] - key[(ib - begin) / stride];
 }
 
 static void ShuffleIENByPartition(index_type num[], index_type* ien, index_type* epart) {
 	index_type i, j;
 
 	qsort_ctx = &(struct QsortCtx){ien, epart, 4};
-	qsort(ien, num[1], 4, QsortCmpElem);
+	qsort(ien, num[1], 4 * sizeof(index_type), QsortCmpElem);
 
 	qsort_ctx = &(struct QsortCtx){ien + num[1] * 4, epart + num[1], 6};
-	qsort(ien + num[1] * 4, num[2], 6, QsortCmpElem);
+	qsort(ien + num[1] * 4, num[2], 6 * sizeof(index_type), QsortCmpElem);
 
 	qsort_ctx = &(struct QsortCtx){ien + num[1] * 4 + num[2] * 6, epart + num[1] + num[2], 8};
-	qsort(ien + num[1] * 4 + num[2] * 6, num[3], 8, QsortCmpElem);
+	qsort(ien + num[1] * 4 + num[2] * 6, num[3], 8 * sizeof(index_type), QsortCmpElem);
 
 	qsort_ctx = NULL;
 } 
@@ -155,6 +153,8 @@ static void ShuffleIENByPartition(index_type num[], index_type* ien, index_type*
 static int QsortCmpIndexType(const void* a, const void* b) {
 	return *((const index_type*)a) - *((const index_type*)b);
 }
+
+
 static index_type CountDistinctEntry(index_type* array, index_type size, index_type* array_set) {
 	index_type i, j;
 	index_type count;
@@ -179,8 +179,9 @@ static index_type CountDistinctEntry(index_type* array, index_type size, index_t
 }
 
 static int QsortCmpNpart(const void* a, const void* b) {
-	index_type* npart = (index_type*)((struct QsortCtx*)qsort_ctx)->epart;
-	index_type rank = ((struct QsortCtx*)qsort_ctx)->size;
+	index_type* npart = (index_type*)((struct QsortCtx*)qsort_ctx)->begin;
+	int* key = (int*)((struct QsortCtx*)qsort_ctx)->key;
+	index_type rank = ((struct QsortCtx*)qsort_ctx)->stride;
 	index_type ia = *(const index_type*)a;
 	index_type ib = *(const index_type*)b;
 	b32 is_owned_a = npart[ia] == rank;
@@ -188,6 +189,9 @@ static int QsortCmpNpart(const void* a, const void* b) {
 
 	if(is_owned_b - is_owned_a) {
 		return is_owned_b - is_owned_a;
+	}
+	else if(key[ia] - key[ib]) {
+		return key[ia] - key[ib];
 	}
 	else {
 		return npart[ia] - npart[ib];
@@ -209,8 +213,8 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 
 	value_type* coord = NULL;
 
-	epart_count = CdamTMalloc(index_type, (size + 1) * 3, HOST_MEM);
-	CdamMemset(epart_count, 0, sizeof(index_type) * (size + 1) * 3, HOST_MEM);
+	epart_count = CdamTMalloc(index_type, size * 3, HOST_MEM);
+	CdamMemset(epart_count, 0, sizeof(index_type) * size * 3, HOST_MEM);
 	if(rank == 0) {
 		/* 0. Load element connectivity */
 		LoadElementConnectivity(h5f, group_name, num, &ien);
@@ -227,22 +231,13 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 		/* 2. Prepare the data for other processes */
 
 		for(i = 0; i < num[1]; ++i) {
-			epart_count[size * 0 + epart[i] + 1]++;
+			epart_count[size * 0 + epart[i]]++;
 		}
 		for(i = 0; i < num[2]; ++i) {
-			epart_count[size * 1 + epart[num[1] + i] + 1]++;
+			epart_count[size * 1 + epart[num[1] + i]]++;
 		}
 		for(i = 0; i < num[3]; ++i) {
-			epart_count[size * 2 + epart[num[1] + num[2] + i] + 1]++;
-		}
-		for(i = 0; i < size; ++i) {
-			epart_count[size * 0 + i + 1] += epart_count[size * 0 + i];
-		}
-		for(i = 0; i < size; ++i) {
-			epart_count[size * 1 + i + 1] += epart_count[size * 1 + i];
-		}
-		for(i = 0; i < size; ++i) {
-			epart_count[size * 2 + i + 1] += epart_count[size * 2 + i];
+			epart_count[size * 2 + epart[num[1] + num[2] + i]]++;
 		}
 	}
 
@@ -255,34 +250,44 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	MPI_Bcast(epart_count, sizeof(index_type) * (size + 1) * 3, MPI_CHAR, 0, mesh->comm);
 
 	mesh->num[0] = num[0];
-	mesh->num[1] = epart_count[size * 0 + rank + 1] - epart_count[size * 0 + rank];
-	mesh->num[2] = epart_count[size * 1 + rank + 1] - epart_count[size * 1 + rank];
-	mesh->num[3] = epart_count[size * 2 + rank + 1] - epart_count[size * 2 + rank];
+	mesh->num[1] = epart_count[size * 0 + rank];
+	mesh->num[2] = epart_count[size * 1 + rank];
+	mesh->num[3] = epart_count[size * 2 + rank];
 
 	CdamMeshIEN(mesh) = CdamTMalloc(index_type, mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, HOST_MEM);
 	
 	int* send_count = CdamTMalloc(int, size, HOST_MEM);
-	int* send_disp = CdamTMalloc(int, size, HOST_MEM);
+	int* send_displ = CdamTMalloc(int, size, HOST_MEM);
+	CdamMemset(send_count, 0, sizeof(int) * size, HOST_MEM);
+	CdamMemset(send_displ, 0, sizeof(int) * size, HOST_MEM);
 
 	for(i = 0; i < size; ++i) {
-		send_count[i] = (epart_count[size * 0 + i + 1] - epart_count[size * 0 + i]) * 4 * sizeof(index_type);
-		send_disp[i] = epart_count[size * 0 + i] * 4 * sizeof(index_type);
+		send_count[i] = epart_count[size * 0 + i] * 4 * sizeof(index_type);
+		if(i < size) {
+			send_displ[i + 1] = send_count[i] + send_displ[i];
+		}
 	}
-	MPI_Scatterv(ien, send_count, send_disp, MPI_CHAR,
-							 mesh->ien, mesh->num[1] * 4 * sizeof(index_type), MPI_CHAR,
+	MPI_Scatterv(ien, send_count, send_displ, MPI_CHAR,
+							 CdamMeshIEN(mesh), mesh->num[1] * 4 * sizeof(index_type), MPI_CHAR,
 							 0, mesh->comm); 
+	send_displ[0] = 0;
 	for(i = 0; i < size; ++i) {
-		send_count[i] = (epart_count[size * 1 + i + 1] - epart_count[size * 1 + i]) * 6 * sizeof(index_type);
-		send_disp[i] = epart_count[size * 1 + i] * 6 * sizeof(index_type);
+		send_count[i] = epart_count[size * 1 + i] * 6 * sizeof(index_type);
+		if(i < size) {
+			send_displ[i + 1] = send_count[i] + send_displ[i];
+		}
 	}
-	MPI_Scatterv(ien + num[1] * 4, send_count, send_disp, MPI_CHAR,
+	MPI_Scatterv(ien + num[1] * 4, send_count, send_displ, MPI_CHAR,
 							 mesh->ien + mesh->num[1] * 4, mesh->num[2] * 6 * sizeof(index_type), MPI_CHAR,
 							 0, mesh->comm);
+	send_displ[0] = 0;
 	for(i = 0; i < size; ++i) {
-		send_count[i] = (epart_count[size * 2 + i + 1] - epart_count[size * 2 + i]) * 8 * sizeof(index_type);
-		send_disp[i] = epart_count[size * 2 + i] * 8 * sizeof(index_type);
+		send_count[i] = epart_count[size * 2 + i] * 8 * sizeof(index_type);
+		if(i < size) {
+			send_displ[i + 1] = send_count[i] + send_displ[i];
+		}
 	}
-	MPI_Scatterv(ien + num[1] * 4 + num[2] * 6, send_count, send_disp, MPI_CHAR,
+	MPI_Scatterv(ien + num[1] * 4 + num[2] * 6, send_count, send_displ, MPI_CHAR,
 							 mesh->ien + mesh->num[1] * 4 + mesh->num[2] * 6, mesh->num[3] * 8 * sizeof(index_type), MPI_CHAR,
 							 0, mesh->comm);
 
@@ -300,13 +305,43 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 		mesh->nodal_offset[i + 1] += mesh->nodal_offset[i];
 	}
 
+	/* Generate the l2g_exterior */
 	mesh->num[0] = CountDistinctEntry(mesh->ien, mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, NULL);
-	mesh->nodal_map_l2g_interior = (index_type*)CdamMallocHost(sizeof(index_type) * mesh->num[0]);
-	mesh->nodal_map_l2g_exterior = (index_type*)CdamMallocHost(sizeof(index_type) * mesh->num[0]);
+	mesh->nodal_map_l2g_interior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
+	mesh->nodal_map_l2g_exterior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
 	CountDistinctEntry(mesh->ien, mesh->num[0] * 4 + mesh->num[1] * 6 + mesh->num[2] * 8, mesh->nodal_map_l2g_exterior);
 
-	qsort_ctx = &(struct QsortCtx){npart, NULL, size};
+	int* npart_ownership = CdamTMalloc(int, num[0], HOST_MEM);
+	CdamMemset(npart_ownership, 0, sizeof(int) * num[0], HOST_MEM);
+	for(i = 0; i < mesh->nodal_offset[rank + 1] - mesh->nodal_offset[rank]; ++i) {
+		if(npart[mesh->nodal_map_l2g_exterior[i]] != rank) {
+			npart_ownership[mesh->nodal_map_l2g_exterior[i]] = 1;
+		}
+	}
+
+	MPI_Allreduce(MPI_IN_PLACE, npart_ownership, num[0], MPI_INT, MPI_MAX, mesh->comm);
+	qsort_ctx = &(struct QsortCtx){npart, npart_ownership, size};
 	qsort(mesh->nodal_map_l2g_exterior, mesh->num[0], sizeof(index_type), QsortCmpNpart);
+	mesh->num_exclusive_node = 0;
+	for(i = 0; i < mesh->nodal_offset[rank + 1] - mesh->nodal_offset[rank]; ++i) {
+		if(npart_ownership[mesh->nodal_map_l2g_exterior[i]] == 0) {
+			mesh->num_exclusive_node++;
+		}
+	}
+	CdamFree(npart_ownership, sizeof(int) * num[0], HOST_MEM);
+	/* Update mesh->ien using mesh->nodal_map_l2g_exterior */
+	/* Generate a g2l map */
+	index_type* g2l = CdamTMalloc(index_type, mesh->num[0] * 2, HOST_MEM);
+	for(i = 0; i < mesh->num[0]; ++i) {
+		g2l[i * 2 + 0] = mesh->nodal_map_l2g_exterior[i];
+		g2l[i * 2 + 1] = i;
+	}
+
+	qsort(g2l, mesh->num[0], sizeof(index_type) * 2, QsortCmpIndexType);
+	for(i = 0; i < mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8; ++i) {
+		index_type* p = (index_type*)bsearch(mesh->ien + i, g2l, mesh->num[0], sizeof(index_type) * 2, QsortCmpIndexType);
+		mesh->ien[i] = p[1];
+	}
 
 
 	/* Generate the l2g_interior */
@@ -318,7 +353,7 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	CdamMemset(send_node_count, 0, sizeof(int) * (size * 2 + 1), HOST_MEM);
 	CdamMemset(recv_node_count, 0, sizeof(int) * (size * 2 + 1), HOST_MEM);
 	index_type num_owned_node = mesh->nodal_offset[rank + 1] - mesh->nodal_offset[rank];
-	for(i = 0; i < num[0] - num_owned_node; ++i) {
+	for(i = 0; i < mesh->num[0] - num_owned_node; ++i) {
 		send_node_count[npart[mesh->nodal_map_l2g_exterior[i + num_owned_node]]] += sizeof(int);
 	}
 	MPI_Alltoall(send_node_count, sizeof(int), MPI_CHAR,
@@ -334,7 +369,7 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	for(i = 0; i < recv_node_offset[size]; ++i) {
 		/* find the local index in mesh->nodal_map_l2g_exterior */
 		index_type* p = (index_type*)bsearch(node_index_buff + i, mesh->nodal_map_l2g_exterior,
-																				 num[0] - num_owned_node, sizeof(index_type),
+																				 mesh->num[0] - num_owned_node, sizeof(index_type),
 																				 QsortCmpIndexType);
 		node_index_buff[i] = p - mesh->nodal_map_l2g_exterior;
 	}
@@ -346,28 +381,28 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	for(i = 0; i < num_owned_node; ++i) {
 		mesh->nodal_map_l2g_interior[i] = i + mesh->nodal_offset[rank];
 	}
-	for(i = 0; i < num[0] - num_owned_node; ++i) {
+	for(i = 0; i < mesh->num[0] - num_owned_node; ++i) {
 		index_type part = npart[mesh->nodal_map_l2g_interior[i + num_owned_node]];
 		mesh->nodal_map_l2g_interior[i + num_owned_node] += mesh->nodal_offset[part];
 	}
 
-	index_type *block_len = CdamTMalloc(index_type, num[0], HOST_MEM);
+	index_type *block_len = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
 	for(i = 0; i < num[0]; ++i) {
 		block_len[i] = 3;
 	}
 
-	CdamMeshCoord(mesh) = CdamTMalloc(value_type, num[0] * 3, HOST_MEM);
+	CdamMeshCoord(mesh) = CdamTMalloc(value_type, mesh->num[0] * 3, HOST_MEM);
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/xg", group_name);
-	H5ReadDatasetValIndexed(h5f, group_name, num[0],
-													block_len, mesh->nodal_map_l2g_interior, CdamMeshCoord(mesh));
+	H5ReadDatasetValIndexed(h5f, group_name, mesh->num[0],
+													block_len, mesh->nodal_map_l2g_exterior, CdamMeshCoord(mesh));
 
 	CdamFree(block_len, sizeof(index_type) * num[0], HOST_MEM);
-	CdamFree(epart_count, sizeof(index_type) * (size + 1) * 3, HOST_MEM);
+	CdamFree(epart_count, sizeof(index_type) * size * 3, HOST_MEM);
 	CdamFree(epart, sizeof(index_type) * (num[1] + num[2] + num[3]), HOST_MEM);
 	CdamFree(npart, sizeof(index_type) * num[0], HOST_MEM);
 	CdamFree(ien, sizeof(index_type) * (num[1] + num[2] + num[3]), HOST_MEM);
 	CdamFree(send_count, sizeof(int) * size, HOST_MEM);
-	CdamFree(send_disp, sizeof(int) * size, HOST_MEM);
+	CdamFree(send_displ, sizeof(int) * size, HOST_MEM);
 	CdamFree(send_node_count, sizeof(int) * (size * 2 + 1), HOST_MEM);
 	CdamFree(recv_node_count, sizeof(int) * (size * 2 + 1), HOST_MEM);
 	CdamFree(node_index_buff, sizeof(index_type) * recv_node_offset[size], HOST_MEM);

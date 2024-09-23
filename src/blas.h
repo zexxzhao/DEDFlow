@@ -48,6 +48,31 @@ typedef sparse_operation_t SPTrans;
 #define SP_C SPARSE_OPERATION_CONJUGATE_TRANSPOSE
 typedef sparse_matrix_t SPMatDesc;
 
+#elif defined(CDAM_USE_ACCELERATE)
+#include <Accelerate/Accelerate.h>
+typedef enum {
+	BLAS_T = CblasTrans,
+	BLAS_N = CblasNoTrans,
+	BLAS_C = CblasConjTrans
+} BLASTrans;
+
+typedef enum {
+	BLAS_UP = CblasUpper,
+	BLAS_LO = CblasLower
+} BLASUpLo;
+
+typedef enum {
+	BLAS_U = CblasUnit,
+	BLAS_NU = CblasNonUnit
+} BLASDiag;
+
+typedef enum {
+	SP_N = CblasNoTrans,
+	SP_T = CblasTrans
+} SPTrans;
+
+typedef sparse_matrix_double SPMatDesc;
+
 #else 
 #error "No BLAS library specified"
 #endif

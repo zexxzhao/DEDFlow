@@ -11,34 +11,34 @@
 __BEGIN_DECLS__
 typedef struct CSRHashMap CSRHashMap;
 struct CSRHashMap {
-	csr_index_type* buff;
-	csr_index_type* row_len;
+	index_type* buff;
+	index_type* row_len;
 	index_type size;
 };
 static CSRHashMap*
 CSRHashMapCreate(index_type size) {
-	CSRHashMap* map = (CSRHashMap*)CdamMallocHost(SIZE_OF(CSRHashMap));
-	map->buff = (index_type*)CdamMallocHost(SIZE_OF(index_type) * size * PREALLOC_SIZE);
-	memset(map->buff, 0, SIZE_OF(index_type) * size * PREALLOC_SIZE);
-	map->row_len = (index_type*)CdamMallocHost(SIZE_OF(index_type) * size);
-	memset(map->row_len, 0, SIZE_OF(index_type) * size);
+	CSRHashMap* map = CdamTMalloc(CSRHashMap, 1, HOST_MEM);
+	map->buff = CdamTMalloc(index_type, size * PREALLOC_SIZE, HOST_MEM);
+	CdamMemset(map->buff, 0, sizeof(index_type) * size * PREALLOC_SIZE, HOST_MEM);
+	map->row_len = CdamTMalloc(index_type, size, HOST_MEM);
+	CdamMemset(map->row_len, 0, sizeof(index_type) * size, HOST_MEM);
 	map->size = size;
 	return map;
 }
 
 static void
 CSRHashMapDestroy(CSRHashMap* map) {
-	CdamFreeHost(map->buff, map->size * PREALLOC_SIZE * SIZE_OF(csr_index_type));
-	CdamFreeHost(map->row_len, map->size * SIZE_OF(csr_index_type));
-	CdamFreeHost(map, SIZE_OF(map));
+	CdamFree(map->buff, map->size * PREALLOC_SIZE * sizeof(index_type), HOST_MEM);
+	CdamFree(map->row_len, map->size * sizeof(index_type), HOST_MEM);
+	CdamFree(map, sizeof(CSRHashMap), HOST_MEM);
 }
 
-static csr_index_type* lower_bound(csr_index_type* first,
-																	 csr_index_type* last,
-																	 csr_index_type value) {
-	csr_index_type* it;
-	csr_index_type count, step;
-	count = (csr_index_type)(last - first);
+static index_type* lower_bound(index_type* first,
+																	 index_type* last,
+																	 index_type value) {
+	index_type* it;
+	index_type count, step;
+	count = (index_type)(last - first);
 	while(count > 0) {
 		it = first;
 		step = count / 2;
@@ -68,7 +68,7 @@ static index_type CSRHashMapPush(CSRHashMap* map, index_type key, index_type val
 		row_len[key]++;
 	}
 	else if (*it != value) { /* the value is not in the row but in the middle */
-		memmove(it + 1, it, (row + len - it) * SIZE_OF(index_type));
+		memmove(it + 1, it, (row + len - it) * sizeof(index_type));
 		*it = value;
 		row_len[key]++;
 	}
@@ -79,7 +79,8 @@ static index_type CSRHashMapPush(CSRHashMap* map, index_type key, index_type val
 }
 
 static CSRHashMap*
-GetNodalGraphFromMesh(const CdamMesh* mesh) {
+GetNodalGraphFromMesh(CdamMesh* mesh) {
+
 	index_type num_node = CdamMeshNumNode(mesh);
 	index_type num_tet = CdamMeshNumTet(mesh);
 	index_type num_prism = CdamMeshNumPrism(mesh);
@@ -134,28 +135,28 @@ GetNodalGraphFromMesh(const CdamMesh* mesh) {
 #include "csr_impl.h"
 
 
-CSRAttr* CSRAttrCreate(CdamMesh* mesh) {
-	CSRAttr* attr = (CSRAttr*)CdamMallocHost(SIZE_OF(CSRAttr));
-	memset(attr, 0, SIZE_OF(CSRAttr));
-	index_type num_node = CdamMeshNumNode(mesh);
+CSRAttr* CSRAttrCreate(void* mesh) {
+	CSRAttr* attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
+	memset(attr, 0, sizeof(CSRAttr));
+	index_type num_node = CdamMeshNumNode((CdamMesh*)mesh);
 	index_type i, j;
 	index_type nnz = 0;
 	CSRAttrNumRow(attr) = num_node;
 	CSRAttrNumCol(attr) = num_node;
 
-	CSRHashMap* map = GetNodalGraphFromMesh(mesh);
+	CSRHashMap* map = GetNodalGraphFromMesh((CdamMesh*)mesh);
 	/* count nnz */
 	for(i = 0; i < num_node; i++) {
 		nnz += map->row_len[i];
 	}
 	CSRAttrNNZ(attr) = nnz;
-	csr_index_type* row_ptr= (csr_index_type*)CdamMallocHost(SIZE_OF(csr_index_type) * (num_node + 1));
-	csr_index_type* col_ind= (csr_index_type*)CdamMallocHost(SIZE_OF(csr_index_type) * nnz);
+	index_type* row_ptr = CdamTMalloc(index_type, num_node + 1, HOST_MEM);
+	index_type* col_ind = CdamTMalloc(index_type, nnz, HOST_MEM);
 
 	row_ptr[0] = 0;
 	for (i = 0; i < num_node; i++) {
 		row_ptr[i + 1] = row_ptr[i] + map->row_len[i];
-		memcpy(col_ind + row_ptr[i], map->buff + i * PREALLOC_SIZE, SIZE_OF(csr_index_type) * map->row_len[i]);
+		CdamMemcpy(col_ind + row_ptr[i], map->buff + i * PREALLOC_SIZE, sizeof(index_type) * map->row_len[i], HOST_MEM, HOST_MEM);
 	}
 
 	if(0){
@@ -172,21 +173,22 @@ CSRAttr* CSRAttrCreate(CdamMesh* mesh) {
 
 	CSRHashMapDestroy(map);
 
-	csr_index_type* row_ptr_dev = (csr_index_type*)CdamMallocDevice(SIZE_OF(csr_index_type) * (num_node + 1));
-	csr_index_type* col_ind_dev = (csr_index_type*)CdamMallocDevice(SIZE_OF(csr_index_type) * nnz);
-	cudaMemcpy(row_ptr_dev, row_ptr, SIZE_OF(csr_index_type) * (num_node + 1), cudaMemcpyHostToDevice);
-	cudaMemcpy(col_ind_dev, col_ind, SIZE_OF(csr_index_type) * nnz, cudaMemcpyHostToDevice);
-	CdamFreeHost(row_ptr, SIZE_OF(csr_index_type) * (num_node + 1));
-	CdamFreeHost(col_ind, SIZE_OF(csr_index_type) * nnz);
+	index_type* row_ptr_dev = CdamTMalloc(index_type, num_node + 1, DEVICE_MEM);
+	index_type* col_ind_dev = CdamTMalloc(index_type, nnz, DEVICE_MEM);
+	CdamMemcpy(row_ptr_dev, row_ptr, sizeof(index_type) * (num_node + 1), DEVICE_MEM, HOST_MEM);
+	CdamMemcpy(col_ind_dev, col_ind, sizeof(index_type) * nnz, DEVICE_MEM, HOST_MEM);
+	CdamFree(row_ptr, sizeof(index_type) * (num_node + 1), HOST_MEM);
+	CdamFree(col_ind, sizeof(index_type) * nnz, HOST_MEM);
+
 	CSRAttrRowPtr(attr) = row_ptr_dev;
 	CSRAttrColInd(attr) = col_ind_dev;
 	return attr;
 }
 
 
-CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_index_type block_col) {
-	CSRAttr* new_attr = (CSRAttr*)CdamMallocHost(SIZE_OF(CSRAttr));
-	memset(new_attr, 0, SIZE_OF(CSRAttr));
+CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, index_type block_row, index_type block_col) {
+	CSRAttr* new_attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
+	memset(new_attr, 0, sizeof(CSRAttr));
 	index_type nnz = CSRAttrNNZ(attr);
 	index_type num_row = CSRAttrNumRow(attr);
 	index_type num_col = CSRAttrNumCol(attr);
@@ -196,38 +198,38 @@ CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, csr_index_type block_row, csr_i
 
 	CSRAttrNNZ(new_attr) = nnz * block_row * block_col;
 
-	CSRAttrRowPtr(new_attr) = (csr_index_type*)CdamMallocDevice(SIZE_OF(csr_index_type) * (num_row * block_row + 1));
-	CSRAttrColInd(new_attr) = (csr_index_type*)CdamMallocDevice(SIZE_OF(csr_index_type) * nnz * block_row * block_col);
+	CSRAttrRowPtr(new_attr) = CdamTMalloc(index_type, num_row * block_row + 1, DEVICE_MEM);
+	CSRAttrColInd(new_attr) = CdamTMalloc(index_type, nnz * block_row * block_col, DEVICE_MEM);
 	new_attr->parent = attr;
 
 	if(block_row == 1 && block_col == 1) {
-		cudaMemcpy(CSRAttrRowPtr(new_attr), CSRAttrRowPtr(attr), SIZE_OF(csr_index_type) * (num_row + 1), cudaMemcpyDeviceToDevice);
-		cudaMemcpy(CSRAttrColInd(new_attr), CSRAttrColInd(attr), SIZE_OF(csr_index_type) * nnz, cudaMemcpyDeviceToDevice);
+		CdamMemcpy(CSRAttrRowPtr(new_attr), CSRAttrRowPtr(attr), sizeof(index_type) * (num_row + 1), DEVICE_MEM, DEVICE_MEM);
+		CdamMemcpy(CSRAttrColInd(new_attr), CSRAttrColInd(attr), sizeof(index_type) * nnz, DEVICE_MEM, DEVICE_MEM);
 	}
 	else {
-		csr_index_type block_size[2] = {block_row, block_col};
+		index_type block_size[2] = {block_row, block_col};
 		ExpandCSRByBlockSize(attr, new_attr, block_size);
 	}
 	return new_attr;
 }
 
 void CSRAttrDestroy(CSRAttr* attr) {
-	CdamFreeDevice(CSRAttrRowPtr(attr), (CSRAttrNumRow(attr) + 1) * SIZE_OF(csr_index_type));
-	CdamFreeDevice(CSRAttrColInd(attr), CSRAttrNNZ(attr) * SIZE_OF(csr_index_type));
-	CdamFreeHost(attr, SIZE_OF(CSRAttr));
+	CdamFree(CSRAttrRowPtr(attr), (CSRAttrNumRow(attr) + 1) * sizeof(index_type), DEVICE_MEM);
+	CdamFree(CSRAttrColInd(attr), CSRAttrNNZ(attr) * sizeof(index_type), DEVICE_MEM);
+	CdamFree(attr, sizeof(CSRAttr), HOST_MEM);
 }
 
-index_type CSRAttrLength(CSRAttr *attr, csr_index_type row) {
+index_type CSRAttrLength(CSRAttr *attr, index_type row) {
 	return CSRAttrRowPtr(attr)[row + 1] - CSRAttrRowPtr(attr)[row];
 }
 
-csr_index_type* CSRAttrRow(CSRAttr *attr, csr_index_type row) {
+index_type* CSRAttrRow(CSRAttr *attr, index_type row) {
 	return CSRAttrColInd(attr) + CSRAttrRowPtr(attr)[row];
 }
 
-void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, csr_index_type batch_size,
+void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, index_type batch_size,
 																 const index_type* row, const index_type* col,
-																 csr_index_type* ind) {
+																 index_type* ind) {
 	CSRAttrGetNZIndBatchedGPU(attr, batch_size, row, col, ind);
 }
 

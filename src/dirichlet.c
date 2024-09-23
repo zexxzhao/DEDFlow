@@ -6,14 +6,14 @@
 
 __BEGIN_DECLS__
 
-Dirichlet* DirichletCreate(const Mesh3D* mesh, index_type face_ind, index_type shape) {
-	Dirichlet* bc = (Dirichlet*)CdamMallocHost(SIZE_OF(Dirichlet) + SIZE_OF(BCType) * shape);
-	memset(bc, 0, SIZE_OF(Dirichlet) + SIZE_OF(BCType) * shape);
+Dirichlet* DirichletCreate(const CdamMesh* mesh, index_type face_ind, index_type shape) {
+	Dirichlet* bc = CdamTMalloc(Dirichlet, 1, HOST_MEM);
+	memset(bc, 0, sizeof(Dirichlet) + sizeof(BCType) * shape);
 	bc->mesh = mesh;
 	bc->face_ind = face_ind;
-	bc->buffer_size = Mesh3DBoundNumNode(mesh, face_ind);
-	bc->buffer = (index_type*)CdamMallocDevice(bc->buffer_size * SIZE_OF(index_type));
-	cudaMemcpy(bc->buffer, Mesh3DBoundNode(mesh, face_ind), bc->buffer_size * SIZE_OF(index_type), cudaMemcpyHostToDevice);
+	bc->buffer_size = CdamMeshBoundNumNode(mesh, face_ind);
+	bc->buffer = CdamTMalloc(index_type, bc->buffer_size, DEVICE_MEM);
+	CdamMemcpy(bc->buffer, CdamMeshBoundNode(mesh, face_ind), bc->buffer_size * sizeof(index_type), DEVICE_MEM, HOST_MEM);
 	bc->shape = shape;
 
 	return bc;
@@ -21,18 +21,18 @@ Dirichlet* DirichletCreate(const Mesh3D* mesh, index_type face_ind, index_type s
 
 void DirichletDestroy(Dirichlet* bc) {
 	index_type shape = bc->shape;
-	CdamFreeDevice(bc->buffer, bc->buffer_size * SIZE_OF(index_type));
+	CdamFree(bc->buffer, bc->buffer_size * sizeof(index_type), DEVICE_MEM);
 	bc->buffer_size = 0;
-	CdamFreeHost(bc, SIZE_OF(Dirichlet) + shape * SIZE_OF(BCType));
+	CdamFree(bc, sizeof(Dirichlet) + shape * sizeof(BCType), HOST_MEM);
 }
 
 void ApplyBCVecNodalGPU(value_type*, index_type, const index_type*, index_type, index_type);
 
 void DirichletApplyVec(Dirichlet* bc, value_type* b) {
-	const Mesh3D* mesh = bc->mesh;
+	const CdamMesh* mesh = bc->mesh;
 	index_type face_ind = bc->face_ind;
-	index_type bound_num_node = Mesh3DBoundNumNode(mesh, face_ind);
-	const index_type* bound_bnode = Mesh3DBoundNode(mesh, face_ind);
+	index_type bound_num_node = CdamMeshBoundNumNode(mesh, face_ind);
+	const index_type* bound_bnode = CdamMeshBoundNode(mesh, face_ind);
 
 	for(index_type ic = 0; ic < bc->shape; ++ic) {
 		if(bc->bctype[ic] == BC_STRONG) {
@@ -45,9 +45,9 @@ void GetRowFromNodeGPU(index_type, index_type*, index_type, index_type);
 void GetNodeFromRowGPU(index_type, index_type*, index_type);
 
 void DirichletApplyMat(Dirichlet* bc, Matrix* A) {
-	const Mesh3D* mesh = bc->mesh;
+	const CdamMesh* mesh = bc->mesh;
 	index_type face_ind = bc->face_ind;
-	index_type bound_num_node = Mesh3DBoundNumNode(mesh, face_ind);
+	index_type bound_num_node = CdamMeshBoundNumNode(mesh, face_ind);
 
 	index_type* buffer = (index_type*)bc->buffer;
 

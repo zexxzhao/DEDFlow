@@ -4,9 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <hdf5.h>
-#if H5_VERS_MAJOR == 1 && H5_VERS_MINOR >= 12
-#define H5_USE_16_API
-#endif
 #include "common.h"
 
 

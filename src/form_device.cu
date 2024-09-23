@@ -88,32 +88,34 @@ __BEGIN_DECLS__
  * The destination array is columned-majored of size (max(NSHL * BS, stridey), batch_size)
  * @tparam NSHL The number of shape functions
  * @param[in] batch_size The number of elements in the batch
- * @param[in] elem_size The size of the element
  * @param[in] batch_index_ptr[:] The index of the elements in the batch
  * @param[in] ien[NSHL, :] The index of the nodes in the element
- * @param[in] x[ldx, :] The source array to be loaded
- * @param[in] stridex The increment of the source array, stridex >= elem_size
- * @param[out] y[ldy, :] The destination array to be loaded
- * @param[in] stridey The increment of the destination array, stridey >= BS * NSHL
+ * @param[in] nshl The size of the element
+ * @param[in] elem_size The size of the element in bytes
+ * @param[in] x[xstride, :] The source array to be loaded
+ * @param[in] xstride The increment of the source array, stridex >= elem_size
+ * @param[out] y[ystride, :] The destination array to be loaded
+ * @param[in] ystride The increment of the destination array, stridey >= BS * NSHL
  */
 __global__ void LoadElementValueKernel(index_type batch_size,
 																			 const index_type* batch_index_ptr,
-																			 const index_type* ien, int elem_size,
-																			 const value_type* x, int stridex,
-																			 value_type* y, int stridey,
-																			 int NSHL) {
+																			 const index_type* ien, int nshl,
+																			 int elem_size,
+																			 void* x, int xstride,
+																			 void* y, int ystride) {
 
 	index_type idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if(idx >= batch_size * NSHL) return;
-	index_type i = idx / NSHL, lane = idx % NSHL;
+	if(idx >= batch_size * nshl) return;
+	index_type i = idx / nshl, lane = idx % nshl;
 	index_type iel = batch_index_ptr[i];
-	index_type node_id = ien[iel * NSHL + lane];
+	index_type node_id = ien[iel * nshl + lane];
+	index_type j;
 
-	y += i * stridey;
-	x += node_id * stridex;
+	byte* by = y + i * stridey;
+	byte* bx = x + node_id * stridex;
 
-	for (index_type j = 0; j < elem_size; ++j) {
-		y[j * NSHL + lane] = x[j];
+	for(j = 0; j < elem_size; ++j) {
+		by[j] = bx[j];
 	}
 }
 
@@ -984,6 +986,15 @@ GetShapeGradKernel(index_type num_elem, const value_type* elem_invJ, value_type*
 }
 
 
+void LoadElementValue(index_type batch_size, index_type* batch_ptr,
+											index_type* ien, index_type nshl, index_type elem_size,
+											value_type* x, index_type xstride,
+											value_type* y, index_type ystride) {
+	int block_size = 256;
+	int num_block = CEIL_DIV(batch_size * nshl, block_size); 
+	
+	LoadElementValueKernel<<<num_block, block_size>>>(batch_size, batch_ptr, ien, nshl, elem_size, x, xstride, y, ystride);
+}
 
 void GetShapeGrad(index_type num_elem, value_type* elem_invJ, value_type* shgrad) {
 	int block_size = 256;

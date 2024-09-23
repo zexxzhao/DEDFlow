@@ -2,7 +2,7 @@
 #define __KRYLOV_H__
 
 // #include <cusparse.h>
-#include <cublas_v2.h>
+// #include <cublas_v2.h>
 #include "common.h"
 #include "matrix.h"
 

@@ -63,7 +63,11 @@ b32 H5GroupExist(H5FileInfo* h5file, const char* group_name) {
 	if(! H5Lexists(file_id, group_name, H5P_DEFAULT)) {
 		return false;
 	}
+#if H5_VERSION_GE(1, 12, 0)
+	status = H5Oget_info_by_name(file_id, group_name, &obj_info, H5P_DEFAULT, H5P_DEFAULT);
+#else
 	status = H5Oget_info_by_name(file_id, group_name, &obj_info, H5P_DEFAULT);
+#endif
 	return status >= 0 && obj_info.type == H5O_TYPE_GROUP;
 }
 /* Check the existence of a dataset */
@@ -74,7 +78,11 @@ b32 H5DatasetExist(H5FileInfo* h5file, const char* dataset_name) {
 	if(! H5Lexists(file_id, dataset_name, H5P_DEFAULT)) {
 		return false;
 	}
+#if H5_VERSION_GE(1, 12, 0)
+	status = H5Oget_info_by_name(file_id, dataset_name, &obj_info, H5P_DEFAULT, H5P_DEFAULT);
+#else
 	status = H5Oget_info_by_name(file_id, dataset_name, &obj_info, H5P_DEFAULT);
+#endif
 	return status >= 0 && obj_info.type == H5O_TYPE_DATASET;
 }
 
