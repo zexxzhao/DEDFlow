@@ -627,8 +627,38 @@ static void PCJacobiApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 }
 
 static void PCSchurAllocPrivate(CdamPC* pc, void* A, void* config) {
-
+	/* TODO */
 }
+static void PCSchurSetupPrivate(CdamPC* pc, void* A, void* config) {
+	/* TODO */
+}
+static void PCSchurDestroyPrivate(CdamPC* pc) {
+	/* TODO */
+}
+static void PCSchurApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
+	/* TODO */
+}
+
+static void PCKSPAllocPrivate(CdamPC* pc, void* A, void* config) {
+	UNUSED(A);
+	UNUSED(config);
+	CdamKrylovCreate((CdamKrylov**)&pc->ksp);
+}
+static void PCKSPSetupPrivate(CdamPC* pc, void* A, void* config) {
+	CdamKrylovSetup((CdamKrylov*)pc->ksp, (Matrix*)A, config);
+}
+static void PCKSPDestroyPrivate(CdamPC* pc) {
+	CdamKrylovDestroy((CdamKrylov*)pc->ksp);
+}
+static void PCKSPApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
+	CdamKrylovSolve((CdamKrylov*)pc->ksp, (Matrix*)pc->mat, y, x);
+}
+
+static void PCCompositeAllocPrivate(CdamPC* pc, void* A, void* config) {
+	UNUSED(A);
+	UNUSED(config);
+}
+
 
 __END_DECLS__
 

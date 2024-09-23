@@ -28,6 +28,9 @@ void CSRAttrDestroy(CSRAttr *attr);
 
 CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, index_type block_row, index_type block_col);
 
+void GenerateSubmatCSRAttr(CSRAttr* attr, index_type nr, index_type* row,
+													 index_type nc, index_type* col, CSRAttr** submat);
+
 index_type CSRAttrLength(CSRAttr *attr, index_type row);
 index_type* CSRAttrRow(CSRAttr *attr, index_type row);
 

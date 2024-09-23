@@ -170,5 +170,82 @@ void CSRAttrGetNZIndBatchedGPU(const CSRAttr* attr,
 																																	  batch_size, row, col, ind);
 
 }
+__global__ void GetSubmatRowLength(index_type nrowm index_type ncol, index_type nnz,
+																	 index_type* row_ptr, index_type* col_ind,
+																	 index_type nr, index_type* row, index_type nc, index_type* col,
+																	 index_type* new_row_ptr) {
+	index_type i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i > nr) return;
+
+	index_type start = row_ptr[row[i]];
+	index_type end = row_ptr[row[i] + 1];
+
+	index_type len = 0;
+
+	index_type j, k, ic;
+	for(j = start; j < end; ++j) {
+		ic = col_ind[j];
+		for(k = 0; k < nc; ++k) {
+			if(col[k] == ic) {
+				++len;
+				break;
+			}
+		}
+	}
+	new_row_ptr[i] = len;
+}
+__global__ void GetSubmatColInd(index_type nrow, index_type ncol, index_type nnz,
+																index_type* row_ptr, index_type* col_ind,
+																index_type nr, index_type* row, index_type nc, index_type* col,
+																index_type* new_row_ptr, index_type* new_col_ind) {
+	index_type i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i > nr) return;
+
+	index_type start = row_ptr[row[i]];
+	index_type end = row_ptr[row[i] + 1];
+
+	index_type len = 0;
+
+	index_type j, k, ic;
+	new_col_ind += new_row_ptr[i];
+	for(j = start; j < end; ++j) {
+		ic = col_ind[j];
+		for(k = 0; k < nc; ++k) {
+			if(col[k] == ic) {
+				new_col_ind[len] = k;
+				++len;
+				break;
+			}
+		}
+	}
+}
+
+void GenerateSubmatCSRAttrGPU(CSRAttr* attr, index_type nr, index_type* row,
+															index_type nc, index_type* col, CSRAttr** new_attr) {
+	index_type num_rows = CSRAttrNumRow(attr);
+	index_type num_cols = CSRAttrNumCol(attr);
+	*new_attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
+	CdamMemset(*new_attr, 0, sizeof(CSRAttr));
+	(*new_attr)->num_row = nr;
+	(*new_attr)->num_col = nc;
+	(*new_attr)->row_ptr = CdamTMalloc(index_type, nr + 1, DEVICE_MEM);
+	CdamMemset((*new_attr)->row_ptr, 0, sizeof(index_type) * (nr + 1));
+
+	GetSubmatRowLength<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
+																								 CSRAttrRowPtr(attr), CSRAttrColInd(attr),
+																								 nr, row, nc, col, CSRAttrRowPtr(*new_attr) + 1);
+
+	thrust::inclusive_scan(thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr)),
+												 thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr) + nr + 1),
+												 thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr)));
+
+
+	CdamMemcpy(&(*new_attr)->nnz, &CSRAttrRowPtr(*new_attr)[nr], sizeof(index_type), HOST_MEM, DEVICE_MEM);
+	(*new_attr)->col_ind = CdamTMalloc(index_type, (*new_attr)->nnz, DEVICE_MEM);
+	GetSubmatColInd<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
+																						  CSRAttrRowPtr(attr), CSRAttrColInd(attr),
+																						  nr, row, nc, col, CSRAttrRowPtr(*new_attr), CSRAttrColInd(*new_attr));
+}
+															
 
 __END_DECLS__

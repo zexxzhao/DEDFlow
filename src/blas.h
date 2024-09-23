@@ -123,6 +123,8 @@ void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int 
 
 /* Sparse BLAS */
 
+void SpMatCreate(SPMatDesc* matDesc, int m, int n, int nnz, int* row_ptr, int* col_ind, double* values);
+void SpMatDestroy(SPMatDesc matDesc);
 void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize);
 void dspmvPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
 void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);

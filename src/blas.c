@@ -95,6 +95,15 @@ void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int 
 }
 
 /* Sparse BLAS */
+
+void SpMatCreate(SPMatDesc* matDesc, int m, int n, int* row_ptr, int* col_ind, double* values) {
+	cusparseCreateCsr(matDesc, m, n, row_ptr, col_ind, values, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+}	
+
+void SpMatDestroy(SPMatDesc matDesc) {
+	cusparseDestroyCsr(matDesc);
+}
+
 void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize) {
 	cusparseDnVecDescr_t xDescr, yDescr;
 	i64 n_row, n_col;
@@ -253,6 +262,14 @@ void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int 
 }
 
 /* Sparse BLAS */
+void SpMatCreate(SPMatDesc* matDesc, int m, int n, int* row_ptr, int* col_ind, double* values) {
+	mkl_sparse_d_create_csr(matDesc, SPARSE_INDEX_BASE_ZERO, m, n, row_ptr, row_ptr + 1, col_ind, values);
+}
+
+void SpMatDestroy(SPMatDesc matDesc) {
+	mkl_sparse_destroy(matDesc);
+}
+
 void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize) {
 	*bufferSize = 0;
 }

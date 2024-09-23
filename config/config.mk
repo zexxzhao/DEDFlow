@@ -1,8 +1,11 @@
 # Description: Configuration file for CDAM
 DEBUG=1
-CDAM_USE_CUDA=0
+
+
+
+CDAM_USE_CUDA=1
 CDAM_USE_MKL=0
-CDAM_USE_ACCELERATE=1
+CDAM_USE_ACCELERATE=0
 
 
 # These packages are required

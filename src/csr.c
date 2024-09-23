@@ -213,6 +213,60 @@ CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, index_type block_row, index_typ
 	return new_attr;
 }
 
+void GenerateSubmatCSRAttr(CSRAttr* attr, index_type nr, index_type* row,
+													 index_type nc, index_type* col, CSRAttr** submat) {
+#ifdef CDAM_USE_CUDA
+	GenerateSubmatCSRAttrGPU(attr, nr, row, nc, col, submat);
+#else
+	*submat = CdamTMalloc(CSRAttr, 1, HOST_MEM);
+	CdamMemset(*submat, 0, sizeof(CSRAttr), HOST_MEM);
+	CSRAttrNumRow(*submat) = nr;
+	CSRAttrNumCol(*submat) = nc;
+	CSRAttrNNZ(*submat) = 0;
+
+	index_type i, j, k;
+	index_type nnz = 0;
+	/* Count row length */
+	CSRAttrRowPtr(*submat) = CdamTMalloc(index_type, nr + 1, DEVICE_MEM);
+	CdamMemset(CSRAttrRowPtr(*submat), 0, sizeof(index_type) * (nr + 1), DEVICE_MEM);
+	for(i = 0; i < nr; i++) {
+		for(j = CSRAttrRowPtr(attr)[row[i]]; j < CSRAttrRowPtr(attr)[row[i] + 1]; j++) {
+			for(k = 0; k < nc; k++) {
+				if(CSRAttrColInd(attr)[j] == col[k]) {
+					CSRAttrRowPtr(*submat)[i + 1]++;
+					nnz++;
+					break;
+				}
+			}
+		}
+	}
+	/* Prefix sum */
+	for(i = 0; i < nr; i++) {
+		CSRAttrRowPtr(*submat)[i + 1] += CSRAttrRowPtr(*submat)[i];
+	}
+	/* Copy column indices */
+	CSRAttrColInd(*submat) = CdamTMalloc(index_type, nnz, DEVICE_MEM);
+	index_type* row_ptr = CSRAttrRowPtr(*submat);
+	index_type* col_ind = CSRAttrColInd(*submat);
+
+	for(i = 0; i < nr; i++) {
+		index_type start = row_ptr[i];
+		index_type end = row_ptr[i + 1];
+		index_type count = 0;
+		for(j = CSRAttrRowPtr(attr)[row[i]]; j < CSRAttrRowPtr(attr)[row[i] + 1]; j++) {
+			for(k = 0; k < nc; k++) {
+				if(CSRAttrColInd(attr)[j] == col[k]) {
+					col_ind[start + count] = k;
+					count++;
+					break;
+				}
+			}
+		}
+	}
+
+#endif
+}
+
 void CSRAttrDestroy(CSRAttr* attr) {
 	CdamFree(CSRAttrRowPtr(attr), (CSRAttrNumRow(attr) + 1) * sizeof(index_type), DEVICE_MEM);
 	CdamFree(CSRAttrColInd(attr), CSRAttrNNZ(attr) * sizeof(index_type), DEVICE_MEM);
