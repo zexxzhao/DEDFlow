@@ -4,7 +4,6 @@
 #include <amgx_c.h>
 #endif
 #include "common.h"
-#include "matrix.h"
 
 __BEGIN_DECLS__
 
@@ -96,10 +95,10 @@ struct CdamPC {
 // 	void* data;
 // };
 
-CdamPC* CdamPCCreateNone(Matrix* mat, index_type n);
-CdamPC* CdamPCCreateJacobi(Matrix* mat, index_type bs, void* cublas_handle);
-CdamPC* CdamPCCreateDecomposition(Matrix* mat, index_type n, const index_type* offset, void* cublas_handle);
-CdamPC* CdamPCCreateAMGX(Matrix* mat, void* options);
+CdamPC* CdamPCCreateNone(void* mat, index_type n);
+CdamPC* CdamPCCreateJacobi(void* mat, index_type bs, void* cublas_handle);
+CdamPC* CdamPCCreateDecomposition(void* mat, index_type n, const index_type* offset, void* cublas_handle);
+CdamPC* CdamPCCreateAMGX(void* mat, void* options);
 void CdamPCSetup(CdamPC* pc, void* config);
 void CdamPCDestroy(CdamPC* pc);
 void CdamPCApply(CdamPC* pc, f64* x, f64* y);

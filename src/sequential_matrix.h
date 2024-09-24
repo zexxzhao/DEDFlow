@@ -2,6 +2,7 @@
 #define __SEQUENTIAL_MATRIX_H__
 
 #include "common.h"
+#include "csr.h"
 #include "matrix_util.h"
 
 __BEGIN_DECLS__
@@ -11,7 +12,7 @@ struct SeqMatOp {
 	void (*destroy)(void* A);
 
 	void (*zero)(void* A);
-	void (*zere_row)(void* A, index_type row, index_type* rows, index_shift shift, value_type diag);
+	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary_data);
 
 	void (*copy)(void* A, void* B);
@@ -31,7 +32,7 @@ struct SeqMat {
 	MatStorageMethod cmap_storage;
 	index_type size[2];
 	void* data;
-	SeqMatOp op[1];
+	struct SeqMatOp op[1];
 };
 
 #define SeqMatType(A) (((SeqMat*)A)->type)
@@ -52,7 +53,7 @@ struct SeqMatCSR {
 
 	value_type* data;
 
-	SpMatDescr descr;
+	SPMatDesc descr;
 	index_type buffer_size;
 	void* buffer;
 };
@@ -74,7 +75,7 @@ void SeqMatSetup(void* A);
 void SeqMatDestroy(void* A);
 
 void SeqMatZero(void* A);
-void SeqMatZeroRow(void* A, index_type row, index_type* rows, index_shift shift, value_type diag);
+void SeqMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 
 void SeqMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary_data);
 

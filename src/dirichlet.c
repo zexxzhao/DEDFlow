@@ -1,7 +1,7 @@
 #include <string.h>
 #include "alloc.h"
 #include "Mesh.h"
-#include "matrix.h"
+#include "parallel_matrix.h"
 #include "dirichlet.h"
 
 __BEGIN_DECLS__
@@ -44,7 +44,7 @@ void DirichletApplyVec(Dirichlet* bc, value_type* b) {
 void GetRowFromNodeGPU(index_type, index_type*, index_type, index_type);
 void GetNodeFromRowGPU(index_type, index_type*, index_type);
 
-void DirichletApplyMat(Dirichlet* bc, Matrix* A) {
+void DirichletApplyMat(Dirichlet* bc, void* A) {
 	const CdamMesh* mesh = bc->mesh;
 	index_type face_ind = bc->face_ind;
 	index_type bound_num_node = CdamMeshBoundNumNode(mesh, face_ind);
@@ -54,7 +54,8 @@ void DirichletApplyMat(Dirichlet* bc, Matrix* A) {
 	for(index_type ic = 0; ic < bc->shape; ++ic) {
 		if(bc->bctype[ic] == BC_STRONG) {
 			GetRowFromNodeGPU(bound_num_node, buffer, (index_type)bc->shape, ic);
-			MatrixZeroRow(A, bound_num_node, buffer, 0, 1.0);
+			// MatrixZeroRow(A, bound_num_node, buffer, 0, 1.0);
+			CdamParMatZeroRow(A, bound_num_node, buffer, 0, 1.0);
 			GetNodeFromRowGPU(bound_num_node, buffer, bc->shape);
 		}
 	}

@@ -7,7 +7,7 @@ __BEGIN_DECLS__
 
 void CdamParMatCreate(MPI_Comm comm, void** A) {
 	*A = CdamTMalloc(CdamParMat, 1, HOST_MEM);
-	CdamMemset(*A, 0, sizeof(CdamParMat));
+	CdamMemset(*A, 0, sizeof(CdamParMat), HOST_MEM);
 	((CdamParMat*)*A)->comm = comm;
 }
 void CdamParMatDestroy(void* A) {
@@ -33,7 +33,7 @@ void CdamParMatZero(void* A) {
 	SeqMatZero(CdamParMatDiag(A));
 	SeqMatZero(CdamParMatOffd(A));
 }
-void CdamParMatZeroRow(void* A, index_type row, index_type* rows, index_shift shift, value_type diag) {
+void CdamParMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag) {
 	SeqMatZeroRow(CdamParMatDiag(A), row, rows, shift, diag);
 }
 void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B) {

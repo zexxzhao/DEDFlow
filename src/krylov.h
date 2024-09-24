@@ -4,12 +4,11 @@
 // #include <cusparse.h>
 // #include <cublas_v2.h>
 #include "common.h"
-#include "matrix.h"
+#include "parallel_matrix.h"
 
 __BEGIN_DECLS__
 
-// typedef void (*PCApplyFunc)(Matrix*, value_type*, value_type*, void*);
-typedef void (*KSPSolveFunc)(Matrix*, value_type*, value_type*, void*);
+typedef void (*KSPSolveFunc)(void*, value_type*, value_type*, void*);
 typedef struct Krylov Krylov;
 struct Krylov {
 	index_type max_iter;
@@ -27,7 +26,7 @@ Krylov* KrylovCreateCG(index_type, f64, f64, void*);
 Krylov* KrylovCreateGMRES(index_type, f64, f64, void*);
 void KrylovDestroy(Krylov* krylov);
 
-void KrylovSolve(Krylov* krylov, Matrix* A, f64* b, f64* x);
+void KrylovSolve(Krylov* krylov, void* A, f64* b, f64* x);
 
 typedef struct CdamKrylovOp CdamKrylovOp;
 struct CdamKrylovOp {

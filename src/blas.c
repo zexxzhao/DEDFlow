@@ -11,6 +11,14 @@ static cusparseHandle_t GetCusparseHandle() {
 	return *(cusparseHandle_t*)GlobalContextGet(GLOBAL_CONTEXT_CUSPARSE_HANDLE);
 }
 
+/* BLAS Helper */
+void SetPointerModeDevice() {
+	cublasSetPointerMode(GetCublasHandle(), CUBLAS_POINTER_MODE_DEVICE);
+}
+void SetPointerModeHost() {
+	cublasSetPointerMode(GetCublasHandle(), CUBLAS_POINTER_MODE_HOST);
+}
+
 /* BLAS Level 1 */
 void dscal(int n, double alpha, double *x, int incx) {
 	cublasDscal(GetCublasHandle(), n, &alpha, x, incx);	
@@ -153,6 +161,9 @@ void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double 
 
 
 #elif defined(CDAM_USE_MKL)
+/* BLAS Helper */
+void SetPointerModeDevice() {}
+void SetPointerModeHost() {}
 
 /* BLAS Level 1 */
 void dscal(int n, double alpha, double *x, int incx) {

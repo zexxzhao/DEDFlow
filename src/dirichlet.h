@@ -3,7 +3,6 @@
 
 #include "common.h"
 #include "Mesh.h"
-#include "matrix.h"
 
 __BEGIN_DECLS__
 
@@ -29,7 +28,7 @@ Dirichlet* DirichletCreate(const CdamMesh* mesh, index_type face_ind, index_type
 void DirichletDestroy(Dirichlet* dirichlet);
 
 void DirichletApplyVec(Dirichlet* dirichlet, value_type* b);
-void DirichletApplyMat(Dirichlet* dirichlet, Matrix* A);
+void DirichletApplyMat(Dirichlet* dirichlet, void* A);
 
 
 __END_DECLS__

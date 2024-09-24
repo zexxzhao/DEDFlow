@@ -78,6 +78,9 @@ typedef sparse_matrix_double SPMatDesc;
 #endif
 
 __BEGIN_DECLS__
+/* BLAS Helper */
+void SetPointerModeDevice();
+void SetPointerModeHost();
 
 /* BLAS Level 1 */
 void dscal(int n, double alpha, double *x, int incx);

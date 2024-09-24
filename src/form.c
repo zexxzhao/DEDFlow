@@ -4,7 +4,7 @@
 #include "json.h"
 #include "Mesh.h"
 #include "csr.h"
-#include "matrix.h"
+#include "parallel_matrix.h"
 
 #include "assemble.h"
 
@@ -252,7 +252,8 @@ void AssembleSystem(void* mesh, void* wgalpha, void* dwgalpha,
 		CdamMemset(F, 0, num_node * bs * sizeof(value_type), DEVICE_MEM);
 	}
 	if (J) {
-		MatrixZero(J);
+		// MatrixZero(J);
+		CdamParMatZero(J);
 	}
 
 	if (num_tet) {

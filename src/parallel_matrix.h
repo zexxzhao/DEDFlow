@@ -1,16 +1,18 @@
 #ifndef __PARALLEL_MATRIX_H__
 #define __PARALLEL_MATRIX_H__
 
+#include <mpi.h>
 #include "common.h"
+#include "matrix_util.h"
 
 __BEGIN_DECLS__
 
 struct CdamParMatOp {
-	void (*setup)(void* A, void* ctx);
+	void (*setup)(void* A, void* diag, void* offd);
 	void (*destroy)(void* A);
 
 	void (*zero)(void* A);
-	void (*zere_row)(void* A, index_type row, index_type* rows, index_shift shift, value_type diag);
+	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
 
 	void (*copy)(void* A, void* B);
@@ -54,11 +56,15 @@ typedef struct CdamParMat CdamParMat;
 #define CdamParMatNumRowExclusive(A) (((CdamParMat*)(A))->row_count[0])
 #define CdamParMatNumRowShared(A) (((CdamParMat*)(A))->row_count[1])
 #define CdamParMatNumRowGhosted(A) (((CdamParMat*)(A))->row_count[2])
+#define CdamParMatNumRowAll(A) (CdamParMatNumRowExclusive(A) + CdamParMatNumRowShared(A) + CdamParMatNumRowGhosted(A))
+#define CdamParMatNumRowOwned(A) (CdamParMatNumRowExclusive(A) + CdamParMatNumRowShared(A))
 #define CdamParMatColBegin(A) (((CdamParMat*)(A))->col_range[0])
 #define CdamParMatColEnd(A) (((CdamParMat*)(A))->col_range[1])
 #define CdamParMatNumColExclusive(A) (((CdamParMat*)(A))->col_count[0])
 #define CdamParMatNumColShared(A) (((CdamParMat*)(A))->col_count[1])
 #define CdamParMatNumColGhosted(A) (((CdamParMat*)(A))->col_count[2])
+#define CdamParMatNumColAll(A) (CdamParMatNumColExclusive(A) + CdamParMatNumColShared(A) + CdamParMatNumColGhosted(A))
+#define CdamParMatNumColOwned(A) (CdamParMatNumColExclusive(A) + CdamParMatNumColShared(A))
 #define CdamParMatRowMap(A) (((CdamParMat*)(A))->row_map)
 #define CdamParMatColMap(A) (((CdamParMat*)(A))->col_map)
 #define CdamParMatDiag(A) (((CdamParMat*)(A))->diag)
@@ -68,10 +74,10 @@ typedef struct CdamParMat CdamParMat;
 
 void CdamParMatCreate(MPI_Comm comm, void** A);
 void CdamParMatDestroy(void* A);
-void CdamParMatSetup(void* A);
+void CdamParMatSetup(void* A, void* diag, void* offd);
 
 void CdamParMatZero(void* A);
-void CdamParMatZeroRow(void* A, index_type row, index_type* rows, index_shift shift, value_type diag);
+void CdamParMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
 
 void CdamParMatCopy(void* A, void* B);
