@@ -93,33 +93,35 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 												double *C, int ldc, int strideC, int batchCount) {
 	cublasDgemmStridedBatched(GetCublasHandle(), transA, transB, m, n, k, &alpha, A, lda, strideA, B, ldb, strideB, &beta, C, ldc, strideC, batchCount);
 
+}
 
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
 	cublasDgetrfBatched(GetCublasHandle(), n, Aarray, lda, PivotArray, infoArray, batchSize);
 }
-void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
-	cublasDgetriBatched(GetCublasHandle(), n, Aarray, lda, PivotArray, infoArray, batchSize);
+void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, double *const Carray[], int ldc, int *infoArray, int batchSize) {
+	cublasDgetriBatched(GetCublasHandle(), n, (const double* const*)Aarray, lda, PivotArray, Carray, ldc, infoArray, batchSize);
 }
 
 /* Sparse BLAS */
 
-void SpMatCreate(SPMatDesc* matDesc, int m, int n, int* row_ptr, int* col_ind, double* values) {
-	cusparseCreateCsr(matDesc, m, n, row_ptr, col_ind, values, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+void SpMatCreate(SPMatDesc* matDesc, int m, int n, int nnz, int* row_ptr, int* col_ind, double* values) {
+	cusparseCreateCsr(matDesc, m, n, nnz, row_ptr, col_ind, values, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 }	
 
 void SpMatDestroy(SPMatDesc matDesc) {
-	cusparseDestroyCsr(matDesc);
+	cusparseDestroySpMat(matDesc);
 }
 
 void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize) {
-	cusparseDnVecDescr_t xDescr, yDescr;
-	i64 n_row, n_col;
-	cusparseSpMatGetSize(matA, &n_row, &n_col);
-	cusparseCreateDnVec(&xDescr, n_col, x);
-	cusparseCreateDnVec(&yDescr, n_row, y);
+	cusparseConstDnVecDescr_t xDescr;
+	cusparseDnVecDescr_t yDescr;
+	i64 n_row, n_col, nnz;
+	cusparseSpMatGetSize(matA, &n_row, &n_col, &nnz);
+	cusparseCreateConstDnVec(&xDescr, n_col, x, CUDA_R_64F);
+	cusparseCreateDnVec(&yDescr, n_row, y, CUDA_R_64F);
 
-	cusparseSPMV_bufferSize(GetCusparseHandle(), trans,
+	cusparseSpMV_bufferSize(GetCusparseHandle(), trans,
 													&alpha, matA, xDescr, &beta, yDescr,
 													CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, bufferSize);
 
@@ -129,13 +131,14 @@ void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* 
 
 void dspmvPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer) {
 #if defined(CUSPARSE_VERSION) && CUSPARSE_VERSION > 12300
-	cusparseDnVecDescr_t xDescr, yDescr;
-	i64 n_row, n_col;
-	cusparseSpMatGetSize(matA, &n_row, &n_col);
-	cusparseCreateDnVec(&xDescr, n_col, x);
-	cusparseCreateDnVec(&yDescr, n_row, y);
+	cusparseConstDnVecDescr_t xDescr;
+	cusparseDnVecDescr_t yDescr;
+	i64 n_row, n_col, nnz;
+	cusparseSpMatGetSize(matA, &n_row, &n_col, &nnz);
+	cusparseCreateConstDnVec(&xDescr, n_col, x, CUDA_R_64F);
+	cusparseCreateDnVec(&yDescr, n_row, y, CUDA_R_64F);
 
-	cusparseSPMV_preprocess(GetCusparseHandle(), trans,
+	cusparseSpMV_preprocess(GetCusparseHandle(), trans,
 													&alpha, matA, xDescr, &beta, yDescr,
 													CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer);
 
@@ -145,13 +148,14 @@ void dspmvPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* 
 }
 
 void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer) {
-	cusparseDnVecDescr_t xDescr, yDescr;
-	i64 n_row, n_col;
-	cusparseSpMatGetSize(matA, &n_row, &n_col);
-	cusparseCreateDnVec(&xDescr, n_col, x);
-	cusparseCreateDnVec(&yDescr, n_row, y);
+	cusparseConstDnVecDescr_t xDescr;
+	cusparseDnVecDescr_t yDescr;
+	i64 n_row, n_col, nnz;
+	cusparseSpMatGetSize(matA, &n_row, &n_col, &nnz);
+	cusparseCreateConstDnVec(&xDescr, n_col, x, CUDA_R_64F);
+	cusparseCreateDnVec(&yDescr, n_row, y, CUDA_R_64F);
 
-	cusparseSPMV(GetCusparseHandle(), trans,
+	cusparseSpMV(GetCusparseHandle(), trans,
 							 &alpha, matA, xDescr, &beta, yDescr,
 							 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer);
 
@@ -265,10 +269,10 @@ void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int 
 	}
 }
 
-void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
+void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, double *const Carray[], int ldc, int *infoArray, int batchSize) {
 	int i;
 	for (i = 0; i < batchSize; i++) {
-		infoArray[i] = LAPACKE_dgetri(LAPACK_COL_MAJOR, n, Aarray[i], lda, PivotArray + i * n);
+		infoArray[i] = LAPACKE_dgetri(LAPACK_COL_MAJOR, n, Aarray[i], lda, PivotArray + i * n, Carray[i], ldc);
 	}
 }
 

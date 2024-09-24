@@ -8,8 +8,6 @@ __BEGIN_DECLS__
 
 #define CDAM_COMMUTOR_MAX_NUM_TASK (1024)
 
-struct CdamMesh;
-typedef struct CdamCommutor CdamCommutor;
 struct CdamCommutor {
 	MPI_Comm comm;
 	int rank, num_procs;
@@ -27,11 +25,14 @@ struct CdamCommutor {
 	MPI_Request req[CDAM_COMMUTOR_MAX_NUM_TASK]; /* request for communication */
 	MPI_Status stat[CDAM_COMMUTOR_MAX_NUM_TASK]; /* status for communication */
 	
+	int num_node_local;
+	int num_node_global;
 	int* shared_node;
 };
+typedef struct CdamCommutor CdamCommutor;
 
 
-void CdamCommutorCreate(MPI_Comm comm, CdamMesh* mesh, CdamCommutor** commutor);
+void CdamCommutorCreate(MPI_Comm comm, void* mesh, CdamCommutor** commutor);
 void CdamCommutorDestroy(CdamCommutor* commutor);
 void CdamCommutorForward(CdamCommutor* commutor, void* sendbuf, index_type blocklen);
 void CdamCommutorBackward(CdamCommutor* commutor, void* recvbuf, index_type blocklen);

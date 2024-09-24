@@ -8,12 +8,12 @@
 __BEGIN_DECLS__
 
 struct CdamParMatOp {
-	void (*setup)(void* A, void* diag, void* offd);
+	void (*setup)(void* A);
 	void (*destroy)(void* A);
 
 	void (*zero)(void* A);
 	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
-	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
+	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary);
 
 	void (*copy)(void* A, void* B);
 	void (*transpose)(void* A, void* B);
@@ -29,6 +29,7 @@ typedef struct CdamParMatOp CdamParMatOp;
 
 struct CdamParMat {
 	MPI_Comm comm;
+	MatAssemblyType assembly_type;
 	index_type global_nrows;
 	index_type global_ncols;
 
@@ -41,6 +42,7 @@ struct CdamParMat {
 	index_type* row_map;
 	index_type* col_map;
 
+	void* commutor;
 	void* diag;
 	void* offd;
 	
@@ -48,7 +50,8 @@ struct CdamParMat {
 };
 
 typedef struct CdamParMat CdamParMat;
-
+#define CdamParMatComm(A) (((CdamParMat*)(A))->comm)
+#define CdamParMatAssemblyType(A) (((CdamParMat*)(A))->assembly_type)
 #define CdamParMatNumRowGlobal(A) (((CdamParMat*)(A))->global_nrows)
 #define CdamParMatNumColGlobal(A) (((CdamParMat*)(A))->global_ncols)
 #define CdamParMatRowBegin(A) (((CdamParMat*)(A))->row_range[0])
@@ -67,6 +70,8 @@ typedef struct CdamParMat CdamParMat;
 #define CdamParMatNumColOwned(A) (CdamParMatNumColExclusive(A) + CdamParMatNumColShared(A))
 #define CdamParMatRowMap(A) (((CdamParMat*)(A))->row_map)
 #define CdamParMatColMap(A) (((CdamParMat*)(A))->col_map)
+
+#define CdamParMatCommutor(A) (((CdamParMat*)(A))->commutor)
 #define CdamParMatDiag(A) (((CdamParMat*)(A))->diag)
 #define CdamParMatOffd(A) (((CdamParMat*)(A))->offd)
 
@@ -74,11 +79,11 @@ typedef struct CdamParMat CdamParMat;
 
 void CdamParMatCreate(MPI_Comm comm, void** A);
 void CdamParMatDestroy(void* A);
-void CdamParMatSetup(void* A, void* diag, void* offd);
+void CdamParMatSetup(void* A);
 
 void CdamParMatZero(void* A);
 void CdamParMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
-void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
+void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary);
 
 void CdamParMatCopy(void* A, void* B);
 void CdamParMatTranspose(void* A, void* B);

@@ -29,5 +29,10 @@ typedef enum {
 	MAT_STORAGE_ROWWISE = 1  /* v0[0], v1[0], v2[0], ..., v0[1], v1[1], v2[1], ... */
 } MatStorageMethod;
 
+typedef enum {
+	MAT_ASSEMBLED = 0,
+	MAT_DISASSEMBLED = 1
+} MatAssemblyType;
+
 __END_DECLS__
 #endif /* __MATRIX_UTIL_H__ */

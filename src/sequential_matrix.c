@@ -3,6 +3,13 @@
 #include "sequential_matrix.h"
 #include "sequential_matrix_device.h"
 
+static void SeqMatMatMultAddDenseDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
+
+}
+static void SeqMatMatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+static void SeqMatMatMultAddCSRCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+static void SeqMatMatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+
 static void SeqMatSetupDensePrivate(void* A) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
@@ -64,7 +71,6 @@ static void SeqMatZereRowDensePrivate(void* A, index_type row, index_type* rows,
 
 static void SeqMatGetSubmatDensePrivate(void* A, index_type nr, index_type *row,
 																				index_type nc, index_type *col, void* B, void** auxiliary_data) {
-	index_type i, j;
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 
@@ -74,9 +80,9 @@ static void SeqMatGetSubmatDensePrivate(void* A, index_type nr, index_type *row,
 		SeqMatDestroyDensePrivate(B);
 		SeqMatNumRow(B) = nr;
 		SeqMatNumCol(B) = nc;
+		SeqMatData(B) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
+		CdamMemset(SeqMatData(B), 0, sizeof(SeqMatDense), HOST_MEM);
 		SeqMatAsType(B, SeqMatDense)->order = SeqMatAsType(A, SeqMatDense)->order;
-		SeqMatAsType(B, SeqMatDense) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
-		CdamMemset(SeqMatAsType(B, SeqMatDense), 0, sizeof(SeqMatDense), HOST_MEM);
 		SeqMatSetupDensePrivate(B);
 	}
 
@@ -84,7 +90,7 @@ static void SeqMatGetSubmatDensePrivate(void* A, index_type nr, index_type *row,
 	value_type* dataB = SeqMatAsType(B, SeqMatDense)->data;
 	*auxiliary_data = NULL;
 #ifdef CDAM_USE_CUDA
-	SeqMatGetSubmatDenseGPU(SeqMatAsType(B, SeqMatDense)->order, dataA, nrow, ncol, dataB, nr, nc, row, col, 0);
+	SeqMatGetSubmatDenseGPU(SeqMatAsType(B, SeqMatDense)->order, dataA, nrow, ncol, nr, nc, row, col, 0, 0, dataB, 0);
 #else
 	if(SeqMatAsType(A, SeqMatDense)->order == MAT_ROW_MAJOR) {
 		for(i = 0; i < nr; i++) {
@@ -103,7 +109,7 @@ static void SeqMatGetSubmatDensePrivate(void* A, index_type nr, index_type *row,
 #endif /* CDAM_USE_CUDA */
 }
 
-static void SeqMatCopyDensePrivate(void* A, void* B, MatResue reuse) {
+static void SeqMatCopyDensePrivate(void* A, void* B, MatReuse reuse) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 
@@ -115,15 +121,15 @@ static void SeqMatCopyDensePrivate(void* A, void* B, MatResue reuse) {
 		SeqMatDestroyDensePrivate(B);
 		SeqMatNumRow(B) = nrow;
 		SeqMatNumCol(B) = ncol;
+		SeqMatData(B) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
+		CdamMemset(SeqMatData(B), 0, sizeof(SeqMatDense), HOST_MEM);
 		SeqMatAsType(B, SeqMatDense)->order = SeqMatAsType(A, SeqMatDense)->order;
-		SeqMatAsType(B, SeqMatDense) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
-		CdamMemset(SeqMatAsType(B, SeqMatDense), 0, sizeof(SeqMatDense), HOST_MEM);
 		SeqMatSetupDensePrivate(B);
 		SeqMatCopyDensePrivate(A, B, MAT_REUSE);
 	}
 }
 
-static void SeqMatTranspose(void *A, void* B) {
+static void SeqMatTransposeDensePrivate(void *A, void* B) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 	MatOrder order = SeqMatAsType(A, SeqMatDense)->order;
@@ -542,7 +548,7 @@ void SeqMatCreate(MatType type, index_type nrow, index_type ncol, void** A) {
 	SeqMatRowStorageMethod(*A) = MAT_COL_MAJOR; /* Default */
 	SeqMatColStorageMethod(*A) = MAT_COL_MAJOR;
 	if(type == MAT_TYPE_DENSE) {
-		SeqMatAsType(*A, SeqMatDense) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
+		SeqMatData(*A) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
 		CdamMemset(SeqMatAsType(*A, SeqMatDense), 0, sizeof(SeqMatDense), HOST_MEM);
 		mat->op->setup = SeqMatSetupDensePrivate;
 		mat->op->destroy = SeqMatDestroyDensePrivate;
@@ -557,7 +563,7 @@ void SeqMatCreate(MatType type, index_type nrow, index_type ncol, void** A) {
 		mat->op->add_elem_value_batched = SeqMatAddElemValueBatchedDensePrivate;
 	}
 	else if(type == MAT_TYPE_CSR) {
-		SeqMatAsType(*A, SeqMatCSR) = CdamTMalloc(SeqMatCSR, 1, HOST_MEM);
+		SeqMatData(*A) = CdamTMalloc(SeqMatCSR, 1, HOST_MEM);
 		CdamMemset(SeqMatAsType(*A, SeqMatCSR), 0, sizeof(SeqMatCSR), HOST_MEM);
 		mat->op->setup = SeqMatSetupCSRPrivate;
 		mat->op->destroy = SeqMatDestroyCSRPrivate;

@@ -9,12 +9,12 @@ void AddValuePrivate(void*, void*, index_type, index_type*, index_type);
 void CopyValuePrivate(void*, void*, index_type, index_type*, index_type);
 
 
-void CdamCommutorCreate(MPI_Comm comm, CdamMesh* mesh, CdamCommutor** commutor) {
+void CdamCommutorCreate(MPI_Comm comm, void* mesh, CdamCommutor** commutor) {
 
-	index_type num_node = CdamMeshNumNode(mesh);
-	index_type* nodal_offset = mesh->nodal_offset;
+	index_type num_node = CdamMeshNumNode((CdamMesh*)mesh);
+	index_type* nodal_offset = ((CdamMesh*)mesh)->nodal_offset;
 	index_type num_owned_node;
-	index_type* l2g = mesh->nodal_map_l2g_interior;
+	index_type* l2g = ((CdamMesh*)mesh)->nodal_map_l2g_interior;
 
 	index_type i, j;
 	index_type num_fwd_task, num_bwd_task;

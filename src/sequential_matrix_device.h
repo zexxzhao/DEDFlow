@@ -8,7 +8,8 @@
 #include <cuda_runtime.h>
 
 __BEGIN_DECLS__
-void SeqMatZeroRowDenseGPU(value_type* data, index_type nrow, index_type ncol,
+void SeqMatZeroRowDenseGPU(MatOrder order,
+													 value_type* data, index_type nrow, index_type ncol,
 													 index_type nr, index_type* row,
 													 index_type rshift, index_type cshift,
 													 value_type diag, cudaStream_t stream);

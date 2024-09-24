@@ -23,7 +23,7 @@ typedef cusparseOperation_t SPTrans;
 #define SP_N CUSPARSE_OPERATION_NON_TRANSPOSE
 #define SP_T CUSPARSE_OPERATION_TRANSPOSE
 #define SP_C CUSPARSE_OPERATION_CONJUGATE_TRANSPOSE
-typedef cusparseMatDescr_t SPMatDesc;
+typedef cusparseSpMatDescr_t SPMatDesc;
 
 
 #elif defined(CDAM_USE_MKL)
@@ -122,7 +122,7 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
-void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
+void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, double *const Carray[], int ldc, int *infoArray, int batchSize);
 
 /* Sparse BLAS */
 

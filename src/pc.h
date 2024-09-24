@@ -12,13 +12,13 @@ __BEGIN_DECLS__
  */
 
 enum CdamPCType {
-	PC_NONE = 0x0,
-	PC_RICHARDSON = 0x1,
-	PC_JACOBI = 0x2,
-	PC_SCHUR = 0x4,
-	PC_KSP = 0x8,
-	PC_COMPOSITE = 0x10,
-	PC_CUSTOM = 0xff
+	PC_TYPE_NONE = 0x0,
+	PC_TYPE_RICHARDSON = 0x1,
+	PC_TYPE_JACOBI = 0x2,
+	PC_TYPE_SCHUR = 0x4,
+	PC_TYPE_KSP = 0x8,
+	PC_TYPE_COMPOSITE = 0x10,
+	PC_TYPE_CUSTOM = 0xff
 };
 
 typedef enum CdamPCType CdamPCType;
@@ -72,9 +72,10 @@ struct CdamPC {
 
 	/* Schur */
 	CdamPCSchurType schur_type;
-	void* schur_compl;
-	index_type displ1;
-	index_type count1;
+	void* schur_ap;
+	void* schur_s;
+	index_type schur_ndof[2];
+	index_type* schur_dof[2];
 
 	/* KSP */
 	void* ksp;
