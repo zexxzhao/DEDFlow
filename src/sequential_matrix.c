@@ -76,8 +76,8 @@ static void SeqMatZereRowDensePrivate(void* A, index_type row, index_type* rows,
 #endif /* CDAM_USE_CUDA */
 }
 
-static void SeqMatGetSubmatDensePrivate(void* A, index_type row_begin, index_type row_end,
-																				index_type col_begin, index_type col_end, void* B) {
+static void SeqMatGetSubmatDensePrivate(void* A, index_type nr, index_type* row,
+																				index_type nc, index_type* col, void* B) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 
@@ -92,10 +92,10 @@ static void SeqMatGetSubmatDensePrivate(void* A, index_type row_begin, index_typ
 		CdamMemset(SeqMatAsType(B, SeqMatVirtual), 0, sizeof(SeqMatVirtual), HOST_MEM);
 	}
 	SeqMatAsType(B, SeqMatVirtual)->parent = (SeqMat*)A;
-	SeqMatAsType(B, SeqMatVirtual)->row_range[0] = row_begin;
-	SeqMatAsType(B, SeqMatVirtual)->row_range[1] = row_end;
-	SeqMatAsType(B, SeqMatVirtual)->col_range[0] = col_begin;
-	SeqMatAsType(B, SeqMatVirtual)->col_range[1] = col_end;
+	SeqMatAsType(B, SeqMatVirtual)->row = CdamTMalloc(index_type, nr, DEVICE_MEM);
+	CdamMemcpy(SeqMatAsType(B, SeqMatVirtual)->row, row, nr * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
+	SeqMatAsType(B, SeqMatVirtual)->col = CdamTMalloc(index_type, nc, DEVICE_MEM);
+	CdamMemcpy(SeqMatAsType(B, SeqMatVirtual)->col, col, nc * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
 }
 
 static void SeqMatTransposeDensePrivate(void* A) {
@@ -168,16 +168,16 @@ static void SeqMatGetDiagDensePrivate(void* A, value_type* diag, index_type bs) 
 }
 
 
-static void SeqMatAddElemValueBatchedDensePrivate(void* A,
-																									index_type batch_size, index_type* batch_index_ptr,
-																									index_type *ien, index_type nshl,
-																									index_type block_row, index_type block_col,
-																									value_type* value, index_type ldv, index_type stride) {
+static void SeqMatAddElemValueBatchedDensePrivate(void* A, index_type nelem, index_type nshl, index_type *ien,
+																									byte* row, byte* col,
+																									value_type* value, Arena scratch) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
 	CdamLayout* rmap = SeqMatRowLayout(A);
 	CdamLayout* cmap = SeqMatColLayout(A);
+	index_type block_row = CdamLayoutLen(rmap);
+	index_type block_col = CdamLayoutLen(cmap);
 	/* Logically, shape(value) = (batch_size, nshl, nshl, block_row, block_col */
 	/* Physically, shape(value) = (batch_size, nshl, nshl, stride) */
 	/* stride >= block_row * ldv && ldv > block_col */
@@ -189,6 +189,30 @@ static void SeqMatAddElemValueBatchedDensePrivate(void* A,
 																		batch_size, batch_index_ptr, ien, nshl,
 																		0, block_row, 0, block_col, value, ldv, stride, 0);
 #else
+	index_type iel, ishl, jshl, ishg, jshg;
+	index_type dst_row, dst_col;
+	for(i = 0; i < nelem; i++) {
+		if(!row[i] && !col[i]) {
+			continue;
+		}
+		for(ishl = 0; ishl < nshl; ishl++) {
+			if(row[i] && (1 << ishl) == 0) continue;
+			ishg = ien[i * nshl + ishl];
+			for(jshl = 0; jshl < nshl; jshl++) {
+				if(col[i] && (1 << jshl) == 0) continue;
+				jshg = ien[i * nshl + jshl];
+				value_type* value_ptr = value + i * block_row * block_col * nshl * nshl;
+				
+				for(i = 0; i < block_row; ++i) {
+					dst_row = DOFMapLocal(rmap, ishg, i);
+					for(j = 0; j < block_col; ++j) {
+						dst_col = DOFMapLocal(cmap, jshg, j);
+						data[dst_row * ncol + dst_col] += value_ptr[ishl * nshl * block_row * block_col + jshl * block_row * block_col + i * block_col + j];
+					}
+				}
+			}
+		}
+	}
 #endif
 }
 
@@ -259,8 +283,8 @@ static void SeqMatZeroRowCSRPrivate(void* A, index_type row, index_type* rows, i
 #endif /* CDAM_USE_CUDA */
 }
 
-static void SeqMatGetSubmatCSRPrivate(void* A, index_type row_begin, index_type row_begin,
-																			index_type col_begin, index_type col_end, void* B) {
+static void SeqMatGetSubmatCSRPrivate(void* A, index_type nr, index_type* row,
+																			index_type nc, index_type* col, void* B) {
 	index_type i, j;
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
@@ -429,7 +453,7 @@ void SeqMatCreate(MatType type, index_type nrow, index_type ncol, void** A) {
 		mat->op->destroy = SeqMatDestroyDensePrivate;
 		mat->op->zero = SeqMatZeroDensePrivate;
 		mat->op->zero_row = SeqMatZereRowDensePrivate;
-		mat->op->get_submat = SeqMatGetSubmatDensePrivate;
+		mat->op->get_submat = NULL;
 		mat->op->copy = SeqMatCopyDensePrivate;
 		mat->op->transpose = SeqMatTranspose;
 		mat->op->mult_add = SeqMatMultAddDensePrivate;
@@ -444,7 +468,7 @@ void SeqMatCreate(MatType type, index_type nrow, index_type ncol, void** A) {
 		mat->op->destroy = SeqMatDestroyCSRPrivate;
 		mat->op->zero = SeqMatZeroCSRPrivate;
 		mat->op->zero_row = SeqMatZeroRowCSRPrivate;
-		mat->op->get_submat = SeqMatGetSubmatCSRPrivate;
+		mat->op->get_submat = NULL;
 		mat->op->copy = SeqMatCopyCSRPrivate;
 		mat->op->transpose = SeqMatTransposeCSRPrivate;
 		mat->op->mult_add = SeqMatMultAddCSRPrivate;
@@ -473,8 +497,27 @@ void SeqMatZeroRow(void* A, index_type row, index_type* rows, index_shift shift,
 	mat->op->zero_row(A, row, rows, shift, diag);
 }
 
-void SeqMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary_data) {
-	mat->op->get_submat(A, nr, rows, nc, cols, B, auxiliary_data);
+void SeqMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B) {
+	index_type nrow = SeqMatNumRow(A);
+	index_type ncol = SeqMatNumCol(A);
+
+	ASSERT(SeqMatType(B) == MAT_TYPE_VIRTUAL && "Matrix B must be virtual.");
+
+	SeqMatNumRow(B) = nr;
+	SeqMatNumCol(B) = nc;
+
+	if(SeqMatData(B) == NULL) {
+		SeqMatData(B) = CdamTMalloc(SeqMatVirtual, 1, HOST_MEM);
+		CdamMemset(SeqMatAsType(B, SeqMatVirtual), 0, sizeof(SeqMatVirtual), HOST_MEM);
+	}
+	SeqMatAsType(B, SeqMatVirtual)->parent = (SeqMat*)A;
+	SeqMatAsType(B, SeqMatVirtual)->row = CdamTMalloc(index_type, nr, DEVICE_MEM);
+	CdamMemcpy(SeqMatAsType(B, SeqMatVirtual)->row, row, nr * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
+	SeqMatAsType(B, SeqMatVirtual)->col = CdamTMalloc(index_type, nc, DEVICE_MEM);
+	CdamMemcpy(SeqMatAsType(B, SeqMatVirtual)->col, col, nc * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
+
+	SeqMatAsType(B, SeqMatVirtual)->prolonged_input = CdamTMalloc(value_type, ncol, DEVICE_MEM);
+	SeqMatAsType(B, SeqMatVirtual)->prolonged_output = CdamTMalloc(value_type, ncol, DEVICE_MEM);
 }
 
 void SeqMatCopy(void* A, void* B) {
@@ -494,10 +537,10 @@ void SeqMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, void*
 void SeqMatGetDiag(void* A, value_type* diag, index_type bs) {
 	mat->op->get_diag(A, diag, bs);
 }
-void SeqMatAddElemValueBatched(void* A, index_type batch_size, index_type* ien, index_type nshl,
-															 index_type block_row, index_type block_col,
-															 value_type* value, index_type ldv, index_type stride) {
-	mat->op->add_elem_value_batched(A, batch_size, ien, nshl, block_row, block_col, value, ldv, stride);
+void SeqMatAddElemValueBatched(void* A, index_type nelem, index_type nshl, index_type* ienm
+															 index_type nr, index_type* row, index_type nc, index_type* col,
+															 value_type* val, Arena scratch) {
+	mat->op->add_elem_value_batched(A, nelem, nshl, ienm, nr, row, nc, col, val, scratch);
 }
 
 

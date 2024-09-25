@@ -1,6 +1,6 @@
 #include <string.h>
 #include "json.h"
-#include "vec.h"
+#include "layout.h"
 #include "vec_impl.h"
 #include "blas.h"
 #include "parallel_matrix.h"

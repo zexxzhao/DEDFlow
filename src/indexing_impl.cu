@@ -81,6 +81,34 @@ void SortByKeyI(index_type* key, index_type* value, index_type n, Arena scratch)
 	cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, key, d_key_out, value, d_value_out, n);
 	CdamMemcpy(value, d_value_out, n * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
 }
+
+index_type CountIndexByRangeGPU(index_type n, index_type* index, index_type start, index_type end) {
+	index_type* masked_val = CdamTMalloc(index_type, n + 1, DEVICE_MEM);
+	cub::DeviceTransform::Transform(index, masked_val, n, [start, end] __device__ (index_type val) {
+		return (val >= start && val < end) ? 1 : 0;
+	});
+
+	size_t temp_buff_size = 0;
+	index_type ret = 0;
+	cub::DeviceReduce::Sum(nullptr, temp_buff_size, masked_val, masked_val + n, n);
+	index_type* temp_buff = CdamTMalloc(index_type, temp_buff_size, DEVICE_MEM);
+	cub::DeviceReduce::Sum(temp_buff, temp_buff_size, masked_val, masked_val + n, n);
+	CdamMemcpy(&ret, masked_val + n, sizeof(index_type), HOST_MEM, DEVICE_MEM);
+	CdamFree(masked_val, (n + 1) * sizeof(index_type), DEVICE_MEM);
+	CdamFree(temp_buff, temp_buff_size, DEVICE_MEM);
+	return ret;
+}
+static __global__ void IotaKernel(index_type* data, index_type n, index_type start, index_type step) {
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	if (tid < n) {
+		data[tid] = start + tid * step;
+	}
+}
+void Iota(index_type* data, index_type n, index_type start, index_type step) {
+	int num_thread = 256;
+	int num_block = CEIL_DIV(n, num_thread);
+	IotaKernel<<<num_block, num_thread>>>(data, n, start, step);
+}
 #else
 index_type CountValueI(const index_type* data, index_type size, index_type value) {
 	index_type count = 0;
@@ -125,6 +153,22 @@ void SortByKeyImp(void* d_value, index_type* d_key, index_type elem_size, index_
 	qsort_data = &qd;
 
 	qsort(d_value, n, elem_size, CompareQsortData);
+}
+
+index_type CountIndexByRangeGPU(index_type n, index_type* index, index_type start, index_type end) {
+	index_type count = 0;
+	for (index_type i = 0; i < n; ++i) {
+		if (index[i] >= start && index[i] < end) {
+			++count;
+		}
+	}
+	return count;
+}
+
+void Iota(index_type* data, index_type n, index_type start, index_type step) {
+	for (index_type i = 0; i < n; ++i) {
+		data[i] = start + i * step;
+	}
 }
 #endif
 __END_DECLS__

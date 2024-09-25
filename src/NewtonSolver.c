@@ -4,7 +4,7 @@
 
 #include "Mesh.h"
 #include "blas.h"
-#include "vec.h"
+#include "layout.h"
 #include "NewtonSolver.h"
 
 void CdamKrylovSolve(CdamKrylov* solver, void* A, void* x, void* b); 

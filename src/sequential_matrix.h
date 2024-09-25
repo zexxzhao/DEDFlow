@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "csr.h"
+#include "layout.h"
 #include "matrix_util.h"
 
 __BEGIN_DECLS__
@@ -13,7 +14,7 @@ struct SeqMatOp {
 
 	void (*zero)(void* A);
 	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
-	void (*get_submat)(void* A, index_type row_begin, index_type row_end, index_type col_begin, index_type col_end, void* B);
+	void (*get_submat)(void* A, index_type nrow, index_type* row, index_type ncol, index_type* col, void* B);
 
 	// void (*copy)(void* A, void* B);
 	void (*transpose)(void* A);
@@ -23,9 +24,9 @@ struct SeqMatOp {
 	void (*matmultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 	void (*mattransposemultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 	void (*get_diag)(void* A, value_type* diag, index_type bs);
-	void (*add_elem_value_batched)(void* A, index_type batch_size, index_type* ien, index_type nshl,
-																 index_type block_row, index_type block_col,
-																 value_type* value, index_type ldv, index_type stride);
+	void (*add_elem_value_batched)(void* A, index_type nelem, index_type nshl, index_type* ien,
+																 index_type nr, index_type* row, index_type nc, index_type* col,
+																 value_type* value, Arena scratch);
 };
 
 struct SeqMat {
@@ -81,13 +82,15 @@ struct SeqMatNested {
 	index_type col_seg_size[SEQMAT_NESTED_MAX_SEG];
 
 	/* Submatrices */
-	SeqMat* submatrices[SEQMAT_NESTED_MAX_SEG][SEQMAT_NESTED_MAX_SEG];
+	struct SeqMat* submatrices[SEQMAT_NESTED_MAX_SEG][SEQMAT_NESTED_MAX_SEG];
 };
 
 struct SeqMatVirtual {
-	SeqMat* parent;
-	index_type row_range[2];
-	index_type col_range[2];
+	struct SeqMat* parent;
+	index_type *row;
+	index_type *col;
+	value_type *prolonged_input;
+	value_type *prolonged_output;
 };
 
 typedef struct SeqMat SeqMat;
@@ -104,9 +107,9 @@ void SeqMatDestroy(void* A);
 void SeqMatZero(void* A);
 void SeqMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 
-void SeqMatGetSubmat(void* A, index_type row_begin, index_type row_end, index_type col_begin, index_type col_end, void* B);
+void SeqMatGetSubmat(void* A, index_type nrow, index_type* row, index_type ncol, index_type* col, void* B);
 
-vpod SeqMatTranspose(void* A);
+void SeqMatTranspose(void* A);
 
 void SeqMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 void SeqMatMulTransposeAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
@@ -114,9 +117,9 @@ void SeqMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, void*
 void SeqMatMatTransposeMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 
 void SeqMatGetDiag(void* A, value_type* diag, index_type bs);
-void SeqMatAddElemValueBatched(void* A, index_type batch_size, index_type* ien, index_type nshl,
-															 index_type block_row, index_type block_col,
-															 value_type* value, index_type ldv, index_type stride);
+void SeqMatAddElemValueBatched(void* A, index_type nelem, index_type nshl, index_type* ien,
+																index_type nr, index_type* row, index_type nc, index_type* col,
+																value_type* value, Arena scratch);
 
 
 __END_DECLS__

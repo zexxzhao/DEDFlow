@@ -12,8 +12,8 @@ struct CdamParMatOp {
 	void (*destroy)(void* A);
 
 	void (*zero)(void* A);
-	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
-	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary);
+	void (*zere_row)(void* A, index_type row, index_type* rows, value_type diag);
+	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
 
 	void (*copy)(void* A, void* B);
 	void (*transpose)(void* A, void* B);
@@ -39,12 +39,11 @@ struct CdamParMat {
 	index_type col_range[2];
 	index_type col_count[3];
 	
-	index_type* row_map;
-	index_type* col_map;
+	CdamLayout* row_map;
+	CdamLayout* col_map;
 
 	void* commutor;
-	void* diag;
-	void* offd;
+	void* submat[3][3];
 	
 	CdamParMatOp op[1];
 };
@@ -72,9 +71,15 @@ typedef struct CdamParMat CdamParMat;
 #define CdamParMatColMap(A) (((CdamParMat*)(A))->col_map)
 
 #define CdamParMatCommutor(A) (((CdamParMat*)(A))->commutor)
-#define CdamParMatDiag(A) (((CdamParMat*)(A))->diag)
-#define CdamParMatOffd(A) (((CdamParMat*)(A))->offd)
-
+#define CdamParMatII(A) (((CdamParMat*)(A))->submat[0][0])
+#define CdamParMatIS(A) (((CdamParMat*)(A))->submat[0][1])
+#define CdamParMatIG(A) (((CdamParMat*)(A))->submat[0][2])
+#define CdamParMatSI(A) (((CdamParMat*)(A))->submat[1][1])
+#define CdamParMatSS(A) (((CdamParMat*)(A))->submat[1][1])
+#define CdamParMatSG(A) (((CdamParMat*)(A))->submat[1][2])
+#define CdamParMatGI(A) (((CdamParMat*)(A))->submat[2][0])
+#define CdamParMatGS(A) (((CdamParMat*)(A))->submat[2][1])
+#define CdamParMatGG(A) (((CdamParMat*)(A))->submat[2][2])
 
 
 void CdamParMatCreate(MPI_Comm comm, void** A);
@@ -82,17 +87,32 @@ void CdamParMatDestroy(void* A);
 void CdamParMatSetup(void* A);
 
 void CdamParMatZero(void* A);
-void CdamParMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
-void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary);
+void CdamParMatZeroRow(void* A, index_type row, index_type* rows, value_type diag);
+void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
 
-void CdamParMatCopy(void* A, void* B);
+// void CdamParMatCopy(void* A, void* B);
 void CdamParMatTranspose(void* A, void* B);
 void CdamParMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 void CdamParMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 void CdamParMatGetDiag(void* A, value_type* diag, index_type bs);
-void CdamParMatAddElemValueBatched(void* A, index_type batch_size, index_type* ien, index_type nshl,
-																 index_type block_row, index_type block_col,
-																 value_type* value, index_type ldv, index_type stride);
+/** Add elementwise matrices to the matrix
+ * Some restrictions apply:
+ * value must be of size nelem*nshl*nshl*row_block_size*col_block_size,
+ * where row_block_size is the block_size defined in the rmap, and col_block_size for cmap.
+ * Even if not all elements are used, the size of value must be padded to the full size.
+ * The blocks in value cannot be separated and added to different submatrices. For instance,
+ * A block of 3x3 can be added to II monolithically, but it does not work if [0,1]x[0,1,2]
+ * is added to II and [2]x[0,1,2] is added to IG. If separation is needed, consider splitting
+ * into submatrices and adding them separately.
+ * @param A matrix
+ * @param nelem number of elements to add
+ * @param nshl number of nodes per element
+ * @param ien element node connectivity
+ * @param value values to add
+ */
+void CdamParMatAddElemValueBatched(void* A,
+																	 index_type nelem, index_type nshl, index_type* ien,
+																	 value_type* value);
 
 
 __END_DECLS__

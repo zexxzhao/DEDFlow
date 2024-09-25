@@ -1,5 +1,5 @@
 #include <string.h>
-#include "vec.h"
+#include "layout.h"
 #include "Mesh.h"
 #include "csr.h"
 #include "color.h"

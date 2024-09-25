@@ -1,3 +1,4 @@
+#include <cub/cub.cuh>
 #include "blas.h"
 #include "sequential_matrix.h"
 
@@ -29,21 +30,13 @@ __global__ void SeqMatZeroRowDenseColMajorKernel(value_type* data, index_type nr
 
 	data[ir + ic * nrow] = (ir == ic) * diag;
 }
-void SeqMatZeroRowDenseGPU(MatOrder order,
-													 value_type* data, index_type nrow, index_type ncol,
+void SeqMatZeroRowDenseGPU(value_type* data, index_type nrow, index_type ncol,
 													 index_type nr, index_type* row,
 													 index_type rshift, index_type cshift,
 													 value_type diag, cudaStream_t stream) {
 	int num_threads = 256;
 	int num_blocks = CEIL_DIV(n * ncol, num_threads);
-	if(nrow != ncol)
-		diag = 0.0;
-	if (order == COL_MAJOR) {
-		SeqMatZeroRowDenseRowMajorKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, n, row, rshift, cshift, diag);
-	}
-	else {
-		SeqMatZeroRowDenseColMajorKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, n, row, rshift, cshift, diag);
-	}
+	SeqMatZeroRowDenseRowMajorKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, n, row, rshift, cshift, diag);
 }
 __global__ void SeqMatGetSubmatDenseColMajorKernel(value_type* src, index_type nrow, index_type ncol,
 																									 value_type* dst, index_type nr, index_type nc,
@@ -334,5 +327,6 @@ void SeqMatAddElemValueCSRGPU(value_type alpha, value_type* matval,
 			CSRAttrNumRow(spy), CSRAttrNumCol(spy), CSRAttrRowPtr(spy), CSRAttrColInd(spy),
 			rmap_storage, cmap_storage, block_row, block_col, beta, val, lda, stride);
 }
+
 __END_DECLS__
 #endif /* CDAM_USE_CUDA */

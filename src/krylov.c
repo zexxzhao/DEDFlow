@@ -4,7 +4,7 @@
 
 #include "json.h"
 #include "csr.h"
-#include "vec.h"
+#include "layout.h"
 #include "pc.h"
 #include "krylov.h"
 

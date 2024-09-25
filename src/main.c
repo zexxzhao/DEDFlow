@@ -15,7 +15,7 @@
 #include "alloc.h"
 #include "h5util.h"
 #include "Mesh.h"
-#include "vec.h"
+#include "layout.h"
 // #include "Particle.h"
 #include "NewtonSolver.h"
 #include "dirichlet.h"
