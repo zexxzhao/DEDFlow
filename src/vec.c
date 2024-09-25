@@ -9,9 +9,9 @@
 __BEGIN_DECLS__
 
 
-void CdamVecLayoutCreate(CdamVecLayout** layout, void* config) {
-	*layout = CdamTMalloc(CdamVecLayout, 1, HOST_MEM);
-	CdamMemset(*layout, 0, sizeof(CdamVecLayout), HOST_MEM);
+void CdamLayoutCreate(CdamLayout** layout, void* config) {
+	*layout = CdamTMalloc(CdamLayout, 1, HOST_MEM);
+	CdamMemset(*layout, 0, sizeof(CdamLayout), HOST_MEM);
 	cJSON* json = (cJSON*)config;
 	b32 has_ns = JSONGetItem(json, "VMS.IncompressibleNS.Included")->valuedouble > 0.0;
 	b32 has_t = JSONGetItem(json, "VMS.Temperature.Included")->valuedouble > 0.0;
@@ -21,52 +21,54 @@ void CdamVecLayoutCreate(CdamVecLayout** layout, void* config) {
 
 	if(has_ns) {
 		num_components++;
-		CdamVecLayoutComponentOffset(*layout)[num_components] = CdamVecLayoutComponentOffset(*layout)[num_components - 1] + 4;
+		CdamLayoutComponentOffset(*layout)[num_components] = CdamLayoutComponentOffset(*layout)[num_components - 1] + 3;
+		num_components++;
+		CdamLayoutComponentOffset(*layout)[num_components] = CdamLayoutComponentOffset(*layout)[num_components - 1] + 1;
 	}
 
 	if(has_t) {
 		num_components++;
-		CdamVecLayoutComponentOffset(*layout)[num_components] = CdamVecLayoutComponentOffset(*layout)[num_components - 1] + 1;
+		CdamLayoutComponentOffset(*layout)[num_components] = CdamLayoutComponentOffset(*layout)[num_components - 1] + 1;
 	}
 
 	if(has_phi) {
 		num_components++;
-		CdamVecLayoutComponentOffset(*layout)[num_components] = CdamVecLayoutComponentOffset(*layout)[num_components - 1] + 1;
+		CdamLayoutComponentOffset(*layout)[num_components] = CdamLayoutComponentOffset(*layout)[num_components - 1] + 1;
 	}
 
-	CdamVecLayoutNumComponents(*layout) = num_components;
+	CdamLayoutNumComponents(*layout) = num_components;
 
 }
 
-void CdamVecLayoutDestroy(CdamVecLayout* layout) {
-	CdamFree(layout, sizeof(CdamVecLayout), HOST_MEM);
+void CdamLayoutDestroy(CdamLayout* layout) {
+	CdamFree(layout, sizeof(CdamLayout), HOST_MEM);
 }
 
-void CdamVecLayoutSetup(CdamVecLayout* layout, void* mesh) {
+void CdamLayoutSetup(CdamLayout* layout, void* mesh) {
 	CdamMesh* mesh3d = (CdamMesh*)mesh;
-	CdamVecLayoutNumOwned(layout) = CdamMeshLocalNodeEnd(mesh3d) - CdamMeshLocalNodeBegin(mesh3d);
-	CdamVecLayoutNumGhost(layout) = CdamMeshNumNode(mesh3d) - CdamVecLayoutNumOwned(layout);
+	CdamLayoutNumOwned(layout) = CdamMeshLocalNodeEnd(mesh3d) - CdamMeshLocalNodeBegin(mesh3d);
+	CdamLayoutNumGhost(layout) = CdamMeshNumNode(mesh3d) - CdamLayoutNumOwned(layout);
 }
 
 void VecDot(void* x, void* y, void* layout, void* result, void* results) {
 	value_type* vx = (value_type*)x;
 	value_type* vy = (value_type*)y;
-	CdamVecLayout* lo = (CdamVecLayout*)layout;
+	CdamLayout* lo = (CdamLayout*)layout;
 	value_type* r = (value_type*)result;
 	value_type* rs = (value_type*)results;
 
 	value_type local_result[CDAM_VEC_MAX_NUM_COMPONENTS];
 
-	index_type i, n = CdamVecLayoutNumComponents(lo);
-	index_type num_owned = CdamVecLayoutNumOwned(lo);
-	index_type num_ghost = CdamVecLayoutNumGhost(lo);
+	index_type i, n = CdamLayoutNumComponents(lo);
+	index_type num_owned = CdamLayoutNumOwned(lo);
+	index_type num_ghost = CdamLayoutNumGhost(lo);
 	index_type num = num_owned + num_ghost;
 	index_type begin, end;
 	for(i = 0; i < n; i++) {
 		local_result[i] = 0.0;
-		begin = CdamVecLayoutComponentOffset(lo)[i];
-		end = CdamVecLayoutComponentOffset(lo)[i + 1];
-		ddot(CdamVecLayoutNumOwned(lo) * (end - begin),
+		begin = CdamLayoutComponentOffset(lo)[i];
+		end = CdamLayoutComponentOffset(lo)[i + 1];
+		ddot(CdamLayoutNumOwned(lo) * (end - begin),
 							vx + begin * num, 1,
 							vy + begin * num, 1, local_result);																
 	}

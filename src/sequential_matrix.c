@@ -3,17 +3,40 @@
 #include "sequential_matrix.h"
 #include "sequential_matrix_device.h"
 
-static void SeqMatMatMultAddDenseDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
+static void MatMultAddDenseDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
+	index_type m, n, k;
+	value_type* dataA = SeqMatAsType(A, SeqMatDense)->data;
+	value_type* dataB = SeqMatAsType(B, SeqMatDense)->data;
+	
+	m = SeqMatNumRow(A);
+	n = SeqMatNumCol(B);
+	k = SeqMatNumCol(A);
+	ASSERT(k == SeqMatNumRow(B) && "Matrix A must have the same number of columns as matrix B.");
+
+
+	if(reuse == MAT_INITIAL) {
+		CdamFree(SeqMatAsType(C, SeqMatDense)->data,
+													sizeof(value_type) * SeqMatNumRow(C) * SeqMatNumCol(C),
+													DEVICE_MEM);
+		SeqMatAsType(C, SeqMatDense)->data = CdamTMalloc(value_type, m * n, DEVICE_MEM);
+		CdamMemset(SeqMatAsType(C, SeqMatDense)->data, 0, m * n * sizeof(value_type), DEVICE_MEM);
+		SeqMatNumRow(C) = m;
+		SeqMatNumCol(C) = n;
+	}
+	else {
+		ASSERT(m == SeqMatNumRow(C) && "Matrix C must have the same number of rows as matrix A.");
+		ASSERT(n == SeqMatNumCol(C) && "Matrix C must have the same number of columns as matrix B.");
+	}
+	dgemm(BLAS_N, BLAS_N, n, m, k, alpha, dataB, n, dataA, k, beta, SeqMatAsType(C, SeqMatDense)->data, n);
 
 }
-static void SeqMatMatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
-static void SeqMatMatMultAddCSRCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
-static void SeqMatMatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+static void MatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+static void MatMultAddCSRCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+static void MatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 
 static void SeqMatSetupDensePrivate(void* A) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
-	SeqMatAsType(A, SeqMatDense)->order = MAT_COL_MAJOR;
 
 	SeqMatAsType(A, SeqMatDense)->data = CdamTMalloc(value_type, nrow * ncol, DEVICE_MEM);
 }
@@ -36,130 +59,52 @@ static void SeqMatZereRowDensePrivate(void* A, index_type row, index_type* rows,
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
-	MatOrder order = SeqMatAsType(A, SeqMatDense)->order;
 	ASSERT(order == MAT_ROW_MAJOR && "Only row-major matrix is supported.");
 #ifdef CDAM_USE_CUDA
-	SeqMatZeroRowDenseGPU(order, data, nrow, ncol, row, rows, shift, 0, diag, 0);
+	SeqMatZeroRowDenseGPU(data, nrow, ncol, row, rows, shift, 0, diag, 0);
 #else
 	index_type i, j, ir;
-	if(order == MAT_ROW_MAJOR) {
-		for(i = 0; i < row; i++) {
-			ir = rows[i] + shift;
-			if(ir >= 0 && ir < nrow) {
-				CdamMemset(data + ir * ncol, 0, ncol * sizeof(value_type), DEVICE_MEM);
-				if(ir < ncol) {
-					CdamMemcpy(data + ir * ncol + ir, &diag, sizeof(value_type), DEVICE_MEM, HOST_MEM);
-				}
-			}
-		}
-	}
-	else { /* MAT_COL_MAJOR */
-		for(i = 0; i < row; i++) {
-			ir = rows[i] + shift;
-			if(ir >= 0 && ir < nrow) {
-				for(j = 0; j < ncol; j++) {
-					data[j * nrow + ir] = 0;
-				}
-				if(ir < ncol) {
-					data[ir * nrow + ir] = diag;
-				}
+	for(i = 0; i < row; i++) {
+		ir = rows[i] + shift;
+		if(ir >= 0 && ir < nrow) {
+			CdamMemset(data + ir * ncol, 0, ncol * sizeof(value_type), DEVICE_MEM);
+			if(ir < ncol) {
+				CdamMemcpy(data + ir * ncol + ir, &diag, sizeof(value_type), DEVICE_MEM, HOST_MEM);
 			}
 		}
 	}
 #endif /* CDAM_USE_CUDA */
 }
 
-static void SeqMatGetSubmatDensePrivate(void* A, index_type nr, index_type *row,
-																				index_type nc, index_type *col, void* B, void** auxiliary_data) {
+static void SeqMatGetSubmatDensePrivate(void* A, index_type row_begin, index_type row_end,
+																				index_type col_begin, index_type col_end, void* B) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 
 	ASSERT(SeqMatType(A) == MAT_TYPE_DENSE && "Matrix A must be dense.");
-	ASSERT(SeqMatType(B) == MAT_TYPE_DENSE && "Matrix B must be dense.");
-	if(nr != SeqMatNumRow(B) || nc != SeqMatNumCol(B)) {
-		SeqMatDestroyDensePrivate(B);
-		SeqMatNumRow(B) = nr;
-		SeqMatNumCol(B) = nc;
-		SeqMatData(B) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
-		CdamMemset(SeqMatData(B), 0, sizeof(SeqMatDense), HOST_MEM);
-		SeqMatAsType(B, SeqMatDense)->order = SeqMatAsType(A, SeqMatDense)->order;
-		SeqMatSetupDensePrivate(B);
-	}
+	ASSERT(SeqMatType(B) == MAT_TYPE_VIRTUAL && "Matrix B must be virtual.");
 
-	value_type* dataA = SeqMatAsType(A, SeqMatDense)->data;
-	value_type* dataB = SeqMatAsType(B, SeqMatDense)->data;
-	*auxiliary_data = NULL;
-#ifdef CDAM_USE_CUDA
-	SeqMatGetSubmatDenseGPU(SeqMatAsType(B, SeqMatDense)->order, dataA, nrow, ncol, nr, nc, row, col, 0, 0, dataB, 0);
-#else
-	if(SeqMatAsType(A, SeqMatDense)->order == MAT_ROW_MAJOR) {
-		for(i = 0; i < nr; i++) {
-			for(j = 0; j < nc; j++) {
-				dataB[i * nc + j] = dataA[row[i] * ncol + col[j]];
-			}
-		}
+	SeqMatNumRow(B) = nr;
+	SeqMatNumCol(B) = nc;
+
+	if(SeqMatData(B) == NULL) {
+		SeqMatData(B) = CdamTMalloc(SeqMatVirtual, 1, HOST_MEM);
+		CdamMemset(SeqMatAsType(B, SeqMatVirtual), 0, sizeof(SeqMatVirtual), HOST_MEM);
 	}
-	else {
-		for(i = 0; i < nr; i++) {
-			for(j = 0; j < nc; j++) {
-				dataB[i + j * nr] = dataA[row[i] + col[j] * nrow];
-			}
-		}
-	}
-#endif /* CDAM_USE_CUDA */
+	SeqMatAsType(B, SeqMatVirtual)->parent = (SeqMat*)A;
+	SeqMatAsType(B, SeqMatVirtual)->row_range[0] = row_begin;
+	SeqMatAsType(B, SeqMatVirtual)->row_range[1] = row_end;
+	SeqMatAsType(B, SeqMatVirtual)->col_range[0] = col_begin;
+	SeqMatAsType(B, SeqMatVirtual)->col_range[1] = col_end;
 }
 
-static void SeqMatCopyDensePrivate(void* A, void* B, MatReuse reuse) {
+static void SeqMatTransposeDensePrivate(void* A) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
-
-	if(reuse == MAT_REUSE) {
-		ASSERT(nrow == SeqMatNumRow(B) && ncol == SeqMatNumCol(B) && "Matrix size mismatch.");
-		ASSERT(SeqMatAsType(A, SeqMatDense)->order == SeqMatAsType(B, SeqMatDense)->order && "Matrix order mismatch.");
-		CdamMemcpy(SeqMatAsType(B, SeqMatDense)->data, SeqMatAsType(A, SeqMatDense)->data, nrow * ncol * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
-	} else {
-		SeqMatDestroyDensePrivate(B);
-		SeqMatNumRow(B) = nrow;
-		SeqMatNumCol(B) = ncol;
-		SeqMatData(B) = CdamTMalloc(SeqMatDense, 1, HOST_MEM);
-		CdamMemset(SeqMatData(B), 0, sizeof(SeqMatDense), HOST_MEM);
-		SeqMatAsType(B, SeqMatDense)->order = SeqMatAsType(A, SeqMatDense)->order;
-		SeqMatSetupDensePrivate(B);
-		SeqMatCopyDensePrivate(A, B, MAT_REUSE);
-	}
-}
-
-static void SeqMatTransposeDensePrivate(void *A, void* B) {
-	index_type nrow = SeqMatNumRow(A);
-	index_type ncol = SeqMatNumCol(A);
-	MatOrder order = SeqMatAsType(A, SeqMatDense)->order;
-
-	ASSERT(A && "Matrix A is NULL.");
-
-	if(B && A != B) {
-		SeqMatNumRow(B) = ncol;
-		SeqMatNumCol(B) = nrow;
-
-		if(order == MAT_ROW_MAJOR) {
-			SeqMatAsType(B, SeqMatDense)->order = MAT_COL_MAJOR;
-		} else {
-			SeqMatAsType(B, SeqMatDense)->order = MAT_ROW_MAJOR;
-		}
-
-		value_type* dataA = SeqMatAsType(A, SeqMatDense)->data;
-		value_type* dataB = SeqMatAsType(B, SeqMatDense)->data;
-
-		CdamMemcpy(dataB, dataA, nrow * ncol * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
-	}
-	else {
-		if(order == MAT_ROW_MAJOR) {
-			SeqMatAsType(A, SeqMatDense)->order = MAT_COL_MAJOR;
-		} else {
-			SeqMatAsType(A, SeqMatDense)->order = MAT_ROW_MAJOR;
-		}
-		SeqMatNumRow(A) = ncol;
-		SeqMatNumCol(A) = nrow;
-	}
+	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
+	SeqMatNumRow(A) = ncol;
+	SeqMatNumCol(A) = nrow;
+	dtranspose(nrow, ncol, data, ncol, data, nrow);
 }
 
 static void SeqMatMultAddDensePrivate(value_type alpha, void* A, value_type *x, value_type beta, value_type *y) {
@@ -167,62 +112,42 @@ static void SeqMatMultAddDensePrivate(value_type alpha, void* A, value_type *x, 
 	index_type ncol = SeqMatNumCol(A);
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
 
-	if(SeqMatAsType(A, SeqMatDense)->order == MAT_ROW_MAJOR) {
-		dgemv(BLAS_T, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
-	}
-	else if(SeqMatAsType(A, SeqMatDense)->order == MAT_COL_MAJOR) {
-		dgemv(BLAS_N, nrow, ncol, alpha, data, nrow, x, 1, beta, y, 1);
-	}
+	dgemv(BLAS_T, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
 }
 
-static void SeqMatMatMultAddDenseDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
-	index_type m, n, k;
-	value_type* dataA = SeqMatAsType(A, SeqMatDense)->data;
-	value_type* dataB = SeqMatAsType(B, SeqMatDense)->data;
-	value_type* dataC = SeqMatAsType(C, SeqMatDense)->data;
+static void SeqMatMultTransposeAddDensePrivate(value_type alpha, void* A, value_type *x, value_type beta, value_type *y) {
+	index_type nrow = SeqMatNumRow(A);
+	index_type ncol = SeqMatNumCol(A);
+	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
 
-	BLASTrans transA = BLAS_T;
-	if(SeqMatAsType(A, SeqMatDense)->order == MAT_COL_MAJOR) {
-		transA = BLAS_N;
-	}
-	BLASTrans transB = BLAS_T;
-	if(SeqMatAsType(B, SeqMatDense)->order == MAT_COL_MAJOR) {
-		transB = BLAS_N;
-	}
-
-	m = (transA == BLAS_N) ? SeqMatNumRow(A) : SeqMatNumCol(A);
-	n = (transB == BLAS_N) ? SeqMatNumCol(B) : SeqMatNumRow(B);
-	k = (transA == BLAS_N) ? SeqMatNumCol(A) : SeqMatNumRow(A);
-
-
-	ASSERT(m == SeqMatNumRow(C) && n == SeqMatNumCol(C) && "Matrix size mismatch.");
-	ASSERT(k == (transB == BLAS_N) ? SeqMatNumRow(B) : SeqMatNumCol(B) && "Matrix size mismatch.");
-
-	ASSERT(reuse == MAT_REUSE && "Only reuse is supported.");
-	dgemm(transA, transB, m, n, k, alpha, dataA, SeqMatNumRow(A), dataB, SeqMatNumRow(B), beta, dataC, SeqMatNumRow(C));
+	dgemv(BLAS_N, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
 }
 
-static void SeqMatMatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
-	/* AB= (AB)^T^T = (B^T A^T)^T */
-	SeqMatTranspose(A, A);
-	SeqMatTranspose(B, B);
-	SeqMatMatMultAddCSRDense(alpha, B, A, beta, C, reuse);
-	SeqMatTranspose(A, A);
-	SeqMatTranspose(B, B);
-	SeqMatTranspose(C, C);
-};
 static void SeqMatMatMultAddDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
 	MatType typeB = SeqMatType(B);
 
 	if(typeB == MAT_TYPE_DENSE) {
-		SeqMatMatMultAddDenseDensePrivate(alpha, A, B, beta, C, reuse);
+		MatMultAddDenseDensePrivate(alpha, A, B, beta, C, reuse);
 	}
 	else if(typeB == MAT_TYPE_CSR) {
-		SeqMatMatMultAddDenseCSRPrivate(alpha, A, B, beta, C, reuse);
+		/* AB= (AB)^T^T = (B^T A^T)^T */
+		SeqMatTranspose(A);
+		SeqMatTranspose(B);
+		MatMultAddCSRDensePrivate(alpha, B, A, beta, C, reuse);
+		SeqMatTranspose(A);
+		SeqMatTranspose(B);
+		SeqMatTranspose(C);
 	}
 	else {
 		ASSERT(0 && "Unsupported matrix type.");
 	}
+}
+
+static void SeqMatMatMultTransposeAddDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
+	/* A^T B = (B^T A)^T */
+	SeqMatTranspose(A);
+	SeqMatMatMultAddDensePrivate(alpha, A, B, beta, C, reuse);
+	SeqMatTranspose(A);
 }
 
 static void SeqMatGetDiagDensePrivate(void* A, value_type* diag, index_type bs) {
@@ -242,7 +167,6 @@ static void SeqMatGetDiagDensePrivate(void* A, value_type* diag, index_type bs) 
 #endif
 }
 
-#define DOFMap(storage_order, nrow, ncol, i, j) ((storage_order == MAT_ROW_MAJOR) ? (i * ncol + j) : (i + j * nrow))
 
 static void SeqMatAddElemValueBatchedDensePrivate(void* A,
 																									index_type batch_size, index_type* batch_index_ptr,
@@ -252,8 +176,8 @@ static void SeqMatAddElemValueBatchedDensePrivate(void* A,
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
-	MatStorageMethod rmap_storage = SeqMatRowStorageMethod(A);
-	MatStorageMethod cmap_storage = SeqMatColStorageMethod(A);
+	CdamLayout* rmap = SeqMatRowLayout(A);
+	CdamLayout* cmap = SeqMatColLayout(A);
 	/* Logically, shape(value) = (batch_size, nshl, nshl, block_row, block_col */
 	/* Physically, shape(value) = (batch_size, nshl, nshl, stride) */
 	/* stride >= block_row * ldv && ldv > block_col */
@@ -261,32 +185,10 @@ static void SeqMatAddElemValueBatchedDensePrivate(void* A,
 
 #ifdef CDAM_USE_CUDA
 	SeqMatAddElemValueBatchedDenseGPU(data, nrow, ncol,
-																		SeqMatAsType(A, SeqMatDense)->order, rmap_storage, cmap_storage,
+																		rmap, cmap,
 																		batch_size, batch_index_ptr, ien, nshl,
-																		block_row, block_col, value, ldv, stride, 0);
+																		0, block_row, 0, block_col, value, ldv, stride, 0);
 #else
-	index_type i, ir, ic, iel;
-	index_type batch, ishl, jshl, ishg, jshg;
-	index_type dst_row, dst_col;
-	value_type* value_ptr;
-	for(i = 0; i < batch_size * nshl * nshl; ++i) {
-		batch = i / (nshl * nshl);
-		iel = batch_index_ptr[batch];
-		ishl = (i % (nshl * nshl)) / nshl;
-		jshl = i % nshl;
-		ishg = ien[iel * nshl + ishl];
-		jshg = ien[iel * nshl + jshl];
-
-		value_ptr = value + i * stride;
-
-		for(ir = 0; ir < block_row; ir++) {
-			dst_row = DOFMap(rmap_storage, nrow / block_row, block_row, ishg, ir);
-			for(ic = 0; ic < block_col; ++ic) {
-				dst_col = DOFMap(cmap_storage, ncol / block_col, block_col, jshg, ic);
-				data[DOFMap(SeqMatAsType(A, SeqMatDense)->order, nrow, ncol, dst_row, dst_col)] += value_ptr[ir * ldv + ic];
-			}
-		}
-	}
 #endif
 }
 
@@ -357,8 +259,8 @@ static void SeqMatZeroRowCSRPrivate(void* A, index_type row, index_type* rows, i
 #endif /* CDAM_USE_CUDA */
 }
 
-static void SeqMatGetSubmatCSRPrivate(void* A, index_type nr, index_type* row,
-																			index_type nc, index_type* col, void* B, void** auxiliary_data) {
+static void SeqMatGetSubmatCSRPrivate(void* A, index_type row_begin, index_type row_begin,
+																			index_type col_begin, index_type col_end, void* B) {
 	index_type i, j;
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
@@ -367,78 +269,27 @@ static void SeqMatGetSubmatCSRPrivate(void* A, index_type nr, index_type* row,
 	CSRAttr* new_spy = NULL;
 
 	ASSERT(SeqMatType(A) == MAT_TYPE_CSR && "Matrix A must be CSR.");
-	ASSERT(SeqMatType(B) == MAT_TYPE_CSR && "Matrix B must be CSR.");
+	ASSERT(SeqMatType(B) == MAT_TYPE_VIRTUAL && "Matrix B must be virtual.");
 
-	if(nr != SeqMatNumRow(B) || nc != SeqMatNumCol(B)) {
-		SeqMatDestroyCSRPrivate(B);
-		SeqMatNumRow(B) = nr;
-		SeqMatNumCol(B) = nc;
-		SeqMatRowStorageMethod(B) = SeqMatRowStorageMethod(A);
-		SeqMatColStorageMethod(B) = SeqMatColStorageMethod(A);
-		GenerateSubmatCSRAttr(spy, nr, row, nc, col, &new_spy);
-		SeqMatAsType(B, SeqMatCSR)->spy = new_spy;
-		SeqMatSetupCSRPrivate(B);
+	if(SeqMatData(B) == NULL) {
+		SeqMatData(B) = CdamTMalloc(SeqMatVirtual, 1, HOST_MEM);
+		CdamMemset(SeqMatAsType(B, SeqMatVirtual), 0, sizeof(SeqMatVirtual), HOST_MEM);
 	}
-#ifdef CDAM_USE_CUDA
-	SeqMatCopySubmatValueCSRGPU(dataA, SeqMatAsType(A, SeqMatCSR)->spy, nr, row, nc, col, SeqMatAsType(B, SeqMatCSR)->data, SeqMatAsType(A, SeqMatCSR)->spy, 0);
-#else
-	value_type* dataB = SeqMatAsType(B, SeqMatCSR)->data;
-	index_type ic;
-	for(i = 0; i < nr; i++) {
-		ir = row[i];
-		for(j = spy->row_ptr[ir]; j < spy->row_ptr[ir + 1]; j++) {
-			ic = spy->col_ind[j];
-			for(k = 0; k < nc; ++k) {
-				if(col[k] == ic) {
-					dataB[new_spy->row_ptr[i] + k] = dataA[j];
-					break;
-				}
-			}
-		}
-	}
-#endif /* CDAM_USE_CUDA */
-	*auxiliary_data = new_spy;
+	SeqMatAsType(B, SeqMatVirtual)->parent = (SeqMat*)A;
+	SeqMatAsType(B, SeqMatVirtual)->row_range[0] = row_begin;
+	SeqMatAsType(B, SeqMatVirtual)->row_range[1] = row_end;
+	SeqMatAsType(B, SeqMatVirtual)->col_range[0] = col_begin;
+	SeqMatAsType(B, SeqMatVirtual)->col_range[1] = col_end;
 }
 
-static void SeqMatCopyCSRPrivate(void* A, void* B) {
-	index_type nrow = SeqMatNumRow(A);
-	index_type ncol = SeqMatNumCol(A);
-	CSRAttr* spy = SeqMatAsType(A, SeqMatCSR)->spy;
-
-	if(SeqMatNumRow(B) != nrow || SeqMatNumCol(B) != ncol) {
-		SeqMatDestroyCSRPrivate(B);
-		SeqMatNumRow(B) = nrow;
-		SeqMatNumCol(B) = ncol;
-		SeqMatRowStorageMethod(B) = SeqMatRowStorageMethod(A);
-		SeqMatColStorageMethod(B) = SeqMatColStorageMethod(A);
-		SeqMatAsType(B, SeqMatCSR)->spy = spy;
-		SeqMatSetupCSRPrivate(B);
-	}
-	CdamMemcpy(SeqMatAsType(B, SeqMatCSR)->data, SeqMatAsType(A, SeqMatCSR)->data, spy->nnz * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
-}
-
-static void SeqMatTransposeCSRPrivate(void* A, void* B) {
+static void SeqMatTransposeCSRPrivate(void* A) {
 	index_type nrow = SeqMatNumRow(A);
 	index_type ncol = SeqMatNumCol(A);
 	CSRAttr* spy = SeqMatAsType(A, SeqMatCSR)->spy;
 
 	ASSERT(A && "Matrix A is NULL.");
 
-	if(B && A != B) {
-		/* TODO: Implement this */
-		// SeqMatNumRow(B) = ncol;
-		// SeqMatNumCol(B) = nrow;
-		// SeqMatRowStorageMethod(B) = SeqMatColStorageMethod(A);
-		// SeqMatColStorageMethod(B) = SeqMatRowStorageMethod(A);
-		// GenerateTransposeCSRAttr(spy, &SeqMatAsType(B, SeqMatCSR)->spy);
-		// SeqMatSetupCSRPrivate(B);
-		// SeqMatTransposeCSRPrivate(A, B);
-	}
-	else {
-		/* TODO: Implement this */
-		// GenerateTransposeCSRAttr(spy, &SeqMatAsType(A, SeqMatCSR)->spy);
-		// SeqMatSetupCSRPrivate(A);
-	}
+	Assert(0 && "Not implemented yet.");
 }
 
 static void SeqMatMultAddCSRPrivate(value_type alpha, void* A, value_type* x, value_type beta, value_type* y) {
@@ -450,10 +301,26 @@ static void SeqMatMultAddCSRPrivate(value_type alpha, void* A, value_type* x, va
 	dspmv(SP_N, alpha, SeqMatAsType(A, SeqMatCSR)->descr, x, beta, y, data, SeqMatAsType(A, SeqMatCSR)->buffer);
 }
 
+static void SeqMatMultTransposeAddCSRPrivate(value_type alpha, void* A, value_type* x, value_type beta, value_type* y) {
+	index_type nrow = SeqMatNumRow(A);
+	index_type ncol = SeqMatNumCol(A);
+	CSRAttr* spy = SeqMatAsType(A, SeqMatCSR)->spy;
+	value_type* data = SeqMatAsType(A, SeqMatCSR)->data;
+
+	dspmv(SP_T, alpha, SeqMatAsType(A, SeqMatCSR)->descr, x, beta, y, data, SeqMatAsType(A, SeqMatCSR)->buffer);
+}
+
 static void SeqMatMatMultAddCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
 	/* TODO: Wrap those functions in blas.h */
 	/* CSR * CSR => SpGEMM or SpGEMMreuse */
 	/* CSR * Dense => SpMM */
+	ASSERT(0 && "Not implemented yet.");
+}
+static void SeqMatMatMultTransposeAddCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
+	/* A^T * B = (B^T * A)^T */
+	SeqMatTranspose(A);
+	SeqMatMatMultAddCSRPrivate(alpha, A, B, beta, C, reuse);
+	SeqMatTranspose(A);
 }
 
 static void SeqMatGetDiagCSRPrivate(void* A, value_type* diag, index_type bs) {
@@ -537,6 +404,14 @@ static void SeqMatAddElemValueBatchedCSRPrivate(void* A,
 	}
 #endif
 }
+
+static void SeqMatSetupNestedPrivate(void* A) {
+	index_type nrow = SeqMatNumRow(A);
+	index_type ncol = SeqMatNumCol(A);
+	SeqMatAsType(A, SeqMatNested)->data = CdamTMalloc(void*, nrow, HOST_MEM);
+	CdamMemset(SeqMatAsType(A, SeqMatNested)->data, 0, nrow * sizeof(void*), HOST_MEM);
+}
+
 
 void SeqMatCreate(MatType type, index_type nrow, index_type ncol, void** A) {
 	*A = CdamTMalloc(SeqMat, 1, HOST_MEM);

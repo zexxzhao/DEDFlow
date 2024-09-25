@@ -120,6 +120,8 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 												const double *B, int ldb, int strideB, double beta,
 												double *C, int ldc, int strideC, int batchCount);
 
+void dtranspose(int m, int n, const double *A, int lda, double *B, int ldb);
+
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
 void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, double *const Carray[], int ldc, int *infoArray, int batchSize);

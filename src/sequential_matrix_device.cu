@@ -103,8 +103,6 @@ void SeqMatGetDiagDenseGPU(value_type* data, index_type n,
 }
 
 __global__ void SeqMatAddElemValueBatchedDenseKernel(value_type* data, index_type nrow, index_type ncol,
-																										 MatOrder order,
-																										 MatStorageMethod rmap_storage, MatStorageMethod cmap_storage,
 																										 index_type batch_size, index_type* batch_index_ptr,
 																										 index_type* ien, index_type nshl,
 																										 index_type block_row, index_type block_col,
@@ -133,18 +131,83 @@ __global__ void SeqMatAddElemValueBatchedDenseKernel(value_type* data, index_typ
 		}
 	}
 }
+__global__ void GenerateBatchedIndexMapKernel(index_type batch_size, index_type* batch_index_ptr,
+																							index_type* ien, index_type nshl,
+																							index_type nnode, index_type* comp_offset,
+																							index_type block_displ, index_type block_count,
+																							index_type* index_map) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i > batch_size * nshl) return;
+	int iel = batch_index_ptr[i / nshl];
+	int ishl = i % nshl;
+	int node = ien[iel * nshl + ishl];
+
+	index_map += i * block_count;
+	int j, k = 0;
+	index_type begin, end;
+	for(j = 0; j < block_count; ++j) {
+		while(j + block_displ < comp_offset[k] && comp_offset[k + 1] >= comp_offset[k]) {
+			k++;
+		}
+		begin = comp_offset[k];
+		end = comp_offset[k + 1];
+		index_map[j] = begin * nnode + node * (end - begin) + j + block_displ - begin;
+	}
+}
+__global__ void SeqMatAddValueBatchedDenseKernel(value_type* data, index_type nrow, index_type ncol,
+																								 index_type batch_size, index_type nshl,
+																								 index_type* row_index_map, index_type* col_index_map,
+																								 index_type block_row_count, index_type block_col_count,
+																								 value_type* value, index_type ldv, index_type stride) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i > batch_size * nshl * nshl) return; 
+
+	index_type ir, ic, iel, ishl, jshl, ishg, jshg;
+	index_type dst_row, dst_col;
+	value_type* val = value + i * stride;
+
+	iel = i / (nshl * nshl);
+	ishl = (i % (nshl * nshl)) / nshl;
+	jshl = i % nshl;
+
+	row_index_map += (iel * nshl + ishl) * block_row_count;
+	col_index_map += (iel * nshl + jshl) * block_col_count;
+
+	for(ir = 0; ir < block_row_count; ++ir) {
+		dst_row = row_index_map[ir];
+		for(ic = 0; ic < block_col_count; ++ic) {
+			dst_col = col_index_map[ic];
+			data[dst_row * ncol + dst_col] += val[ir * ldv + ic];
+		}
+	}
+}
+
+
 
 void SeqMatAddElemValueBatchedDenseGPU(value_type* data, index_type nrow, index_type ncol,
-																			 MatOrder order,
-																			 MatStorageMethod rmap_storage, MatStorageMethod cmap_storage,
+																			 CdamLayout* cmap, CdamLayout* rmap,
 																			 index_type batch_size, index_type* batch_index_ptr,
 																			 index_type* ien, index_type nshl,
-																			 index_type block_row, index_type block_col,
+																			 index_type block_row_displ, index_type block_row_count,
+																			 index_type block_col_displ, index_type block_col_count,
 																			 value_type* value, index_type ldv, index_type stride,
-																			 cudaStream_t stream) {
+																			 cudaStream_t stream, Arena scratch) {
 	int num_threads = 256;
 	int num_blocks = CEIL_DIV(batch_size * nshl * nshl, num_threads);
-	SeqMatAddElemValueBatchedDenseKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, order, rmap_storage, cmap_storage, batch_size, batch_index_ptr, ien, nshl, block_row, block_col, value, ldv, stride);
+
+
+	/* Generate the row index map of the batch */
+	index_type rnode = CdamLayoutNumOwned(rmap) + CdamLayoutNumGhosted(rmap);
+	index_type rcomp_offset = CdamLayoutComponentOffset(rmap);
+	index_type* row_index_map = (index_type*)ArenaPush(sizeof(index_type), batch_size * nshl * 6, &scratch, ARENA_FLAG_NONZERO);
+	GenerateBatchedIndexMapKernel<<<CEIL_DIV(batch_size * nshl, num_threads), num_threads, 0, stream>>>(batch_size, batch_index_ptr, ien, nshl, rnode, rcomp_offset, block_row_displ, block_row_count, row_index_map);
+	/* Generate the column index map of the batch */
+	index_type cnode = CdamLayoutNumOwned(cmap) + CdamLayoutNumGhosted(cmap);
+	index_type ccomp_offset = CdamLayoutComponentOffset(cmap);
+	index_type* col_index_map = (index_type*)ArenaPush(sizeof(index_type), batch_size * nshl * 6, &scratch, ARENA_FLAG_NONZERO);
+	GenerateBatchedIndexMapKernel<<<CEIL_DIV(batch_size * nshl, num_threads), num_threads, 0, stream>>>(batch_size, batch_index_ptr, ien, nshl, cnode, ccomp_offset, block_col_displ, block_col_count, col_index_map);
+	/* Add the value to the data */
+	SeqMatAddValueBatchedDenseKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, batch_size, nshl, row_index_map, col_index_map, block_row_count, block_col_count, value, ldv, stride);
 }
 
 __global__ void SeqMatCopySubmatValueCSRKernel(value_type* src, index_type* row_ptr, index_type* col_ind,

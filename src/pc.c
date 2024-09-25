@@ -90,6 +90,9 @@ static void PCBuildPrivate(CdamPC* pc, void* A, void* config) {
 
 }
 
+static void PCSchurGenAp(CdamPC* pc) {
+
+}
 
 static void PCApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 

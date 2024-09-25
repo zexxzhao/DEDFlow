@@ -95,6 +95,19 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 
 }
 
+void dtranspose(int m, int n, const double *A, int lda, double *B, int ldb) {
+	double one = 1.0, zero = 0.0;
+	if(A != B) {
+		cublasDgeam(GetCublasHandle(), CUBLAS_OP_T, CUBLAS_OP_N, m, n, &one, A, lda, &zero, B, ldb, B, ldb);
+	}
+	else {
+		cudaMalloc((void**)&B, ldb * m * sizeof(double));
+		cublasDgeam(GetCublasHandle(), CUBLAS_OP_T, CUBLAS_OP_N, m, n, &one, A, lda, &zero, B, ldb, B, ldb);
+		cudaMemcpy(A, B, ldb * m * sizeof(double), cudaMemcpyDeviceToDevice);
+		cudaFree(B);
+	}
+}
+
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
 	cublasDgetrfBatched(GetCublasHandle(), n, Aarray, lda, PivotArray, infoArray, batchSize);
@@ -261,6 +274,27 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 	}
 }
 
+void dtranspose(int m, int n, const double *A, int lda, double *B, int ldb) {
+	int i, j;
+	if(A != B) {
+		for (i = 0; i < m; i++) {
+			for (j = 0; j < n; j++) {
+				B[j * ldb + i] = A[i * lda + j];
+			}
+		}
+	}
+	else {
+		double tmp;
+		for (i = 0; i < m; i++) {
+			for (j = 0; j < n; j++) {
+				tmp = A[j * ldb + i];
+				A[j * ldb + i] = A[i * lda + j];
+				A[i * lda + j] = tmp;
+			}
+		}
+	}
+}
+
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
 	int i;
@@ -275,6 +309,7 @@ void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, doub
 		infoArray[i] = LAPACKE_dgetri(LAPACK_COL_MAJOR, n, Aarray[i], lda, PivotArray + i * n, Carray[i], ldc);
 	}
 }
+
 
 /* Sparse BLAS */
 void SpMatCreate(SPMatDesc* matDesc, int m, int n, int* row_ptr, int* col_ind, double* values) {

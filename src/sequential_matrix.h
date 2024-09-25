@@ -13,13 +13,15 @@ struct SeqMatOp {
 
 	void (*zero)(void* A);
 	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
-	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary_data);
+	void (*get_submat)(void* A, index_type row_begin, index_type row_end, index_type col_begin, index_type col_end, void* B);
 
-	void (*copy)(void* A, void* B);
-	void (*transpose)(void* A, void* B);
+	// void (*copy)(void* A, void* B);
+	void (*transpose)(void* A);
 
 	void (*multadd)(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
+	void (*multransposeadd)(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 	void (*matmultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+	void (*mattransposemultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 	void (*get_diag)(void* A, value_type* diag, index_type bs);
 	void (*add_elem_value_batched)(void* A, index_type batch_size, index_type* ien, index_type nshl,
 																 index_type block_row, index_type block_col,
@@ -28,23 +30,22 @@ struct SeqMatOp {
 
 struct SeqMat {
 	MatType type;
-	MatStorageMethod rmap_storage;
-	MatStorageMethod cmap_storage;
+	CdamLayout* rmap;
+	CdamLayout* cmap;
 	index_type size[2];
 	void* data;
 	struct SeqMatOp op[1];
 };
 
 #define SeqMatType(A) (((SeqMat*)A)->type)
-#define SeqMatRowStorageMethod(A) (((SeqMat*)A)->rmap_storage)
-#define SeqMatColStorageMethod(A) (((SeqMat*)A)->cmap_storage)
+#define SeqMatRowLayout(A) (((SeqMat*)A)->rmap)
+#define SeqMatColLayout(A) (((SeqMat*)A)->cmap)
 #define SeqMatNumRow(A) (((SeqMat*)A)->size[0])
 #define SeqMatNumCol(A) (((SeqMat*)A)->size[1])
 #define SeqMatData(A) (((SeqMat*)A)->data)
 #define SeqMatAsType(A, T) ((T*)((SeqMat*)A)->data)
 
 struct SeqMatDense {
-	MatOrder order;
 	value_type* data;
 };
 
@@ -66,9 +67,35 @@ struct SeqMatSlicedELL {
 	value_type* val;
 };
 
+#define SEQMAT_NESTED_MAX_SEG (16)
+struct SeqMatNested {
+	/* The submatrices in a nested matrix must have contiguous row/col indices */
+	/* Row dof segment */
+	index_type num_row_seg;
+	index_type row_seg_offset[SEQMAT_NESTED_MAX_SEG + 1];
+	index_type row_seg_size[SEQMAT_NESTED_MAX_SEG];
+
+	/* Column dof segment */
+	index_type num_col_seg;
+	index_type col_seg_offset[SEQMAT_NESTED_MAX_SEG + 1];
+	index_type col_seg_size[SEQMAT_NESTED_MAX_SEG];
+
+	/* Submatrices */
+	SeqMat* submatrices[SEQMAT_NESTED_MAX_SEG][SEQMAT_NESTED_MAX_SEG];
+};
+
+struct SeqMatVirtual {
+	SeqMat* parent;
+	index_type row_range[2];
+	index_type col_range[2];
+};
+
 typedef struct SeqMat SeqMat;
 typedef struct SeqMatDense SeqMatDense;
 typedef struct SeqMatCSR SeqMatCSR;
+typedef struct SeqMatSlicedELL SeqMatSlicedELL; /* Not implemented */
+typedef struct SeqMatNested SeqMatNested; /* Not implemented */
+typedef struct SeqMatVirtual SeqMatVirtual;
 
 void SeqMatCreate(MatType type, index_type nrow, index_type ncol, void** A);
 void SeqMatSetup(void* A);
@@ -77,13 +104,14 @@ void SeqMatDestroy(void* A);
 void SeqMatZero(void* A);
 void SeqMatZeroRow(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 
-void SeqMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B, void** auxiliary_data);
+void SeqMatGetSubmat(void* A, index_type row_begin, index_type row_end, index_type col_begin, index_type col_end, void* B);
 
-void SeqMatCopy(void* A, void* B);
-void SeqMatTranspose(void* A, void* B);
+vpod SeqMatTranspose(void* A);
 
 void SeqMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
+void SeqMatMulTransposeAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 void SeqMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
+void SeqMatMatTransposeMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 
 void SeqMatGetDiag(void* A, value_type* diag, index_type bs);
 void SeqMatAddElemValueBatched(void* A, index_type batch_size, index_type* ien, index_type nshl,

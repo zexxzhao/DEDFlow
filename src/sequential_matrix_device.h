@@ -2,6 +2,8 @@
 #define __SEQUENTIAL_MATRIX_DEVICE_H__
 
 #include "common.h"
+#include "alloc.h"
+#include "vec.h"
 #include "matrix_util.h"
 
 #ifdef CDAM_USE_CUDA
@@ -22,13 +24,13 @@ void SeqMatGetDiagDenseGPU(value_type* data, index_type n,
 													 value_type* diag, index_type bs, cudaStream_t stream);
 
 void SeqMatAddElemValueBatchedDenseGPU(value_type* data, index_type nrow, index_type ncol,
-																			 MatOrder order,
-																			 MatStorageMethod rmap_storage, MatStorageMethod cmap_storage,
+																			 CdamLayout* rmap, CdamLayout* cmap,
 																			 index_type batch_size, index_type* batch_index_ptr,
 																			 index_type* ien, index_type nshl,
-																			 index_type block_row, index_type block_col,
+																			 index_type block_row_displ, index_type block_row_count,
+																			 index_type block_col_displ, index_type block_col_count,
 																			 value_type* value, index_type ldv, index_type stride,
-																			 cudaStream_t stream);
+																			 cudaStream_t stream, Arena scratch);
 
 void SeqMatCopySubmatValueCSRGPU(value_type* src, CSRAttr* src_spy,
 																 index_type nr, index_type* row, index_type nc, index_type* col,
