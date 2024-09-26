@@ -21,7 +21,7 @@ typedef struct CdamLayout CdamLayout;
 #define CdamLayoutNumGlobal(layout) ((layout)->num[3])
 #define CdamLayoutNumOwned(layout) (CdamLayoutNumExclusive(layout) + CdamLayoutNumShared(layout))
 #define CdamLayoutNodalL2G(layout) ((layout)->l2g)
-#define CdamLayoutNumComponents(layout) ({\
+#define CdamLayoutNumComponent(layout) ({\
 		index_type nc = 0; \
 		while((layout)->component_offsets[nc] < (layout)->component_offsets[nc + 1]) nc++; \
 		nc + 1; \
@@ -29,8 +29,8 @@ typedef struct CdamLayout CdamLayout;
 #define CdamLayoutComponentOffset(layout) ((layout)->component_offsets)
 #define CdamLayoutLen(layout) (\
 		{ \
-			index_type len = CdamLayoutNumOwned(layout) + CdamLayoutNumGhost(layout); \
-			index_type num_components = CdamLayoutNumComponents(layout); \
+			index_type len = CdamLayoutNumOwned(layout) + CdamLayoutNumGhosted(layout); \
+			index_type num_components = CdamLayoutNumComponent(layout); \
 			len *= CdamLayoutComponentOffset(layout)[num_components]; \
 			len; \
 		})
@@ -44,8 +44,8 @@ typedef struct CdamLayout CdamLayout;
 			index_type dof = 0; \
 			index_type node_type = (n) < (num)[0] ? 0 : \
 				(n) < (num)[0] + (num)[1] ? 1 : 2; \
-			dof += (n > 0) * (o)[nc] * (num)[0]; \
-			dof += (n > 1) * (o)[nc] * (num)[1]; \
+			dof += (node_type > 0) * (o)[nc] * (num)[0]; \
+			dof += (node_type > 1) * (o)[nc] * (num)[1]; \
 			index_type k = 0; \
 			while(k < nc && c < (o)[k]) k++; \
 			dof += (num)[n] * (o)[k] + ((o)[k + 1] - (o)[k]) * (num)[n] + c - (o)[k]; \

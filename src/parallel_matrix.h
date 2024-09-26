@@ -3,6 +3,8 @@
 
 #include <mpi.h>
 #include "common.h"
+#include "alloc.h"
+#include "layout.h"
 #include "matrix_util.h"
 
 __BEGIN_DECLS__
@@ -16,7 +18,7 @@ struct CdamParMatOp {
 	void (*get_submat)(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
 
 	void (*copy)(void* A, void* B);
-	void (*transpose)(void* A, void* B);
+	void (*transpose)(void* A);
 
 	void (*multadd)(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 	void (*matmultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
@@ -91,7 +93,7 @@ void CdamParMatZeroRow(void* A, index_type row, index_type* rows, value_type dia
 void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc, index_type* cols, void* B);
 
 // void CdamParMatCopy(void* A, void* B);
-void CdamParMatTranspose(void* A, void* B);
+void CdamParMatTranspose(void* A);
 void CdamParMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 void CdamParMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 void CdamParMatGetDiag(void* A, value_type* diag, index_type bs);
@@ -112,7 +114,7 @@ void CdamParMatGetDiag(void* A, value_type* diag, index_type bs);
  */
 void CdamParMatAddElemValueBatched(void* A,
 																	 index_type nelem, index_type nshl, index_type* ien,
-																	 value_type* value);
+																	 value_type* value, Arena scratch);
 
 
 __END_DECLS__

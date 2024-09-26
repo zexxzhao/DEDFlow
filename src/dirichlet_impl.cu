@@ -1,5 +1,6 @@
 #include "dirichlet.h"
 
+#ifdef CDAM_USE_CUDA
 template <typename I, typename T> 
 __global__ void ApplyBCVecKernel(T* b, I n_bc, const I* bc_ind, const T* bc_val) {
 	I i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -63,3 +64,4 @@ void GetRowFromNodeGPU(index_type n, index_type* row, index_type shape, index_ty
 	GetRowFromNodeKernel<<<n_blocks, block_size>>>(n, row, shape, init);
 }
 __END_DECLS__
+#endif

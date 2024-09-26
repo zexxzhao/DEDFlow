@@ -3,6 +3,7 @@
 
 // #include "pc.h"
 
+#ifdef CDAM_USE_CUDA
 __BEGIN_DECLS__
 
 static __global__ void
@@ -53,3 +54,4 @@ void PCJacobiInplaceDevice(index_type n, index_type nnz, f64* data, index_type* 
 }
 
 __END_DECLS__
+#endif	

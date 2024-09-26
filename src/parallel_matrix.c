@@ -49,24 +49,33 @@ void CdamParMatZero(void* A) {
 }
 
 void CdamParMatZeroRow(void* A, index_type row, index_type* rows, value_type diag) {
-	index_type i, n_owned = 0;
-	index_type nrow_owned = CdamParMatNumRowOwned(A);
 	index_type nrow_exclusive = CdamParMatNumRowExclusive(A);
 	index_type nrow_shared = CdamParMatNumRowShared(A);
 	index_type nrow_ghosted = CdamParMatNumRowGhosted(A);
+	index_type nrow_offset[4] = {0, 0, 0, 0};
+	nrow_offset[0] = 0;
+	nrow_offset[1] = nrow_offset[0] + nrow_exclusive;
+	nrow_offset[2] = nrow_offset[1] + nrow_shared;
+	nrow_offset[3] = nrow_offset[2] + nrow_ghosted;
+	
+	index_type nr_exclusive = 0, nr_shared = 0, nr_ghosted = 0;
+	nr_exclusive = CountIndexByRangeGPU(row, rows, nrow_offset[0], nrow_offset[1]);
+	nr_shared = CountIndexByRangeGPU(row, rows, nrow_offset[1], nrow_offset[2]);
+	nr_ghosted = CountIndexByRangeGPU(row, rows, nrow_offset[2], nrow_offset[3]);
 
-	SeqMatZeroRow(CdamParMatII(A), row, rows, 0, diag);
-	SeqMatZeroRow(CdamParMatIS(A), row, rows, 0, 0.0);
-	SeqMatZeroRow(CdamParMatIG(A), row, rows, 0, 0.0);
+	/* Assume rows is sorted */
+	SeqMatZeroRow(CdamParMatII(A), nr_exclusive, rows, 0, diag);
+	SeqMatZeroRow(CdamParMatIS(A), nr_exclusive, rows, 0, 0.0);
+	SeqMatZeroRow(CdamParMatIG(A), nr_exclusive, rows, 0, 0.0);
 
-	SeqMatZeroRow(CdamParMatSI(A), row, rows, -nrow_exlusive, 0.0);
-	SeqMatZeroRow(CdamParMatSS(A), row, rows, -nrow_exclusive, diag);
-	SeqMatZeroRow(CdamParMatSG(A), row, rows, -nrow_exclusive, 0.0);
+	SeqMatZeroRow(CdamParMatSI(A), nr_shared, rows + nr_exclusive, -nrow_exclusive, 0.0);
+	SeqMatZeroRow(CdamParMatSS(A), nr_shared, rows + nr_exclusive, -nrow_exclusive, diag);
+	SeqMatZeroRow(CdamParMatSG(A), nr_shared, rows + nr_exclusive, -nrow_exclusive, 0.0);
 
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
-		SeqMatZeroRow(CdamParMatGI(A), row, rows, -nrow_exclusive - nrow_shared, 0.0);
-		SeqMatZeroRow(CdamParMatGS(A), row, rows, -nrow_exclusive - nrow_shared, 0.0);
-		SeqMatZeroRow(CdamParMatGG(A), row, rows, -nrow_exclusive - nrow_shared, 0.0);
+		SeqMatZeroRow(CdamParMatGI(A), nr_ghosted, rows + nr_exclusive + nr_shared, -nrow_exclusive - nrow_shared, 0.0);
+		SeqMatZeroRow(CdamParMatGS(A), nr_ghosted, rows + nr_exclusive + nr_shared, -nrow_exclusive - nrow_shared, 0.0);
+		SeqMatZeroRow(CdamParMatGG(A), nr_ghosted, rows + nr_exclusive + nr_shared, -nrow_exclusive - nrow_shared, 0.0);
 	}
 	else {
 		SeqMatZero(CdamParMatGI(A));
@@ -80,12 +89,11 @@ void CdamParMatGetSubmat(void* A, index_type nr, index_type* rows, index_type nc
 	index_type nrow_offset[4] = {0, 0, 0, 0};
 	index_type nc_exclusive = 0, nc_shared = 0, nc_ghosted = 0;
 	index_type ncol_offset[4] = {0, 0, 0, 0};
-	index_type i;
 
 	nrow_offset[0] = 0;
 	nrow_offset[1] = CdamParMatNumRowExclusive(A);
-	nrow_offset[2] = nr_offset[1] + CdamParMatNumRowShared(A);
-	nrow_offset[3] = nr_offset[2] + CdamParMatNumRowGhosted(A);
+	nrow_offset[2] = nrow_offset[1] + CdamParMatNumRowShared(A);
+	nrow_offset[3] = nrow_offset[2] + CdamParMatNumRowGhosted(A);
 
 	nr_exclusive = CountIndexByRangeGPU(nr, rows, nrow_offset[0], nrow_offset[1]);
 	nr_shared = CountIndexByRangeGPU(nr, rows, nrow_offset[1], nrow_offset[2]);
@@ -195,8 +203,8 @@ void CdamParMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
 		CdamCommutor* commu = (CdamCommutor*)CdamParMatCommutor(A);
 		CdamLayout* map = CdamParMatRowMap(A);
-		CdamCommuFordward(commu, y, map, sizeof(value_type));
-		CdamCommuBackword(commu, y, map, sizeof(value_type));
+		CdamCommuForward(commu, y, map, sizeof(value_type));
+		CdamCommuBackward(commu, y, map, sizeof(value_type));
 	}
 
 }
@@ -230,8 +238,8 @@ void CdamParMatMultTransposeAdd(value_type alpha, void* A, value_type* x, value_
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
 		CdamCommutor* commu = (CdamCommutor*)CdamParMatCommutor(A);
 		CdamLayout* map = CdamParMatColMap(A);
-		CdamCommuFordward(commu, y, map, sizeof(value_type));
-		CdamCommuBackword(commu, y, map, sizeof(value_type));
+		CdamCommuForward(commu, y, map, sizeof(value_type));
+		CdamCommuBackward(commu, y, map, sizeof(value_type));
 	}
 }
 
@@ -273,6 +281,7 @@ void CdamParMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, v
 	SeqMatMatMultAdd(alpha, CdamParMatGG(A), CdamParMatGG(B), 1.0, CdamParMatGG(C), MAT_REUSE);
 
 }
+
 void CdamParMatGetDiag(void* A, value_type* diag, index_type bs) {
 	index_type nrow_exclusive = CdamParMatNumRowExclusive(A);	
 	index_type nrow_shared = CdamParMatNumRowShared(A);
@@ -286,51 +295,61 @@ void CdamParMatGetDiag(void* A, value_type* diag, index_type bs) {
 		CdamCommuBackward(commu, diag, map, bs * bs * (int)sizeof(value_type));
 	}
 }
+
 void CdamParMatAddElemValueBatched(void* A,
 																	 index_type nelem, index_type nshl, index_type* ien,
 																	 value_type* value, Arena scratch) {
 
 	index_type nrow_offset[4] = {0, 0, 0, 0};
-	CdamLayout* map = CdamParMatRowMap(A);
+	CdamLayout* rmap = CdamParMatRowMap(A);
 	nrow_offset[0] = 0;
-	nrow_offset[1] = nrow_offset[0] + CdamLayoutNumExlusive(map);
-	nrow_offset[2] = nrow_offset[1] + CdamLayoutNumShared(map);
-	nrow_offset[3] = nrow_offset[2] + CdamLayoutNumGhosted(map);
-	index_type* index = ArenaAlloc(sizeof(index_type), nelem * nshl, &scratch, 0);
+	nrow_offset[1] = nrow_offset[0] + CdamLayoutNumExclusive(rmap);
+	nrow_offset[2] = nrow_offset[1] + CdamLayoutNumShared(rmap);
+	nrow_offset[3] = nrow_offset[2] + CdamLayoutNumGhosted(rmap);
 
-	index_type nr_exclusive, nr_shared, nr_ghosted;
-	/* Collect the indices of ien that are in the exclusive, shared, and ghosted rows */
-	SelectIndexByRange(nelem * nshl, ien, index, nrow_offset[0], nrow_offset[1]);
-	nr_exclusive = CountIndexByRange(nelem * nshl, ien, nrow_offset[0], nrow_offset[1]);
-	/* Collect the indices of ien that are in the shared rows */
-	SelectIndexByRange(nelem * nshl, ien, index + nr_exclusive, nrow_offset[1], nrow_offset[2]);
-	nr_shared = CountIndexByRange(nelem * nshl, ien, nrow_offset[1], nrow_offset[2]);
-	/* Collect the indices of ien that are in the ghosted rows */
-	SelectIndexByRange(nelem * nshl, ien, index + nr_exclusive + nr_shared, nrow_offset[2], nrow_offset[3]);
-	nr_ghosted = CountIndexByRange(nelem * nshl, ien, nrow_offset[2], nrow_offset[3]);
+	index_type ncol_offset[4] = {0, 0, 0, 0};
+	CdamLayout* cmap = CdamParMatColMap(A);
+	ncol_offset[0] = 0;
+	ncol_offset[1] = ncol_offset[0] + CdamLayoutNumExclusive(cmap);
+	ncol_offset[2] = ncol_offset[1] + CdamLayoutNumShared(cmap);
+	ncol_offset[3] = ncol_offset[2] + CdamLayoutNumGhosted(cmap);
+
+	byte* row_mask = (byte*)ArenaPush(sizeof(byte), nelem, &scratch, 0);
+	byte* col_mask = (byte*)ArenaPush(sizeof(byte), nelem, &scratch, 0);
 
 	/* Add the values by submatrices */
-	SeqMatAddElemValueBatched(CdamParMatII(A), nelem, nshl, ien, value,
-														nr_exclusive, index, nr_exclusive, index, scratch);
-	SeqMatAddElemValueBatched(CdamParMatIS(A), nelem, nshl, ien, value,
-														nr_exclusive, index, nr_shared, index + nr_exclusive, scratch);
-	SeqMatAddElemValueBatched(CdamParMatIG(A), nelem, nshl, ien, value,
-														nr_exclusive, index, nr_ghosted, index + nr_exclusive + nr_shared, scratch);
+	GenMaskByRange(nelem, nshl, ien, row_mask, nrow_offset[0], nrow_offset[1], scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[0], ncol_offset[1], scratch);
+	SeqMatAddElemValueBatched(CdamParMatII(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
+	GenMaskByRange(nelem, nshl, ien, row_mask, nrow_offset[1], nrow_offset[2], scratch);
+	SeqMatAddElemValueBatched(CdamParMatIS(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
+	GenMaskByRange(nelem, nshl, ien, row_mask, nrow_offset[2], nrow_offset[3], scratch);
+	SeqMatAddElemValueBatched(CdamParMatIG(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
 
-	SeqMatAddElemValueBatched(CdamParMatSI(A), nelem, nshl, ien, value,
-														nr_shared, index + nr_exclusive, nr_exclusive, index, scratch);
-	SeqMatAddElemValueBatched(CdamParMatSS(A), nelem, nshl, ien, value,
-														nr_shared, index + nr_exclusive, nr_shared, index + nr_exclusive, scratch);
-	SeqMatAddElemValueBatched(CdamParMatSG(A), nelem, nshl, ien, value,
-														nr_shared, index + nr_exclusive, nr_ghosted, index + nr_exclusive + nr_shared, scratch);
+	GenMaskByRange(nelem, nshl, ien, row_mask, nrow_offset[1], nrow_offset[2], scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[0], ncol_offset[1], scratch);
+	SeqMatAddElemValueBatched(CdamParMatSI(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[1], ncol_offset[2], scratch);
+	SeqMatAddElemValueBatched(CdamParMatSS(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[2], ncol_offset[3], scratch);
+	SeqMatAddElemValueBatched(CdamParMatSG(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
 
-	SeqMatAddElemValueBatched(CdamParMatGI(A), nelem, nshl, ien, value,
-														nr_ghosted, index + nr_exclusive + nr_shared, nr_exclusive, index, scratch);
-	SeqMatAddElemValueBatched(CdamParMatGS(A), nelem, nshl, ien, value,
-														nr_ghosted, index + nr_exclusive + nr_shared, nr_shared, index + nr_exclusive, scratch);
-	SeqMatAddElemValueBatched(CdamParMatGG(A), nelem, nshl, ien, value,
-														nr_ghosted, index + nr_exclusive + nr_shared, nr_ghosted, index + nr_exclusive + nr_shared, scratch);
-
+	GenMaskByRange(nelem, nshl, ien, row_mask, nrow_offset[2], nrow_offset[3], scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[0], ncol_offset[1], scratch);
+	SeqMatAddElemValueBatched(CdamParMatGI(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[1], ncol_offset[2], scratch);
+	SeqMatAddElemValueBatched(CdamParMatGS(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
+	GenMaskByRange(nelem, nshl, ien, col_mask, ncol_offset[2], ncol_offset[3], scratch);
+	SeqMatAddElemValueBatched(CdamParMatGG(A), nelem, nshl, ien,
+														row_mask, col_mask, value, scratch);
 }
 
 

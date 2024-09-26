@@ -1,7 +1,8 @@
-#include <thrust/transform.h>
-#include <thrust/device_ptr.h>
 #include "vec_impl.h"
 
+#ifdef CDAM_USE_CUDA
+#include <thrust/transform.h>
+#include <thrust/device_ptr.h>
 template<typename T>
 struct VecModFunctor {
 	T b;
@@ -75,4 +76,26 @@ void VecPointwiseMod(const value_type* a, value_type b, value_type* c, index_typ
 	thrust::transform(a_ptr, a_ptr + n, c_ptr, VecModFunctor<value_type>(b));
 }
 
+
 __END_DECLS__
+#else
+__BEGIN_DECLS__
+void VecPointwiseMult(const value_type* a, const value_type* b, value_type* c, index_type n) {
+	for (index_type i = 0; i < n; i++) {
+		c[i] = a[i] * b[i];
+	}
+}
+
+void VecPointwiseDiv(const value_type* a, const value_type* b, value_type* c, index_type n) {
+	for (index_type i = 0; i < n; i++) {
+		c[i] = a[i] / b[i];
+	}
+}
+
+void VecPointwiseInv(value_type* a, index_type n) {
+	for (index_type i = 0; i < n; i++) {
+		a[i] = 1.0 / a[i];
+	}
+}
+__END_DECLS__
+#endif

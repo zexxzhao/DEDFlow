@@ -13,7 +13,6 @@ void CdamLayoutCreate(CdamLayout** layout, void* config) {
 	*layout = CdamTMalloc(CdamLayout, 1, HOST_MEM);
 	CdamMemset(*layout, 0, sizeof(CdamLayout), HOST_MEM);
 
-	CdamLayoutNumComponents(*layout) = 4;
 	for(index_type i = 0; i < CDAM_MAX_NUM_COMPONENTS + 1; i++) {
 		CdamLayoutComponentOffset(*layout)[i] = 0;
 	}
@@ -22,10 +21,6 @@ void CdamLayoutCreate(CdamLayout** layout, void* config) {
 	CdamLayoutComponentOffset(*layout)[2] = 4;
 	CdamLayoutComponentOffset(*layout)[3] = 5;
 	CdamLayoutComponentOffset(*layout)[4] = 6;
-
-	CdamLayoutComponentOffsetDevice(*layout) = CdamTMalloc(index_type, CDAM_MAX_NUM_COMPONENTS + 1, DEVICE_MEM);
-	CdamMemcpy(CdamLayoutComponentOffsetDevice(*layout), CdamLayoutComponentOffset(*layout),
-						 (CDAM_MAX_NUM_COMPONENTS + 1) * sizeof(index_type), DEVICE_MEM, HOST_MEM);
 
 }
 
@@ -52,9 +47,9 @@ void CdamLayoutSetup(CdamLayout* layout, void* mesh) {
 void CdamLayoutCopyToDevice(CdamLayout* layout, CdamLayout** d_layout) {
 	*d_layout = CdamTMalloc(CdamLayout, 1, DEVICE_MEM);
 	CdamMemcpy(*d_layout, layout, sizeof(CdamLayout), DEVICE_MEM, HOST_MEM);
-	CdamLayoutNodalL2G(*d_layout) = CdamTMalloc(index_type, CdamMeshNumNode(mesh3d), DEVICE_MEM);
-
 	index_type n = CdamLayoutNumExclusive(layout) + CdamLayoutNumShared(layout) + CdamLayoutNumGhosted(layout);
+	CdamLayoutNodalL2G(*d_layout) = CdamTMalloc(index_type, n, DEVICE_MEM);
+
 	CdamMemcpy(CdamLayoutNodalL2G(*d_layout), CdamLayoutNodalL2G(layout),
 						 n * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
 }
@@ -68,9 +63,9 @@ void VecDot(void* x, void* y, void* layout, void* result, void* results) {
 
 	value_type local_result[CDAM_MAX_NUM_COMPONENTS];
 
-	index_type i, n = CdamLayoutNumComponents(lo);
+	index_type i, n = CdamLayoutNumComponent(lo);
 	index_type num_owned = CdamLayoutNumOwned(lo);
-	index_type num_ghost = CdamLayoutNumGhost(lo);
+	index_type num_ghost = CdamLayoutNumGhosted(lo);
 	index_type num = num_owned + num_ghost;
 	index_type begin, end;
 	for(i = 0; i < n; i++) {

@@ -39,7 +39,7 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
-typedef char byte;
+typedef u8 byte;
 typedef ptrdiff_t size;
 
 #define MPI_BYTE_TYPE MPI_BYTE

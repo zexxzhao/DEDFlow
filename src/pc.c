@@ -94,6 +94,10 @@ static void PCSchurGenAp(CdamPC* pc) {
 
 }
 
+static void PCSchurGenS(CdamPC* pc) {
+
+}
+
 static void PCApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 
 	index_type displ = pc->displ;
@@ -175,6 +179,7 @@ static void PCRicahrdsonApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 
 static void PCJacobiAllocPrivate(CdamPC* pc, void* A, void* config) {
 	cJSON* json = (cJSON*)config;
+	UNUSED(json);
 	pc->mat = A;
 	pc->bs = JSONGetItem(json, "bs")->valueint;
 	pc->n_vert = CdamParMatNumRowAll(A) / pc->bs;
@@ -183,6 +188,7 @@ static void PCJacobiAllocPrivate(CdamPC* pc, void* A, void* config) {
 
 static void PCJacobiSetupPrivate(CdamPC* pc, void* A, void* config) {
 	cJSON* json = (cJSON*)config;
+	UNUSED(json);
 	index_type bs = pc->bs;
 	index_type n = CdamParMatNumRowAll(A) / bs;
 	value_type* pc_ctx = (value_type*)pc->diag;
@@ -227,7 +233,6 @@ static void PCJacobiDestroyPrivate(CdamPC* pc) {
 static void PCJacobiApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 	index_type bs = pc->bs;
 	value_type* diag = (value_type*)pc->diag;
-	value_type one = 1.0, zero = 0.0;
 	
 	if(bs == 1) {
 		VecPointwiseMult(x, diag, y, pc->n_vert);

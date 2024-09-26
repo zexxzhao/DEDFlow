@@ -12,14 +12,14 @@ void CdamKrylovSolve(CdamKrylov* solver, void* A, void* x, void* b);
 
 static b32 CheckConvergencePrivate(void* data, void* x, b32 verbose) {
 	CdamNewtonSolver* solver = (CdamNewtonSolver*)data;
-	CdamVecLayout* layout = (CdamVecLayout*)solver->layout;
+	CdamLayout* layout = (CdamLayout*)solver->layout;
 
 
 	value_type atol = solver->atol;
 	value_type rtol = solver->rtol;
 	
 	index_type i;
-	index_type n = CdamVecLayoutNumComponents(layout);
+	index_type n = CdamLayoutNumComponent(layout);
 
 	value_type* r = solver->rnorm;
 	value_type* r0 = solver->rnorm_init;
@@ -47,10 +47,10 @@ static b32 CheckConvergencePrivate(void* data, void* x, b32 verbose) {
 
 static void UpdateSolutionPrivate(void* data, void *sol) {
 	CdamNewtonSolver* solver = (CdamNewtonSolver*)data;
-	CdamVecLayout* layout = (CdamVecLayout*)solver->layout;
+	CdamLayout* layout = (CdamLayout*)solver->layout;
 	value_type relaxation;
 	value_type* dx = (value_type*)solver->dx;
-	index_type n = CdamVecLayoutLen(layout);
+	index_type n = CdamLayoutLen(layout);
 	
 	relaxation = solver->relaxation;
 	if(relaxation == 0.0) {

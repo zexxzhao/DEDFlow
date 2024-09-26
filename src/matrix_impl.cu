@@ -1,6 +1,7 @@
 #include <assert.h>
 #include "alloc.h"
-#include "matrix.h"
+
+#ifdef CDAM_USE_CUDA 
 
 
 template <typename I, typename T>
@@ -694,3 +695,4 @@ void MatrixGetDiagBlockGPU(const value_type* matval,
 
 
 __END_DECLS__
+#endif

@@ -9,6 +9,8 @@
 #define kCP (1e3)
 #define kKAPPA (1e-2)
 
+#ifdef CDAM_USE_CUDA
+
 __constant__ value_type fb[] = {0.0, 0.0, 0.0}; 
 __constant__ value_type gw[] = {0.0416666666666667, 0.0416666666666667, 0.0416666666666667, 0.0416666666666667};
 __constant__ value_type shlu[] = {0.5854101966249685, 0.1381966011250105, 0.1381966011250105, 0.1381966011250105,
@@ -82,7 +84,6 @@ __constant__ value_type c_nv2[4*3] = { /* 0.57735026919, 0.57735026919, 0.577350
 
 __BEGIN_DECLS__
 
-#ifdef CDAM_USE_CUDA
 /** Load the value from the source array to the destination array belonging to the batch
  * The source array is columned-majored of size (max(elem_size, stridex), num_node)
  * The destination array is columned-majored of size (max(NSHL * BS, stridey), batch_size)
@@ -1111,8 +1112,8 @@ void IntElemAssembly(index_type batch_size, value_type* elem_G, value_type* shgr
 	cudaFreeHost(h_opt_pinned);
 }
 
-#endif /* CDAM_USE_CUDA */
 
 __END_DECLS__
+#endif /* CDAM_USE_CUDA */
 
 

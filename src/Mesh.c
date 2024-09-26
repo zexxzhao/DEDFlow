@@ -446,7 +446,7 @@ void CdamMeshColor(CdamMesh* mesh, Arena scratch) {
 	ColorMeshTet(mesh, MAX_COLOR, mesh->color, scratch);
 
 	/* Sort the element id by color */
-	index_type max_color = GetMaxColor(mesh->color, num_elem);
+	index_type max_color = GetMaxColor(mesh->color, num_elem, scratch);
 	mesh->color_batch_offset = CdamTMalloc(index_type, max_color + 1, HOST_MEM);
 	mesh->color_batch_offset[0] = 0;
 	mesh->color_batch_ind = CdamTMalloc(index_type, num_elem, HOST_MEM);

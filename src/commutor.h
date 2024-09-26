@@ -37,6 +37,9 @@ void CdamCommutorDestroy(CdamCommutor* commutor);
 void CdamCommutorForward(CdamCommutor* commutor, void* sendbuf, index_type blocklen);
 void CdamCommutorBackward(CdamCommutor* commutor, void* recvbuf, index_type blocklen);
 
+void CdamCommuForward(CdamCommutor* commutor, void* sendbuf, void* layout, size_t blocklen);
+void CdamCommuBackward(CdamCommutor* commutor, void* recvbuf, void* layout, size_t blocklen);
+
 __END_DECLS__
 
 

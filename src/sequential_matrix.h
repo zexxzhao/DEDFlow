@@ -2,6 +2,7 @@
 #define __SEQUENTIAL_MATRIX_H__
 
 #include "common.h"
+#include "alloc.h"
 #include "csr.h"
 #include "layout.h"
 #include "matrix_util.h"
@@ -13,7 +14,7 @@ struct SeqMatOp {
 	void (*destroy)(void* A);
 
 	void (*zero)(void* A);
-	void (*zere_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
+	void (*zero_row)(void* A, index_type row, index_type* rows, index_type shift, value_type diag);
 	void (*get_submat)(void* A, index_type nrow, index_type* row, index_type ncol, index_type* col, void* B);
 
 	// void (*copy)(void* A, void* B);
@@ -25,7 +26,7 @@ struct SeqMatOp {
 	void (*mattransposemultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 	void (*get_diag)(void* A, value_type* diag, index_type bs);
 	void (*add_elem_value_batched)(void* A, index_type nelem, index_type nshl, index_type* ien,
-																 index_type nr, index_type* row, index_type nc, index_type* col,
+																 byte* row, byte* col,
 																 value_type* value, Arena scratch);
 };
 
@@ -33,6 +34,10 @@ struct SeqMat {
 	MatType type;
 	CdamLayout* rmap;
 	CdamLayout* cmap;
+#ifdef CDAM_USE_CUDA
+	CdamLayout* d_rmap;
+	CdamLayout* d_cmap;
+#endif
 	index_type size[2];
 	void* data;
 	struct SeqMatOp op[1];
@@ -41,6 +46,10 @@ struct SeqMat {
 #define SeqMatType(A) (((SeqMat*)A)->type)
 #define SeqMatRowLayout(A) (((SeqMat*)A)->rmap)
 #define SeqMatColLayout(A) (((SeqMat*)A)->cmap)
+#ifdef CDAM_USE_CUDA
+#define SeqMatRowLayoutDevice(A) (((SeqMat*)A)->d_rmap)
+#define SeqMatColLayoutDevice(A) (((SeqMat*)A)->d_cmap)
+#endif
 #define SeqMatNumRow(A) (((SeqMat*)A)->size[0])
 #define SeqMatNumCol(A) (((SeqMat*)A)->size[1])
 #define SeqMatData(A) (((SeqMat*)A)->data)
@@ -56,7 +65,7 @@ struct SeqMatCSR {
 	value_type* data;
 
 	SPMatDesc descr;
-	index_type buffer_size;
+	size_t buffer_size;
 	void* buffer;
 };
 
@@ -112,14 +121,14 @@ void SeqMatGetSubmat(void* A, index_type nrow, index_type* row, index_type ncol,
 void SeqMatTranspose(void* A);
 
 void SeqMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
-void SeqMatMulTransposeAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
+void SeqMatMultTransposeAdd(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 void SeqMatMatMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 void SeqMatMatTransposeMultAdd(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 
 void SeqMatGetDiag(void* A, value_type* diag, index_type bs);
 void SeqMatAddElemValueBatched(void* A, index_type nelem, index_type nshl, index_type* ien,
-																index_type nr, index_type* row, index_type nc, index_type* col,
-																value_type* value, Arena scratch);
+															 byte* row, byte* col,
+															 value_type* value, Arena scratch);
 
 
 __END_DECLS__

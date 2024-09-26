@@ -1,5 +1,6 @@
 #include "common.h"
 
+#ifdef CDAM_USE_CUDA
 __BEGIN_DECLS__
 
 static __global__ void
@@ -72,3 +73,4 @@ void MatrixGetDiagBlock(const value_type* matval,
 }
 
 __END_DECLS__
+#endif

@@ -1,3 +1,4 @@
+#include <string.h>
 #include "common.h"
 
 __BEGIN_DECLS__

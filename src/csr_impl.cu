@@ -1,12 +1,15 @@
+#ifdef CDAM_USE_CUDA
 #include <cuda_runtime.h>
 #include <thrust/device_ptr.h>
 #include <thrust/scan.h>
+#endif
 
 #include "alloc.h"
 // #include "Mesh.h"
 #include "csr.h"
 
 #define MAX_ROW_LENGTH 64
+#ifdef CDAM_USE_CUDA
 template<typename Index>
 __global__ void
 GetFindRowKernel(Index nnz, Index num_rows,
@@ -106,7 +109,6 @@ CSRAttrGetNZIndBatchedKernel(I num_row, I num_col, const I* row_ptr, const I* co
 	}
 }
 
-
 __BEGIN_DECLS__
 
 typedef index_type index_t;
@@ -123,7 +125,7 @@ typedef index_type index_t;
 // 	CdamFreeDevice(buffer, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
 // }
 
-void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_size[2]) {
+void ExpandCSRByBlockSizeDevice(const CSRAttr* attr, CSRAttr* new_attr, index_t block_size[2]) {
 	index_t num_rows = CSRAttrNumRow(attr);
 	index_t num_cols = CSRAttrNumCol(attr);
 	index_t nnz = CSRAttrNNZ(attr);
@@ -155,7 +157,7 @@ void ExpandCSRByBlockSize(const CSRAttr* attr, CSRAttr* new_attr, index_t block_
 
 }
 
-void CSRAttrGetNZIndBatchedGPU(const CSRAttr* attr,
+void CSRAttrGetNZIndBatchedDevice(const CSRAttr* attr,
 																 index_type batch_size, const index_type* row, const index_type* col,
 																 index_type* ind) {
 	index_type num_rows = CSRAttrNumRow(attr);
@@ -220,8 +222,8 @@ __global__ void GetSubmatColInd(index_type nrow, index_type ncol, index_type nnz
 	}
 }
 
-void GenerateSubmatCSRAttrGPU(CSRAttr* attr, index_type nr, index_type* row,
-															index_type nc, index_type* col, CSRAttr** new_attr) {
+void GenerateSubmatCSRAttrDevice(CSRAttr* attr, index_type nr, index_type* row,
+																 index_type nc, index_type* col, CSRAttr** new_attr) {
 	index_type num_rows = CSRAttrNumRow(attr);
 	index_type num_cols = CSRAttrNumCol(attr);
 	*new_attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
@@ -249,3 +251,4 @@ void GenerateSubmatCSRAttrGPU(CSRAttr* attr, index_type nr, index_type* row,
 															
 
 __END_DECLS__
+#endif

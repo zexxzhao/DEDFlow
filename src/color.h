@@ -7,6 +7,12 @@
 #define UNCOLORED (0x0)
 #define MAX_COLOR (1 << 8)
 
+#define COLOR_RANDOM_LB (0)
+#define COLOR_RANDOM_UB (INT_MAX/2)
+
+#define COLOR_MARKED (COLOR_RANDOM_UB + 1)
+
+
 
 __BEGIN_DECLS__
 
@@ -15,7 +21,7 @@ void ColorMeshTet(struct CdamMesh* mesh, index_type max_color_len, index_type* c
 void ColorMeshPrism(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
 void ColorMeshHex(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
 
-index_type GetMaxColor(const index_type* color, index_type num_elem);
+index_type GetMaxColor(const index_type* color, index_type num_elem, Arena scratch);
 __END_DECLS__
 
 #endif /* __COLOR_H__ */

@@ -1,3 +1,4 @@
+#include <string.h>
 #include "indexing.h"
 #ifdef CDAM_USE_CUDA
 #include <cuda_runtime.h>
@@ -25,6 +26,7 @@ __global__ void FilterArrayByValueKernel(const void* data, int elem_size, int si
 		out[tid] = 1;
 	}
 }
+#endif
 
 
 
@@ -109,8 +111,39 @@ void Iota(index_type* data, index_type n, index_type start, index_type step) {
 	int num_block = CEIL_DIV(n, num_thread);
 	IotaKernel<<<num_block, num_thread>>>(data, n, start, step);
 }
+
+static __global__ void GenMaskByRange(index_type nrow, index_type ncol, index_type *input,
+																			byte* mask, index_type start, index_type end) {
+	const int NUM_THREAD = 192;
+	__shared__ byte tmp[NUM_THREAD];
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	int n_per_block = NUM_THREAD / nshl;
+	int oid = threadIdx.x + blockIdx.x * n_per_block;
+	int i;
+	byte ouput = 0;
+	if(tid >= nrow * ncol) return;
+	
+	index_type v = input[tid];
+	tmp[threadIdx.x] = (v >= start && v < end) ? 1 : 0;
+
+	__syncthreads();
+
+	if(threadIdx.x < n_per_block && oid < nrow) {
+		for(int i = 0; i < nshl; ++i) {
+			output |= tmp[threadIdx.x * nshl + i] * (1 << i);
+		}
+		mask[oid] = output;
+	}
+}
+
+void GenMaskByRange(index_type nrow, index_type ncol, index_type* input,
+										byte* mask, index_type start, index_type end, Arena scratch) {
+	int num_thread = 192;
+	int num_block = CEIL_DIV(nrow * ncol, num_thread);
+	GenMaskByRange<<<num_block, num_thread>>>(nrow, ncol, input, mask, start, end);
+}
 #else
-index_type CountValueI(const index_type* data, index_type size, index_type value) {
+index_type CountValueI(const index_type* data, index_type size, index_type value, Arena scratch) {
 	index_type count = 0;
 	for (index_type i = 0; i < size; ++i) {
 		if (data[i] == value) {

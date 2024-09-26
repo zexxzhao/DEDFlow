@@ -55,7 +55,7 @@ void DirichletApplyMat(Dirichlet* bc, void* A) {
 		if(bc->bctype[ic] == BC_STRONG) {
 			GetRowFromNodeGPU(bound_num_node, buffer, (index_type)bc->shape, ic);
 			// MatrixZeroRow(A, bound_num_node, buffer, 0, 1.0);
-			CdamParMatZeroRow(A, bound_num_node, buffer, 0, 1.0);
+			CdamParMatZeroRow(A, bound_num_node, buffer, 1.0);
 			GetNodeFromRowGPU(bound_num_node, buffer, bc->shape);
 		}
 	}

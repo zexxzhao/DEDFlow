@@ -132,6 +132,50 @@ GetNodalGraphFromMesh(CdamMesh* mesh) {
 	return map;
 }
 
+static void ExpandCSRByBlockSizeHost(const CSRAttr* csr, CSRAttr* new_attr, index_type block_size[2]) {
+	index_type num_row = CSRAttrNumRow(csr);
+	index_type num_col = CSRAttrNumCol(csr);
+	index_type nnz = CSRAttrNNZ(csr);
+	index_type i, j, k, l;
+	index_type* row_ptr = CSRAttrRowPtr(csr);
+	index_type* col_ind = CSRAttrColInd(csr);
+	index_type* new_row_ptr = CSRAttrRowPtr(new_attr);
+	index_type* new_col_ind = CSRAttrColInd(new_attr);
+	index_type new_num_row = num_row * block_size[0];
+	index_type new_num_col = num_col * block_size[1];
+	index_type new_nnz = nnz * block_size[0] * block_size[1];
+	new_row_ptr[0] = 0;
+	for(i = 0; i < num_row; i++) {
+		for(j = 0; j < block_size[0]; ++j) {
+			new_row_ptr[i * block_size[0] + j + 1] = new_row_ptr[i * block_size[0] + j]
+					+ (row_ptr[i + 1] - row_ptr[i]) * block_size[1];
+		}
+	}
+	for(i = 0; i < num_row; i++) {
+		for(k = row_ptr[i]; k < row_ptr[i + 1]; k++) {
+			for(l = 0; l < block_size[1]; l++) {
+				new_col_ind[new_row_ptr[i * block_size[0]] + (k - row_ptr[i]) * block_size[1] + l] = col_ind[k] * block_size[1] + l;
+			}
+		}
+		for(j = 1; j < block_size[0]; j++) {
+			CdamMemcpy(new_col_ind + new_row_ptr[i * block_size[0] + j], new_col_ind + new_row_ptr[i * block_size[0]], (row_ptr[i + 1] - row_ptr[i]) * block_size[1] * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
+		}
+	}
+}
+
+static void ExpandCSRByBlockSize(const CSRAttr* csr, CSRAttr* new_attr, index_type block_size[2]) {
+#ifdef CDAM_USE_CUDA
+	ExpandCSRByBlockSizeDevice(csr, new_attr, block_size);
+#else
+	ExpandCSRByBlockSizeHost(csr, new_attr, block_size);
+#endif
+}
+
+static void CSRAttrGetNZIndBatchedHost(const CSRAttr* attr, index_type batch_size,
+																			 const index_type* row, const index_type* col,
+																			 index_type* ind) {
+}
+
 #include "csr_impl.h"
 
 
@@ -284,7 +328,11 @@ index_type* CSRAttrRow(CSRAttr *attr, index_type row) {
 void CSRAttrGetNonzeroIndBatched(const CSRAttr* attr, index_type batch_size,
 																 const index_type* row, const index_type* col,
 																 index_type* ind) {
-	CSRAttrGetNZIndBatchedGPU(attr, batch_size, row, col, ind);
+#ifdef CDAM_USE_CUDA
+	CSRAttrGetNZIndBatchedDevice(attr, batch_size, row, col, ind);
+#else
+	CSRAttrGetNZIndBatchedHost(attr, batch_size, row, col, ind);
+#endif
 }
 
 __END_DECLS__
