@@ -8,8 +8,8 @@
 
 __BEGIN_DECLS__
 
-index_type CountValueI(const index_type* data, index_type n, index_type value, Arena scratch);
-index_type CountValueImp(const void* data, index_type elem_size, index_type n, void* value, Arena scratch);
+index_type CountValueI(index_type* data, index_type n, index_type value, Arena scratch);
+index_type CountValueImp(void* data, index_type elem_size, index_type n, void* value, Arena scratch);
 
 void SortByKeyI(index_type* keys, index_type* values, index_type n, Arena scratch);
 

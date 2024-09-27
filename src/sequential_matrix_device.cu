@@ -1,5 +1,6 @@
 #include "blas.h"
-#include "sequential_matrix.h"
+// #include "sequential_matrix.h"
+#include "sequential_matrix_device.h"
 
 #ifdef CDAM_USE_CUDA
 #include <cub/cub.cuh>
@@ -35,8 +36,8 @@ void SeqMatZeroRowDenseGPU(value_type* data, index_type nrow, index_type ncol,
 													 index_type rshift, index_type cshift,
 													 value_type diag, cudaStream_t stream) {
 	int num_threads = 256;
-	int num_blocks = CEIL_DIV(n * ncol, num_threads);
-	SeqMatZeroRowDenseRowMajorKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, n, row, rshift, cshift, diag);
+	int num_blocks = CEIL_DIV(nr * ncol, num_threads);
+	SeqMatZeroRowDenseRowMajorKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, nr, row, rshift, cshift, diag);
 }
 __global__ void SeqMatGetSubmatDenseColMajorKernel(value_type* src, index_type nrow, index_type ncol,
 																									 value_type* dst, index_type nr, index_type nc,
@@ -61,21 +62,17 @@ __global__ void SeqMatGetSubmatDenseRowMajorKernel(value_type* src, index_type n
 	dst[i] = src[ir * ncol + ic];
 }
 
-void SeqMatGetSubmatDenseGPU(MatOrder order, value_type* src, index_type nrow, index_type ncol,
-														 value_type* dst, index_type nr, index_type nc,
-														 index_type* row, index_type* col, cudaStream_t stream) {
+void SeqMatGetSubmatDenseGPU(value_type* src, index_type nrow, index_type ncol,
+														 index_type nr, index_type nc, index_type *row, index_type* col,
+														 index_type rshift, index_type cshift, value_type* dst, cudaStream_t stream) {
 	int num_threads = 256;
 	int num_blocks = CEIL_DIV(nr * nc, num_threads);
-	if (order == ROW_MAJOR) {
-		SeqMatGetSubmatDenseRowMajorKernel<<<num_blocks, num_threads, 0, stream>>>(src, nrow, ncol, dst, nr, nc, row, col);
-	} else {
-		SeqMatGetSubmatDenseColMajorKernel<<<num_blocks, num_threads, 0, stream>>>(src, nrow, ncol, dst, nr, nc, row, col);
-	}
+	SeqMatGetSubmatDenseRowMajorKernel<<<num_blocks, num_threads, 0, stream>>>(src, nrow, ncol, dst, nr, nc, row, col);
 }
 
 __global__ void SeqMatGetDiagDenseKernel(value_type* data, index_type n, value_type* diag, index_type bs) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= k * bs * bs) return;
+	if (i >= n * bs) return;
 
 	int ir = i / bs;
 	int ic = i % bs;
@@ -88,7 +85,7 @@ void SeqMatGetDiagDenseGPU(value_type* data, index_type n,
 	if(bs == 1) {
 		dcopy(n, data, n + 1, diag, 1);
 	}
-	else (bs > 1) {
+	else if(bs > 1) {
 		int num_threads = 256;
 		int num_blocks = CEIL_DIV(n * bs, num_threads);
 		SeqMatGetDiagDenseKernel<<<num_blocks, num_threads, 0, stream>>>(data, n, diag, bs);
@@ -102,7 +99,7 @@ __global__ void SeqMatAddElemValueBatchedDenseKernel(value_type* data, index_typ
 																										 value_type* value) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	index_type i, r, c, iel;
-	index_type batch, ishl, jshl; ishg, jshg;
+	index_type batch, ishl, jshl, ishg, jshg;
 	index_type dst_row, dst_col;
 	index_type block_row = CdamLayoutComponentOffset(rmap)[CdamLayoutNumComponent(rmap)];
 	index_type block_col = CdamLayoutComponentOffset(cmap)[CdamLayoutNumComponent(cmap)];
@@ -208,10 +205,10 @@ __global__ void SeqMatAddValueBatchedDenseKernel(value_type* data, index_type nr
 // 	SeqMatAddValueBatchedDenseKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, batch_size, nshl, row_index_map, col_index_map, block_row_count, block_col_count, value, ldv, stride);
 // }
 
-void SeqMatAddElemValueBatchedDenseGPU(value_type* data, index_type nrow, index_type ncol,
-																			 CdamLayout* cmap, CdamLayout* rmap,
-																			 index_type nelem, index_type nshl, index_type *ien,
+void SeqMatAddElemValueBatchedDenseGPU(value_type* data, index_type nrow, index_type ncol, 
+																			 CdamLayout* rmap, CdamLayout* cmap,
 																			 byte* row_mask, byte* col_mask,
+																			 index_type nelem, index_type nshl, index_type* ien,
 																			 value_type* value, Arena scratch, cudaStream_t stream) {
 	int num_threads = 256;
 	int num_blocks = CEIL_DIV(nelem * nshl * nshl, num_threads);
@@ -279,6 +276,8 @@ __global__ void SeqMatGetDiagBlockedCSRKernel(value_type* src, index_type nrow, 
 void SeqMatGetDiagBlockedCSRGPU(value_type* src, CSRAttr* spy, 
 																index_type* diag, index_type ld, index_type stride, index_type bs,
 																cudaStream_t stream) {
+	index_type nrow = CSRAttrNumRow(spy);
+	index_type ncol = CSRAttrNumCol(spy);
 	int num_threads = 256;
 	int num_blocks = CEIL_DIV(nrow, num_threads);
 	SeqMatGetDiagBlockedCSRKernel<<<num_blocks, num_threads, 0, stream>>>(src, nrow, ncol, CSRAttrRowPtr(spy), CSRAttrColInd(spy), diag, ld, stride, bs);
@@ -292,7 +291,7 @@ __global__ void SeqMatAddElemValueCSRKernel(value_type* matval, index_type nrow,
 																						index_type nelem, index_type nshl, index_type* ien,
 																						value_type* value) {
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if(i >= batch_size * nshl * nshl) return;
+	if(i >= nelem * nshl * nshl) return;
 	index_type iel = i / (nshl * nshl);
 	index_type ishl = (i % (nshl * nshl)) / nshl;
 	index_type jshl = i % nshl;
@@ -313,7 +312,7 @@ __global__ void SeqMatAddElemValueCSRKernel(value_type* matval, index_type nrow,
 	jshg = ien[iel * nshl + jshl];
 
 
-	val += i * nshl * nshl * block_row * block_col;
+	value += i * nshl * nshl * block_row * block_col;
 
 	for(r = 0; r < block_row; ++r) {
 		dst_row = CdamLayoutDOFMapLocal(rmap, ishg, r);
@@ -322,12 +321,12 @@ __global__ void SeqMatAddElemValueCSRKernel(value_type* matval, index_type nrow,
 		len = end - start;
 
 		k = start;
-		for(c = 0; jj < block_col; ++c) {
+		for(c = 0; c < block_col; ++c) {
 			dst_col = CdamLayoutDOFMapLocal(cmap, jshg, c);
 
 			for(; k < end; ++k) {
 				if(col_ind[k] == dst_col) {
-					matval[k] += val[r * block_col + c];
+					matval[k] += value[r * block_col + c];
 					break;
 				}
 			}
@@ -339,10 +338,12 @@ __global__ void SeqMatAddElemValueCSRKernel(value_type* matval, index_type nrow,
 void SeqMatAddElemValueCSRGPU(value_type* matval,
 															CSRAttr* spy, CdamLayout* rmap, CdamLayout* cmap,
 															byte* row_mask, byte* col_mask,
-															index_type elem, index_type nshl, index_type* ien,
-															value_type* val, Arena scratch, cudaStream_t stream);
+															index_type nelem, index_type nshl, index_type* ien,
+															value_type* val, Arena scratch, cudaStream_t stream) {
+	index_type nrow = CSRAttrNumRow(spy);
+	index_type ncol = CSRAttrNumCol(spy);
 	int num_threads = 256;
-	int num_blocks = CEIL_DIV(batch_size * nshl * nshl, num_threads);
+	int num_blocks = CEIL_DIV(nelem * nshl * nshl, num_threads);
 
 	SeqMatAddElemValueCSRKernel<<<num_blocks, num_threads, 0, stream>>>(
 		matval, nrow, ncol, CSRAttrRowPtr(spy), CSRAttrColInd(spy), rmap, cmap, row_mask, col_mask, nelem, nshl, ien, val);

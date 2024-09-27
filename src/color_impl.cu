@@ -16,7 +16,7 @@
 
 __BEGIN_DECLS__
 #ifdef CDAM_USE_CUDA
-static __global__ void GenerateV2EMapRowCountKernel(const index_type* ien, index_type num_elem, index_type num_node, index_type* row_ptr, int NSHL) {
+static __global__ void GenerateV2EMapRowCountKernel(index_type* ien, index_type num_elem, index_type num_node, index_type* row_ptr, int NSHL) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i >= num_elem) return;
 	for(int j = 0; j < NSHL; ++j) {
@@ -24,18 +24,18 @@ static __global__ void GenerateV2EMapRowCountKernel(const index_type* ien, index
 	}
 }
 
-void GenerateV2EMapRowDevice(const index_type* ien, index_type num_elem, index_type num_node, index_type* row_ptr, int NSHL) {
+void GenerateV2EMapRowDevice(index_type* ien, index_type num_elem, index_type NSHL, index_type num_node, index_type* row_ptr) {
 	cudaMemset(row_ptr, 0, sizeof(index_type) * (num_node + 1));
 	int block_dim = 256;
 	int grid_dim = (num_elem + block_dim - 1) / block_dim;
 
-	GenerateV2EMapRowCountKernel<index_type, NSHL><<<grid_dim, block_dim>>>(ien, num_elem, num_node, row_ptr);
+	GenerateV2EMapRowCountKernel<<<grid_dim, block_dim>>>(ien, num_elem, num_node, row_ptr, NSHL);
 
 	thrust::inclusive_scan(row_ptr, row_ptr + num_node + 1, row_ptr);
 }
 
-static __global__ void GenerateV2EMapColKernel(const index_type* ien, index_type num_elem, index_type num_node,
-																							 const index_type* row_ptr, index_type* col_idx, index_type* row_count, int NSHL) {
+static __global__ void GenerateV2EMapColKernel(index_type* ien, index_type num_elem, index_type num_node,
+																							 index_type* row_ptr, index_type* col_idx, index_type* row_count, int NSHL) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i >= num_elem) return;
 	for(int j = 0; j < NSHL; ++j) {
@@ -45,26 +45,26 @@ static __global__ void GenerateV2EMapColKernel(const index_type* ien, index_type
 	}
 }
 
-void GenerateV2EMapColDevice(const index_type* ien, index_type num_elem, index_type num_node, const index_type* row_ptr, index_type* col_idx, int NSHL) {
+void GenerateV2EMapColDevice(index_type* ien, index_type num_elem, int NSHL, index_type num_node, index_type* row_ptr, index_type* col_idx) {
 	int block_dim = 256;
 	int grid_dim = (num_elem + block_dim - 1) / block_dim;
 
 	index_type* row_counter = CdamTMalloc(index_type,  num_node, DEVICE_MEM);
 	cudaMemset(row_counter, 0, sizeof(index_type) * num_node);
 
-	GenerateV2EMapColKernel<index_type, NSHL><<<grid_dim, block_dim>>>(ien, num_elem, num_node, row_ptr, col_idx, row_counter);
+	GenerateV2EMapColKernel<<<grid_dim, block_dim>>>(ien, num_elem, num_node, row_ptr, col_idx, row_counter, NSHL);
 
 	CdamFree(row_counter, sizeof(index_type) * num_node, DEVICE_MEM);
 }
 
 /* Jones-Plassman-Luby Algorithm */
 static __global__ void
-ColorElementJPLKernel(const index_type* ien, /* Element to Vertex */
-											const index_type* row_ptr, const index_type* col_ind, /* Vertex to Element */
+ColorElementJPLKernel(index_type* ien, /* Element to Vertex */
+											index_type* row_ptr, index_type* col_ind, /* Vertex to Element */
 											index_type max_color, index_type* color, index_type num_elem, int NSHL) {
 	const int NUM_THREAD = 192;
 	const int MAX_NUM_ELEM_BLOCK = NUM_THREAD / 4;
-	int num_elem_block = NUM_THREA / NSHL;
+	int num_elem_block = NUM_THREAD / NSHL;
 	__shared__ byte tmp[MAX_NUM_ELEM_BLOCK]; 
 
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -169,13 +169,13 @@ struct GenerateRandomColorFunctor {
 	}
 };
 
-index_type ColorElementJPL(const index_type* ien, /* Element to Vertex */
-						index_type* row_ptr, index_type* col_ind, /* Vertex to Element */
-						index_type max_color, index_type* color, index_type num_elem, int NSHL) {
+void ColorElementJPLDevice(index_type* ien, /* Element to Vertex */
+													 index_type* row_ptr, index_type* col_ind, /* Vertex to Element */
+													 index_type max_color, index_type* color, index_type num_elem, int NSHL) {
 	index_type left = num_elem;
 	index_type c = 0;
 
-	GenerateRandomColor(color, num_elem, max_color);
+	GenerateRandomColorDevice(color, num_elem, max_color);
 
 	u8 h_flag;
 
@@ -201,9 +201,8 @@ index_type ColorElementJPL(const index_type* ien, /* Element to Vertex */
 		left = !!h_flag;
 	}
 	RecoverColorKernel<<<grid_dim, block_dim>>>(color, num_elem);
-	CdamFreeDevice(d_flag, sizeof(u8) * (num_elem + 1), DEVICE_MEM);
-	CdamFreeDevice(cub_reduce_buffer, cub_reduce_buffer_size, DEVICE_MEM);
-	return c;
+	CdamFree(d_flag, sizeof(u8) * (num_elem + 1), DEVICE_MEM);
+	CdamFree(cub_reduce_buffer, cub_reduce_buffer_size, DEVICE_MEM);
 }
 
 void GenerateRandomColorDevice(index_type* color, index_type n, index_type max_color) {
@@ -217,18 +216,18 @@ void GenerateRandomColorDevice(index_type* color, index_type n, index_type max_c
 		return;
 	}
 
-	thrust::transform(color, color + n, color, GenerateRandomColorFunctor<index_type>(COLOR_RANDOM_LB, COLOR_RANDOM_UB));
+	thrust::transform(color, color + n, color, GenerateRandomColorFunctor(COLOR_RANDOM_LB, COLOR_RANDOM_UB));
 	for(index_type i = 0; i < n; i++) {
 		color[i] = rand() % (COLOR_RANDOM_UB - COLOR_RANDOM_LB) + COLOR_RANDOM_LB;
 	}
 }
 
-void GetMaxColorDevice(const index_type* color, index_type n, index_type* max_color, Arena scratch) {
-	index_type* output = (index_type*)ArenaPush(sizeof(index_type), 1, scratch, 0);
+void GetMaxColorDevice(index_type* color, index_type n, index_type* max_color, Arena scratch) {
+	index_type* output = (index_type*)ArenaPush(sizeof(index_type), 1, &scratch, 0);
 	index_type* temp_buff = NULL;
 	size_t temp_buff_size = 0;
 	cub::DeviceReduce::Max(temp_buff, temp_buff_size, color, output, n);
-	temp_buff = (index_type*)ArenaPush(sizeof(byte), temp_buff_size, scratch, 0);
+	temp_buff = (index_type*)ArenaPush(sizeof(byte), temp_buff_size, &scratch, 0);
 
 	cub::DeviceReduce::Max(temp_buff, temp_buff_size, color, output, n);
 	CdamMemcpy(max_color, output, sizeof(index_type), HOST_MEM, DEVICE_MEM);

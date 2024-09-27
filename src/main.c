@@ -190,8 +190,8 @@ int main(int argc, char** argv) {
 	
 	CdamKrylovSetup(krylov, mesh, JSONGetItem(config, "NewtonSolver.LinearSolver"));
 
-	CdamVecLayout* layout;
-	CdamVecLayoutCreate(&layout, config);
+	CdamLayout* layout;
+	CdamLayoutCreate(&layout, config);
 	value_type* vec, *dx;
 	// CdamNewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
 	
@@ -201,8 +201,8 @@ int main(int argc, char** argv) {
 	CdamNewtonSolverB(nssolver) = vec;
 	CdamNewtonSolverX(nssolver) = dx;
 
-	CdamMat* mat;
-	CdamMatCreate(MPI_COMM_WORLD, &mat);
+	CdamParMat* mat;
+	CdamParMatCreate(MPI_COMM_WORLD, (void**)&mat);
 	CdamNewtonSolverA(nssolver) = mat;
 
 
@@ -290,8 +290,8 @@ int main(int argc, char** argv) {
 		/* Prediction stage */
 		// cublasDscal(handle, num_node * 3, fac_pred, dwg, 1);
 		// cublasDscal(handle, num_node * 2, fac_pred, dwg + num_node * 4, 1);
-		BLAS_CALL(scal, num_node * 3, fac_pred + 0, dwgold, 1);
-		BLAS_CALL(scal, num_node * 2, fac_pred + 0, dwgold + num_node * 4, 1);
+		dscal(num_node * 3, fac_pred[0], dwgold, 1);
+		dscal(num_node * 2, fac_pred[0], dwgold + num_node * 4, 1);
 
 		/* Generate new particles */
 		// ParticleContextAdd(pctx);
@@ -313,11 +313,11 @@ int main(int argc, char** argv) {
 		// cublasDaxpy(handle, num_node * 2, fac_corr + 1, dwg + num_node * 4, 1, wgold + num_node * 4, 1);
 		// cublasDcopy(handle, num_node * 6, dwg, 1, dwgold, 1);
 
-		BLAS_CALL(axpy, num_node * 3, fac_corr + 0, dwgold, 1, wgold, 1);
-		BLAS_CALL(axpy, num_node * 2, fac_corr + 0, dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
-		BLAS_CALL(axpy, num_node * 3, fac_corr + 1, dwg, 1, wgold, 1);
-		BLAS_CALL(axpy, num_node * 2, fac_corr + 1, dwg + num_node * 4, 1, wgold + num_node * 4, 1);
-		BLAS_CALL(copy, num_node * 6, dwg, 1, dwgold, 1);
+		daxpy(num_node * 3, fac_corr[0], dwgold, 1, wgold, 1);
+		daxpy(num_node * 2, fac_corr[0], dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
+		daxpy(num_node * 3, fac_corr[1], dwg, 1, wgold, 1);
+		daxpy(num_node * 2, fac_corr[1], dwg + num_node * 4, 1, wgold + num_node * 4, 1);
+		dcopy(num_node * 6, dwg, 1, dwgold, 1);
 
 		/* Particle update */
 		// ParticleContextUpdate(pctx);
@@ -352,7 +352,7 @@ int main(int argc, char** argv) {
 	// CdamVecDestroy(dx);
 	CdamFree(vec, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 	CdamFree(dx, num_node * sizeof(value_type) * BS, DEVICE_MEM);
-	CdamMatDestroy(mat);
+	CdamParMatDestroy(mat);
 
 	CdamNewtonSolverGetLinearSolver(nssolver, &krylov);
 	CdamKrylovDestroy(krylov);

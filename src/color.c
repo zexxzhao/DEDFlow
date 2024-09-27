@@ -14,8 +14,8 @@ static void GenerateRandomColorHost(index_type* color, index_type num_elem, inde
 		color[i] = rand() % (COLOR_RANDOM_UB - COLOR_RANDOM_LB) + COLOR_RANDOM_LB;
 	}
 }
-static void ColorElementJPLStep(const index_type* ien, /* Element to Vertex */
-																const index_type* row_ptr, const index_type* col_ind, /* Vertex to Element */
+static void ColorElementJPLStep(index_type* ien, /* Element to Vertex */
+																index_type* row_ptr, index_type* col_ind, /* Vertex to Element */
 																index_type max_color, index_type* color, index_type num_elem, int NSHL) {
 	b32 found_max;
 	for(index_type i = 0; i < num_elem; i++) {
@@ -39,8 +39,8 @@ static void ColorElementJPLStep(const index_type* ien, /* Element to Vertex */
 	}
 }
 
-static void ColorElementJPLHost(const index_type* ien, /* Element to Vertex */
-																const index_type* row_ptr, const index_type* col_ind, /* Vertex to Element */
+static void ColorElementJPLHost(index_type* ien, /* Element to Vertex */
+																index_type* row_ptr, index_type* col_ind, /* Vertex to Element */
 																index_type max_color, index_type* color, index_type num_elem, int NSHL) {
 	index_type left = num_elem;
 	index_type c;
@@ -66,9 +66,9 @@ static void ColorElementJPLHost(const index_type* ien, /* Element to Vertex */
 	}
 }
 
-void ColorElementJPL(const index_type* ien, /* Element to Vertex */
-											const index_type* row_ptr, const index_type* col_ind, /* Vertex to Element */
-											index_type max_color, index_type* color, index_type num_elem, int NSHL) {
+void ColorElementJPL(index_type* ien, /* Element to Vertex */
+										 index_type* row_ptr, index_type* col_ind, /* Vertex to Element */
+										 index_type max_color, index_type* color, index_type num_elem, int NSHL) {
 #ifdef CDAM_USE_CUDA
 	ColorElementJPLDevice(ien, row_ptr, col_ind, max_color, color, num_elem, NSHL);
 #else
@@ -76,7 +76,7 @@ void ColorElementJPL(const index_type* ien, /* Element to Vertex */
 #endif
 }
 
-static void GenerateV2EMapRowHost(const index_type* ien, index_type num_elem, index_type num_node, index_type* v2e_row_ptr, int NSHL) {
+static void GenerateV2EMapRowHost(index_type* ien, index_type num_elem, index_type num_node, index_type* v2e_row_ptr, int NSHL) {
 	index_type i, j;
 	CdamMemset(v2e_row_ptr, 0, sizeof(index_type) * (num_node + 1), HOST_MEM);
 	for(i = 0; i < num_elem; i++) {
@@ -90,16 +90,16 @@ static void GenerateV2EMapRowHost(const index_type* ien, index_type num_elem, in
 	}
 }
 
-static void GenerateV2EMapRow(const index_type* ien, index_type num_elem, index_type num_node, index_type* v2e_row_ptr, int NSHL) {
+static void GenerateV2EMapRow(index_type* ien, index_type num_elem, index_type num_node, index_type* v2e_row_ptr, int NSHL) {
 #ifdef CDAM_USE_CUDA
-	GenerateV2EMapRowDevice(ien, num_elem, num_node, v2e_row_ptr, NSHL);
+	GenerateV2EMapRowDevice(ien, num_elem, num_node, NSHL, v2e_row_ptr);
 #else
-	GenerateV2EMapRowHost(ien, num_elem, num_node, v2e_row_ptr, NSHL);
+	GenerateV2EMapRowHost(ien, num_elem, num_node, NSHL, v2e_row_ptr);
 #endif
 
 }
 
-static void GenerateV2EMapColHost(const index_type* ien, index_type num_elem, index_type num_node, const index_type* v2e_row_ptr, index_type* v2e_col_ind, int NSHL) {
+static void GenerateV2EMapColHost(index_type* ien, index_type num_elem, index_type num_node, index_type* v2e_row_ptr, index_type* v2e_col_ind, int NSHL) {
 	index_type i, j;
 	index_type* tmp_row_ptr = CdamTMalloc(index_type, num_node + 1, HOST_MEM);
 	CdamMemcpy(tmp_row_ptr, v2e_row_ptr, sizeof(index_type) * (num_node + 1), HOST_MEM, HOST_MEM);
@@ -112,11 +112,11 @@ static void GenerateV2EMapColHost(const index_type* ien, index_type num_elem, in
 	CdamFree(tmp_row_ptr, sizeof(index_type) * (num_node + 1), HOST_MEM);
 }
 
-void GenerateV2EMapCol(const index_type* ien, index_type num_elem, index_type num_node, const index_type* v2e_row_ptr, index_type* v2e_col_ind, int NSHL) {
+void GenerateV2EMapCol(index_type* ien, index_type num_elem, index_type num_node, index_type* v2e_row_ptr, index_type* v2e_col_ind, int NSHL) {
 #ifdef CDAM_USE_CUDA
-	GenerateV2EMapColDevice(ien, num_elem, num_node, v2e_row_ptr, v2e_col_ind, NSHL);
+	GenerateV2EMapColDevice(ien, num_elem, num_node, NSHL, v2e_row_ptr, v2e_col_ind);
 #else
-	GenerateV2EMapColHost(ien, num_elem, num_node, v2e_row_ptr, v2e_col_ind, NSHL);
+	GenerateV2EMapColHost(ien, num_elem, num_node, NSHL, v2e_row_ptr, v2e_col_ind);
 #endif
 }
 
@@ -176,10 +176,10 @@ void ColorMeshHex(CdamMesh* mesh, index_type max_color_len, index_type* color, A
 	ColorMeshElement(ien, num_hex, NSHL, num_node, max_color_len, color + num_tet + num_prism);
 }
 
-index_type GetMaxColor(const index_type* color, index_type size, Arena scratch) {
+index_type GetMaxColor(index_type* color, index_type size, Arena scratch) {
 	index_type max_color = 0;
 #ifdef CDAM_USE_CUDA
-	GetMaxColorGPU(color, size, &max_color, scratch);
+	GetMaxColorDevice(color, size, &max_color, scratch);
 #else
 	for(index_type i = 0; i < size; i++) {
 		if(color[i] > max_color) max_color = color[i];

@@ -108,6 +108,10 @@ void dtranspose(int m, int n, const double *A, int lda, double *B, int ldb) {
 	}
 }
 
+void dgeam(BLASTrans trana, BLASTrans tranb, int m, int n, double alpha, const double *A, int lda, double beta, const double *B, int ldb, double *C, int ldc) {
+	cublasDgeam(GetCublasHandle(), trana, tranb, m, n, &alpha, A, lda, &beta, B, ldb, C, ldc);
+}
+
 /* LAPACK */
 void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize) {
 	cublasDgetrfBatched(GetCublasHandle(), n, Aarray, lda, PivotArray, infoArray, batchSize);

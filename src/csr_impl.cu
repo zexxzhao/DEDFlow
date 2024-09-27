@@ -172,7 +172,7 @@ void CSRAttrGetNZIndBatchedDevice(const CSRAttr* attr,
 																																	  batch_size, row, col, ind);
 
 }
-__global__ void GetSubmatRowLength(index_type nrowm index_type ncol, index_type nnz,
+__global__ void GetSubmatRowLength(index_type nrow, index_type ncol, index_type nnz,
 																	 index_type* row_ptr, index_type* col_ind,
 																	 index_type nr, index_type* row, index_type nc, index_type* col,
 																	 index_type* new_row_ptr) {
@@ -227,11 +227,14 @@ void GenerateSubmatCSRAttrDevice(CSRAttr* attr, index_type nr, index_type* row,
 	index_type num_rows = CSRAttrNumRow(attr);
 	index_type num_cols = CSRAttrNumCol(attr);
 	*new_attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
-	CdamMemset(*new_attr, 0, sizeof(CSRAttr));
+	CdamMemset(*new_attr, 0, sizeof(CSRAttr), HOST_MEM);
 	(*new_attr)->num_row = nr;
 	(*new_attr)->num_col = nc;
 	(*new_attr)->row_ptr = CdamTMalloc(index_type, nr + 1, DEVICE_MEM);
-	CdamMemset((*new_attr)->row_ptr, 0, sizeof(index_type) * (nr + 1));
+	CdamMemset((*new_attr)->row_ptr, 0, sizeof(index_type) * (nr + 1), DEVICE_MEM);
+	(*new_attr)->col_ind = NULL;
+
+	(*new_attr)->nnz = 0;
 
 	GetSubmatRowLength<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
 																								 CSRAttrRowPtr(attr), CSRAttrColInd(attr),

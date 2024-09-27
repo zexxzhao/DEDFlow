@@ -1,7 +1,6 @@
 #ifndef __LAYOUT_H__
 #define __LAYOUT_H__
 
-#include <mpi.h>
 #include <strings.h>
 #include "common.h"
 

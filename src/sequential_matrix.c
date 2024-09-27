@@ -153,7 +153,7 @@ static void SeqMatGetDiagDensePrivate(void* A, value_type* diag, index_type bs) 
 	ASSERT(nrow == ncol && "Matrix must be square.");
 	ASSERT(nrow % bs == 0 && "Block size must be a divisor of the matrix size.");
 #ifdef CDAM_USE_CUDA
-	SeqMatGetDiagDenseGPU(SeqMatAsType(A, SeqMatDense)->data, n, diag, bs, 0);
+	SeqMatGetDiagDenseGPU(SeqMatAsType(A, SeqMatDense)->data, nrow, diag, bs, 0);
 #else
 	index_type i;
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;

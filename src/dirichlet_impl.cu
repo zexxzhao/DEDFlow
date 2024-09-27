@@ -1,4 +1,5 @@
-#include "dirichlet.h"
+// #include "dirichlet.h"
+#include "common.h"
 
 #ifdef CDAM_USE_CUDA
 template <typename I, typename T> 

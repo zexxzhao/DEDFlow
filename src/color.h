@@ -21,7 +21,7 @@ void ColorMeshTet(struct CdamMesh* mesh, index_type max_color_len, index_type* c
 void ColorMeshPrism(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
 void ColorMeshHex(struct CdamMesh* mesh, index_type max_color_len, index_type* color, Arena scratch);
 
-index_type GetMaxColor(const index_type* color, index_type num_elem, Arena scratch);
+index_type GetMaxColor(index_type* color, index_type num_elem, Arena scratch);
 __END_DECLS__
 
 #endif /* __COLOR_H__ */

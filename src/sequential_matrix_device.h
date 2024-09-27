@@ -3,6 +3,8 @@
 
 #include "common.h"
 #include "alloc.h"
+#include "layout.h"
+#include "csr.h"
 #include "matrix_util.h"
 
 #ifdef CDAM_USE_CUDA
@@ -14,7 +16,7 @@ void SeqMatZeroRowDenseGPU(value_type* data, index_type nrow, index_type ncol,
 													 index_type rshift, index_type cshift,
 													 value_type diag, cudaStream_t stream);
 
-void SeqMatGetSubmatDenseGPU(MatOrder order, value_type* data, index_type nrow, index_type ncol,
+void SeqMatGetSubmatDenseGPU(value_type* data, index_type nrow, index_type ncol,
 														 index_type nr, index_type nc, index_type* row, index_type* col,
 														 index_type rshift, index_type cshift, value_type* submat, cudaStream_t stream);
 
