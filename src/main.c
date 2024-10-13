@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
@@ -77,20 +78,20 @@ static inline void ParseJSONFile(const char* filename, cJSON** root) {
 	size_t size = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 
-	char* buffer = (char*)CdamMallocHost(size + 1);
-	fread(buffer, 1, size, fp);
+	char* buffer = CdamTMalloc(char, size + 1, HOST_MEM);
+	fread(buffer, sizeof(char), size, fp);
 	buffer[size] = '\0';
 	fclose(fp);
 
 	*root = cJSON_Parse(buffer);
-	CdamFreeHost(buffer, size + 1);
+	CdamFree(buffer, sizeof(char) * (size + 1), HOST_MEM);
 
 	ASSERT(*root && "Cannot parse JSON file");
 
 }
 
 int main(int argc, char** argv) {
-	int rank, num_procs;
+	int rank = 0, num_procs = 0;
 	char argv_opt[256];
 	CdamMesh* mesh;
 	cJSON* config = NULL;
@@ -111,18 +112,17 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	
 	ParseJSONFile(argv_opt, &config);
 
 
-	char* json_str = cJSON_Print(config);
-	fprintf(stdout, "%s", json_str);
-	fprintf(stdout, "\n");
+	// char* json_str = cJSON_Print(config);
+	// fprintf(stdout, "%s", json_str);
+	// fprintf(stdout, "\n");
 	// cJSON_Delete(config);
-	CdamFreeHost(json_str, strlen(json_str) + 1);
+	// CdamFree(json_str, sizeof(char) * (strlen(json_str) + 1), HOST_MEM);
 	// return 0;
 
-	Init(0, NULL);
+	Init(argc, argv);
 	b32 converged = FALSE;
 	i32 step = 0;
 #ifdef DBG_TET
@@ -132,38 +132,52 @@ int main(int argc, char** argv) {
 #endif
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+
+
 	char filename_buffer[256] = {0};
 	struct cudaDeviceProp prop;
 	i32 num_device;
 	cudaGetDeviceCount(&num_device);
+#ifdef NDEBUG
 	ASSERT(num_device == num_procs && "No CUDA device found");
-	cudaSetDevice(rank);
+#endif
+	cudaSetDevice(rank % num_device);
 	for(i32 i = 0; i < num_device; i++) {
 		MPI_Barrier(MPI_COMM_WORLD);
 		if(i == rank) {
 			cudaGetDeviceProperties(&prop, i);
-			printf("==================================================\n");
-			printf(" * Device[%d] name: %s\n", rank, prop.name);
-			printf(" * Compute capability: %d.%d\n", prop.major, prop.minor);
-			printf(" * Total global memory: %f (MB)\n", (value_type)prop.totalGlobalMem / 1024.0 / 1024.0);
-			printf(" * Shared memory per block: %f (KB)\n", (value_type)prop.sharedMemPerBlock / 1024.0);
-			printf(" * Registers per block: %f (KB)\n", (value_type)prop.regsPerBlock / 1024.0);
-			printf(" * Warp size: %d\n", prop.warpSize);
-			printf(" * Max threads per block: %d\n", prop.maxThreadsPerBlock);
-			printf(" * Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
-			printf(" * Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
-			printf(" * Clock rate: %f (Hz) \n", (value_type)prop.clockRate);
-			printf(" * Total constant memory: %f (MB)\n", (value_type)prop.totalConstMem / 1024.0 / 1024.0);
-			printf(" * Peak memory clock rate: %f (MHz)\n", (value_type)prop.memoryClockRate / 1e6);
-			printf(" * Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
-			printf("==================================================\n");
+			fprintf(stdout, "==================================================\n");
+			fprintf(stdout, " * Device[%d] name: %s\n", rank, prop.name);
+			fprintf(stdout, " * Compute capability: %d.%d\n", prop.major, prop.minor);
+			fprintf(stdout, " * Total global memory: %f (MB)\n", (value_type)prop.totalGlobalMem / 1024.0 / 1024.0);
+			fprintf(stdout, " * Shared memory per block: %f (KB)\n", (value_type)prop.sharedMemPerBlock / 1024.0);
+			fprintf(stdout, " * Registers per block: %f (KB)\n", (value_type)prop.regsPerBlock / 1024.0);
+			fprintf(stdout, " * Warp size: %d\n", prop.warpSize);
+			fprintf(stdout, " * Max threads per block: %d\n", prop.maxThreadsPerBlock);
+			fprintf(stdout, " * Max threads dimension: %d X %d X %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
+			fprintf(stdout, " * Max grid size: %d X %d X %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
+			fprintf(stdout, " * Clock rate: %f (Hz) \n", (value_type)prop.clockRate);
+			fprintf(stdout, " * Total constant memory: %f (MB)\n", (value_type)prop.totalConstMem / 1024.0 / 1024.0);
+			fprintf(stdout, " * Peak memory clock rate: %f (MHz)\n", (value_type)prop.memoryClockRate / 1e6);
+			fprintf(stdout, " * Memory bandwidth: %f (GB/s)\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1e6);
+			fprintf(stdout, "==================================================\n");
 		}
 	}
+	fflush(stdout);
 
 	H5FileInfo* h5_handler = H5OpenFile(JSONGetItem(config, "IO.Input.Path")->valuestring, "r");
 	CdamMeshCreate(MPI_COMM_WORLD, &mesh);
+	if(rank == 0) {
+		int stall = 0;
+		while(stall) {
+			printf("PID: %d\n", getpid());
+			sleep(5);
+		}
+	}
 	CdamMeshLoad(mesh, h5_handler, "/mesh");
 	H5CloseFile(h5_handler);
+
+	return 0;
 
 	CdamMeshPrefetch(mesh);
 	// CdamMeshGenreateColorBatch(mesh);

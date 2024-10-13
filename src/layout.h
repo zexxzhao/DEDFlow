@@ -19,6 +19,7 @@ typedef struct CdamLayout CdamLayout;
 #define CdamLayoutNumGhosted(layout) ((layout)->num[2])
 #define CdamLayoutNumGlobal(layout) ((layout)->num[3])
 #define CdamLayoutNumOwned(layout) (CdamLayoutNumExclusive(layout) + CdamLayoutNumShared(layout))
+#define CdamLayoutNumNode(layout) (CdamLayoutNumOwned(layout) + CdamLayoutNumGhosted(layout))
 #define CdamLayoutNodalL2G(layout) ((layout)->l2g)
 #define CdamLayoutNumComponent(layout) ({\
 		index_type nc = 0; \

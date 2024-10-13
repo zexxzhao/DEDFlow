@@ -5,7 +5,7 @@ __BEGIN_DECLS__
 
 /* Open an HDF5 file */
 H5FileInfo* H5OpenFile(const char* filename, const char* mode) {
-	H5FileInfo* h5file = (H5FileInfo*)CdamMallocHost(sizeof(H5FileInfo));
+	H5FileInfo* h5file = CdamTMalloc(H5FileInfo, 1, HOST_MEM);
 
 	if (strcmp(mode, "r") == 0) {
 		h5file->file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
@@ -28,7 +28,7 @@ H5FileInfo* H5OpenFile(const char* filename, const char* mode) {
 /* Close an HDF5 file */
 void H5CloseFile(H5FileInfo* h5file) {
 	H5Fclose(h5file->file_id);
-	CdamFreeHost(h5file, sizeof(H5FileInfo));
+	CdamFree(h5file, sizeof(H5FileInfo), HOST_MEM);
 }
 
 /* Check the existence of the file */
@@ -172,28 +172,9 @@ void H5ReadDatasetVal(H5FileInfo* h5file, const char* dataset_name, value_type* 
 #endif
 }
 
-static void SetHypreSlabPrivate(hid_t dataspace_id, int size,
-																index_type* start, index_type* stride,
-																index_type* count, index_type* block) {
-	hsize_t hstart[1], hstride[1], hcount[1], hblock[1];
-
-	index_type i;
-
-	H5Sselect_none(dataspace_id);
-	for(i = 0; i < size; i++) {
-		hstart[0] = start ? start[i]: 0;
-		hstride[0] = stride ? stride[i]: 1;
-		hcount[0] = count ? count[i]: 1;
-		hblock[0] = block ? block[i]: 1;
-		H5Sselect_hyperslab(dataspace_id, H5S_SELECT_OR,
-												hstart, hstride, hcount, hblock);
-	}
-
-}
-																
 
 void H5ReadDatasetValIndexed(H5FileInfo* h5file, const char* dataset_name,
-														 index_type count, index_type* block_len, index_type* indices,
+														 index_type size, index_type* index,
 														 value_type* data) {
 	hid_t dataset_id = H5Dopen(h5file->file_id, dataset_name, H5P_DEFAULT);
 	hid_t dataspace_id = H5Dget_space(dataset_id);
@@ -206,19 +187,21 @@ void H5ReadDatasetValIndexed(H5FileInfo* h5file, const char* dataset_name,
 #error "H5ReadDatasetValIndexed: No value type is defined!"
 #endif
 
-	hsize_t h5len = 0;
-
-	for(index_type i = 0; i < count; i++) {
-		h5len += block_len[i];
-	}
-
+	hsize_t h5len = size;
 	hid_t memspace_id = H5Screate_simple(1, &h5len, NULL);
 
-	SetHypreSlabPrivate(dataspace_id, count, indices, NULL, block_len, NULL);
+	hsize_t* hindex = CdamTMalloc(hsize_t, size, HOST_MEM);
+	for (index_type i = 0; i < size; i++) {
+		hindex[i] = index[i];
+	}
+
+	H5Sselect_elements(dataspace_id, H5S_SELECT_SET, size, (const hsize_t*)hindex);
+
 
 	H5Dread(dataset_id, mem_type_id, memspace_id, dataspace_id, H5P_DEFAULT, data);
 
 
+	CdamFree(hindex, size * sizeof(hsize_t), HOST_MEM);
 	H5Sclose(memspace_id);
 	H5Sclose(dataspace_id);
 	H5Dclose(dataset_id);

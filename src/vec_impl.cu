@@ -1,8 +1,11 @@
-#include "vec_impl.h"
 
 #ifdef CDAM_USE_CUDA
 #include <thrust/transform.h>
 #include <thrust/device_ptr.h>
+#endif
+
+#include "vec_impl.h"
+#ifdef CDAM_USE_CUDA
 template<typename T>
 struct VecModFunctor {
 	T b;

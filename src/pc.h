@@ -7,10 +7,6 @@
 
 __BEGIN_DECLS__
 
-/*
- * y = x / diag(A)
- */
-
 enum CdamPCType {
 	PC_TYPE_NONE = 0x0,
 	PC_TYPE_RICHARDSON = 0x1,
@@ -39,29 +35,27 @@ enum CdamPCCompositeType {
 
 typedef enum CdamPCCompositeType CdamPCCompositeType;
 
-typedef struct CdamPC CdamPC;
-typedef struct CdamPCOps CdamPCOps;
 struct CdamPCOps {
-	void (*alloc)(CdamPC*, void*, void*);
-	void (*setup)(CdamPC*, void*, void*);
-	void (*destroy)(CdamPC*);
-	void (*apply)(CdamPC*, value_type*, value_type*);
+	void (*alloc)(void*, void*, void*);
+	void (*setup)(void*, void*);
+	void (*destroy)(void*);
+	void (*apply)(void*, value_type*, value_type*);
 };
-
+typedef struct CdamPCOps CdamPCOps;
 
 struct CdamPC {
 
-	CdamPC* next;
+	struct CdamPC* next;
 
 	CdamPCType type;
 
 	void* mat;
 
-	index_type n_vert;
-	index_type displ;
 	index_type count;
-
+	index_type* index;
 	value_type* buff;
+
+	CdamPCOps op[1];
 
 	/* Richardson */
 	value_type omega;
@@ -69,25 +63,27 @@ struct CdamPC {
 	/* Jacobi */
 	index_type bs;
 	value_type* diag;
+	value_type* diag_inv;
+	value_type** diag_batch;
+	int* diag_ipiv;
 
 	/* Schur */
 	CdamPCSchurType schur_type;
-	void* schur_ap;
-	void* schur_s;
-	index_type schur_ndof[2];
-	index_type* schur_dof[2];
+	void* schur_mat[2][2];
+	struct CdamPC* schur_pc[2];
 
 	/* KSP */
 	void* ksp;
 
 	/* Composite */
 	CdamPCCompositeType comp_type;
-	CdamPC* child;
+	struct CdamPC* child;
 
 	/* Custom */
-	CdamPCOps op[1];
 	void* ctx;
 };
+
+typedef struct CdamPC CdamPC;
 
 // struct CdamPC {
 // 	CdamPCType type;
@@ -96,13 +92,13 @@ struct CdamPC {
 // 	void* data;
 // };
 
-CdamPC* CdamPCCreateNone(void* mat, index_type n);
-CdamPC* CdamPCCreateJacobi(void* mat, index_type bs, void* cublas_handle);
-CdamPC* CdamPCCreateDecomposition(void* mat, index_type n, const index_type* offset, void* cublas_handle);
-CdamPC* CdamPCCreateAMGX(void* mat, void* options);
+void CdamPCCreate(void *mat, CdamPC** pc);
 void CdamPCSetup(CdamPC* pc, void* config);
 void CdamPCDestroy(CdamPC* pc);
 void CdamPCApply(CdamPC* pc, f64* x, f64* y);
+
+/* This function is used to set the subdomain for the Schur complement */
+void CdamPCSetSubdomain(CdamPC* pc, index_type n, index_type* index);
 
 
 __END_DECLS__

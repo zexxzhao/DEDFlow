@@ -260,7 +260,7 @@ CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, index_type block_row, index_typ
 void GenerateSubmatCSRAttr(CSRAttr* attr, index_type nr, index_type* row,
 													 index_type nc, index_type* col, CSRAttr** submat) {
 #ifdef CDAM_USE_CUDA
-	GenerateSubmatCSRAttrGPU(attr, nr, row, nc, col, submat);
+	GenerateSubmatCSRAttrDevice(attr, nr, row, nc, col, submat);
 #else
 	*submat = CdamTMalloc(CSRAttr, 1, HOST_MEM);
 	CdamMemset(*submat, 0, sizeof(CSRAttr), HOST_MEM);

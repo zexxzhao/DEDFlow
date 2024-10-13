@@ -228,13 +228,10 @@ void GenerateSubmatCSRAttrDevice(CSRAttr* attr, index_type nr, index_type* row,
 	index_type num_cols = CSRAttrNumCol(attr);
 	*new_attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
 	CdamMemset(*new_attr, 0, sizeof(CSRAttr), HOST_MEM);
-	(*new_attr)->num_row = nr;
-	(*new_attr)->num_col = nc;
-	(*new_attr)->row_ptr = CdamTMalloc(index_type, nr + 1, DEVICE_MEM);
-	CdamMemset((*new_attr)->row_ptr, 0, sizeof(index_type) * (nr + 1), DEVICE_MEM);
-	(*new_attr)->col_ind = NULL;
-
-	(*new_attr)->nnz = 0;
+	CSRAttrNumRow(*new_attr) = nr;
+	CSRAttrNumCol(*new_attr) = nc;
+	CSRAttrRowPtr(*new_attr) = CdamTMalloc(index_type, nr + 1, DEVICE_MEM);
+	CdamMemset(CSRAttrRowPtr(*new_attr), 0, sizeof(index_type) * (nr + 1), DEVICE_MEM);
 
 	GetSubmatRowLength<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
 																								 CSRAttrRowPtr(attr), CSRAttrColInd(attr),
@@ -245,8 +242,8 @@ void GenerateSubmatCSRAttrDevice(CSRAttr* attr, index_type nr, index_type* row,
 												 thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr)));
 
 
-	CdamMemcpy(&(*new_attr)->nnz, &CSRAttrRowPtr(*new_attr)[nr], sizeof(index_type), HOST_MEM, DEVICE_MEM);
-	(*new_attr)->col_ind = CdamTMalloc(index_type, (*new_attr)->nnz, DEVICE_MEM);
+	CdamMemcpy(&CSRAttrNNZ(*new_attr), CSRAttrRowPtr(*new_attr) + nr, sizeof(index_type), HOST_MEM, DEVICE_MEM);
+	CSRAttrColInd(*new_attr) = CdamTMalloc(index_type, CSRAttrNNZ(*new_attr), DEVICE_MEM);
 	GetSubmatColInd<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
 																						  CSRAttrRowPtr(attr), CSRAttrColInd(attr),
 																						  nr, row, nc, col, CSRAttrRowPtr(*new_attr), CSRAttrColInd(*new_attr));

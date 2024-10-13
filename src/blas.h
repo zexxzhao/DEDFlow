@@ -120,7 +120,7 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 												const double *B, int ldb, int strideB, double beta,
 												double *C, int ldc, int strideC, int batchCount);
 
-void dtranspose(int m, int n, const double *A, int lda, double *B, int ldb);
+void dtranspose(int m, int n, double *A, int lda, double *B, int ldb);
 void dgeam(BLASTrans transA, BLASTrans transB, int m, int n, double alpha, const double *A, int lda, double beta, const double *B, int ldb, double *C, int ldc);
 
 /* LAPACK */

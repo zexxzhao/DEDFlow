@@ -13,7 +13,7 @@
 __BEGIN_DECLS__
 
 void CdamMeshCreate(MPI_Comm comm, CdamMesh** mesh) {
-	*mesh = (CdamMesh*)CdamMallocHost(sizeof(CdamMesh));
+	*mesh = CdamTMalloc(CdamMesh, 1, HOST_MEM);
 	memset(*mesh, 0, sizeof(CdamMesh));
 	(*mesh)->comm = comm;
 	MPI_Comm_rank(comm, &(mesh[0]->rank));
@@ -21,7 +21,7 @@ void CdamMeshCreate(MPI_Comm comm, CdamMesh** mesh) {
 
 void CdamMeshDestroy(CdamMesh* mesh) {
 	index_type num_elem, ien_len;
-	index_type num_facet = 0;
+	// index_type num_facet = 0;
 	num_elem = 0;
 	num_elem += CdamMeshNumTet(mesh);
 	num_elem += CdamMeshNumPrism(mesh);
@@ -71,33 +71,61 @@ static void LoadElementConnectivity(H5FileInfo* h5f, const char* group_name, ind
 
 	/* Read the number of nodes */
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/xg", group_name);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
 	H5GetDatasetSize(h5f, dataset_name, num);
 	num[0] = num[0] / 3;
 
 	/* Read the number of elements */
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/tet", group_name);
-	H5GetDatasetSize(h5f, dataset_name, num + 1);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		num[1] = 0;
+	}
+	else {
+		H5GetDatasetSize(h5f, dataset_name, num + 1);
+	}
 
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/prism", group_name);
-	H5GetDatasetSize(h5f, dataset_name, num + 2);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		num[2] = 0;
+	}
+	else {
+		H5GetDatasetSize(h5f, dataset_name, num + 2);
+	}
 
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/hex", group_name);
-	H5GetDatasetSize(h5f, dataset_name, num + 3);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		num[3] = 0;
+	}
+	else {
+		H5GetDatasetSize(h5f, dataset_name, num + 3);
+	}
 
 	/* Allocate memory for element connectivity */
-	index_type* eind = (index_type*)CdamMallocHost(sizeof(index_type) * (num[1] + num[2] + num[3]));
+	index_type* eind = CdamTMalloc(index_type, num[1] + num[2] + num[3], HOST_MEM);
 	num[1] /= 4; 
 	num[2] /= 6;
 	num[3] /= 8;
 
-	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/tet", group_name);
-	H5ReadDatasetInd(h5f, dataset_name, eind);
+	if(num[1] > 0) {
+		snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/tet", group_name);
+		H5ReadDatasetInd(h5f, dataset_name, eind);
+	}
 
-	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/prism", group_name);
-	H5ReadDatasetInd(h5f, dataset_name, eind + num[1] * 4);
+	if(num[2] > 0) {
+		snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/prism", group_name);
+		H5ReadDatasetInd(h5f, dataset_name, eind + num[1] * 4);
+	}
 
-	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/hex", group_name);
-	H5ReadDatasetInd(h5f, dataset_name, eind + num[1] * 4 + num[2] * 6);
+	if(num[3] > 0) {
+		snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/ien/hex", group_name);
+		H5ReadDatasetInd(h5f, dataset_name, eind + num[1] * 4 + num[2] * 6);
+	}
 
 	*ien = eind;
 }
@@ -124,34 +152,100 @@ struct QsortCtx {
 
 static void* qsort_ctx = NULL;
 static int QsortCmpElem(const void* a, const void* b) {
-	const index_type* begin = ((struct QsortCtx*)qsort_ctx)->begin;
 	const index_type* key = ((struct QsortCtx*)qsort_ctx)->key;
-	index_type stride = ((struct QsortCtx*)qsort_ctx)->stride;
 
-	const index_type* ia = (index_type*)a;
-	const index_type* ib = (index_type*)b;
+	index_type index_a = *(const index_type*)a;
+	index_type index_b = *(const index_type*)b;
 
-	return key[(ia - begin) / stride] - key[(ib - begin) / stride];
+	index_type key_val_a = key[index_a];
+	index_type key_val_b = key[index_b];
+
+	if(key_val_a != key_val_b) {
+		return (key_val_a > key_val_b) - (key_val_a < key_val_b);
+	}
+	else {
+		return (index_a > index_b) - (index_a < index_b);
+	}
 }
 
 static void ShuffleIENByPartition(index_type num[], index_type* ien, index_type* epart) {
 	index_type i, j;
 
-	qsort_ctx = &(struct QsortCtx){ien, epart, 4};
-	qsort(ien, num[1], 4 * sizeof(index_type), QsortCmpElem);
+	struct QsortCtx ctx = {NULL, NULL, 0};
+	qsort_ctx = &ctx;
 
-	qsort_ctx = &(struct QsortCtx){ien + num[1] * 4, epart + num[1], 6};
-	qsort(ien + num[1] * 4, num[2], 6 * sizeof(index_type), QsortCmpElem);
+	index_type buffer_size = MAX(num[1] * 5, MAX(num[2] * 7, num[3] * 9));
+	index_type* ien_copy = CdamTMalloc(index_type, buffer_size, HOST_MEM);
 
-	qsort_ctx = &(struct QsortCtx){ien + num[1] * 4 + num[2] * 6, epart + num[1] + num[2], 8};
+	for(i = 0; i < num[1]; i++) {
+		ien_copy[i * 5 + 0] = i;
+		ien_copy[i * 5 + 1] = ien[i * 4 + 0];
+		ien_copy[i * 5 + 2] = ien[i * 4 + 1];
+		ien_copy[i * 5 + 3] = ien[i * 4 + 2];
+		ien_copy[i * 5 + 4] = ien[i * 4 + 3];
+	}
+	ctx.key = epart;
+	qsort(ien_copy, num[1], 5 * sizeof(index_type), QsortCmpElem);
+	for(i = 0; i < num[1]; ++i) {
+		ien[i * 4 + 0] = ien_copy[i * 5 + 1];
+		ien[i * 4 + 1] = ien_copy[i * 5 + 2];
+		ien[i * 4 + 2] = ien_copy[i * 5 + 3];
+		ien[i * 4 + 3] = ien_copy[i * 5 + 4];
+	}
+
+	for(i = 0; i < num[2]; ++i) {
+		ien_copy[i * 7 + 0] = i;
+		ien_copy[i * 7 + 1] = ien[num[1] * 4 + i * 6 + 0];
+		ien_copy[i * 7 + 2] = ien[num[1] * 4 + i * 6 + 1];
+		ien_copy[i * 7 + 3] = ien[num[1] * 4 + i * 6 + 2];
+		ien_copy[i * 7 + 4] = ien[num[1] * 4 + i * 6 + 3];
+		ien_copy[i * 7 + 5] = ien[num[1] * 4 + i * 6 + 4];
+		ien_copy[i * 7 + 6] = ien[num[1] * 4 + i * 6 + 5];
+	}
+	ctx.key = epart + num[1];
+	qsort(ien_copy, num[2], 7 * sizeof(index_type), QsortCmpElem);
+	for(i = 0; i < num[2]; ++i) {
+		ien[num[1] * 4 + i * 6 + 0] = ien_copy[i * 7 + 1];
+		ien[num[1] * 4 + i * 6 + 1] = ien_copy[i * 7 + 2];
+		ien[num[1] * 4 + i * 6 + 2] = ien_copy[i * 7 + 3];
+		ien[num[1] * 4 + i * 6 + 3] = ien_copy[i * 7 + 4];
+		ien[num[1] * 4 + i * 6 + 4] = ien_copy[i * 7 + 5];
+		ien[num[1] * 4 + i * 6 + 5] = ien_copy[i * 7 + 6];
+	}
+
+	for(i = 0; i < num[3]; ++i) {
+		ien_copy[i * 9 + 0] = i;
+		ien_copy[i * 9 + 1] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 0];
+		ien_copy[i * 9 + 2] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 1];
+		ien_copy[i * 9 + 3] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 2];
+		ien_copy[i * 9 + 4] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 3];
+		ien_copy[i * 9 + 5] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 4];
+		ien_copy[i * 9 + 6] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 5];
+		ien_copy[i * 9 + 7] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 6];
+		ien_copy[i * 9 + 8] = ien[num[1] * 4 + num[2] * 6 + i * 8 + 7];
+	}
+	ctx.key = epart + num[1] + num[2];
 	qsort(ien + num[1] * 4 + num[2] * 6, num[3], 8 * sizeof(index_type), QsortCmpElem);
+	for(i = 0; i < num[3]; ++i) {
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 0] = ien_copy[i * 9 + 1];
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 1] = ien_copy[i * 9 + 2];
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 2] = ien_copy[i * 9 + 3];
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 3] = ien_copy[i * 9 + 4];
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 4] = ien_copy[i * 9 + 5];
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 5] = ien_copy[i * 9 + 6];
+		ien[num[1] * 4 + num[2] * 6 + i * 8 + 6] = ien_copy[i * 9 + 7];
+	}
 
+	CdamFree(ien_copy, sizeof(index_type) * buffer_size, HOST_MEM);
 	qsort_ctx = NULL;
 } 
 
 
 static int QsortCmpIndexType(const void* a, const void* b) {
-	return *((const index_type*)a) - *((const index_type*)b);
+	index_type ia = *(const index_type*)a;
+	index_type ib = *(const index_type*)b;
+
+	return (ia > ib) - (ia < ib);
 }
 
 
@@ -162,6 +256,18 @@ static index_type CountDistinctEntry(index_type* array, index_type size, index_t
 	CdamMemcpy(array_sorted, array, sizeof(index_type) * size, HOST_MEM, HOST_MEM);
 	qsort(array_sorted, size, sizeof(index_type), QsortCmpIndexType);
 
+	/*
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	if(rank == 0) {
+		FILE* fp = fopen("array_sorted.txt", "w");
+		for(i = 0; i < size; ++i) {
+			fprintf(fp, "%d\n", array_sorted[i]);
+		}
+		fclose(fp);
+	}
+	*/
+
 	count = 0;
 	for(i = 0; i < size; ++i) {
 		if(i == 0 || array_sorted[i] != array_sorted[i - 1]) {
@@ -169,33 +275,277 @@ static index_type CountDistinctEntry(index_type* array, index_type size, index_t
 		}
 	}
 	if(array_set) {
-		for(i = 0, j = 0; i < size; ++i) {
+		j = 0;
+		for(i = 0; i < size; ++i) {
 			if(i == 0 || array_sorted[i] != array_sorted[i - 1]) {
 				array_set[j++] = array_sorted[i];
 			}
 		}
 	}
+	CdamFree(array_sorted, sizeof(index_type) * size, HOST_MEM);
 	return count;
 }
 
 static int QsortCmpNpart(const void* a, const void* b) {
-	index_type* npart = (index_type*)((struct QsortCtx*)qsort_ctx)->begin;
-	int* key = (int*)((struct QsortCtx*)qsort_ctx)->key;
-	index_type rank = ((struct QsortCtx*)qsort_ctx)->stride;
+	const index_type* ownership = ((struct QsortCtx*)qsort_ctx)->begin;
+	const index_type* npart = ((struct QsortCtx*)qsort_ctx)->key;
 	index_type ia = *(const index_type*)a;
 	index_type ib = *(const index_type*)b;
-	b32 is_owned_a = npart[ia] == rank;
-	b32 is_owned_b = npart[ib] == rank;
 
-	if(is_owned_b - is_owned_a) {
-		return is_owned_b - is_owned_a;
+	if(ownership[ia] & 2 != ownership[ib] & 2) { // if ownership differs
+		return (ownership[ib] & 2) - (ownership[ia] & 2);
 	}
-	else if(key[ia] - key[ib]) {
-		return key[ia] - key[ib];
+	else if(ownership[ia] & 2 && ownership[ia] & 1 != ownership[ib] & 1) { // if both are owned locally  
+		return (ownership[ib] & 1) - (ownership[ia] & 1);
 	}
 	else {
-		return npart[ia] - npart[ib];
+		return (npart[ia] > npart[ib]) - (npart[ia] < npart[ib]);
 	}
+}
+
+void CdamMeshLoad() {
+	ReadSerialMesh();
+	PartitionMesh();
+	DistributeMesh();
+	AssignLocalNode();
+	GenrateL2GMapExterior();
+	GenrateL2GMapInterior();
+}
+
+struct SerialMesh {
+	index_type num[4];
+	index_type* ien;
+	index_type* epart;
+	index_type* npart;
+};
+
+typedef struct SerialMesh SerialMesh;
+
+static void ReadSerialMesh(H5FileInfo* h5f, const char* group_name, SerialMesh* mesh) {
+	int rank, size;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	if(rank) {
+		return;
+	}
+
+	char  dataset_name[256];
+	ASSERT(strlen(group_name) < 192 && "Invalid group name: too long (>= 192).\n");
+
+	/* Read the number of nodes */
+	snprintf(dataset_name, sizeof(dataset_name), "%s/xg", group_name);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+	H5GetDatasetSize(h5f, dataset_name, mesh->num);
+	mesh->num[0] /= 3;
+
+	/* Read the number of elements */
+	snprintf(dataset_name, sizeof(dataset_name), "%s/ien/tet", group_name);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		mesh->num[1] = 0;
+	}
+	else {
+		H5GetDatasetSize(h5f, dataset_name, mesh->num + 1);
+		mesh->num[1] /= 4;
+	}
+
+	snprintf(dataset_name, sizeof(dataset_name), "%s/ien/prism", group_name);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		mesh->num[2] = 0;
+	}
+	else {
+		H5GetDatasetSize(h5f, dataset_name, mesh->num + 2);
+		mesh->num[2] /= 6;
+	}
+
+	snprintf(dataset_name, sizeof(dataset_name), "%s/ien/hex", group_name);
+	if(H5DatasetExist(h5f, dataset_name) == 0) {
+		fprintf(stderr, "Dataset %s does not exist.\n", dataset_name);
+		mesh->num[3] = 0;
+	}
+	else {
+		H5GetDatasetSize(h5f, dataset_name, mesh->num + 3);
+		mesh->num[3] /= 8;
+	}
+
+	/* Allocate memory for element connectivity */
+	mesh->ien = CdamTMalloc(index_type, mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, HOST_MEM);
+
+	if(mesh->num[1] > 0) {
+		snprintf(dataset_name, sizeof(dataset_name), "%s/ien/tet", group_name);
+		H5ReadDatasetInd(h5f, dataset_name, mesh->ien);
+	}
+
+	if(mesh->num[2] > 0) {
+		snprintf(dataset_name, sizeof(dataset_name), "%s/ien/prism", group_name);
+		H5ReadDatasetInd(h5f, dataset_name, mesh->ien + mesh->num[1] * 4);
+	}
+
+	if(mesh->num[3] > 0) {
+		snprintf(dataset_name, sizeof(dataset_name), "%s/ien/hex", group_name);
+		H5ReadDatasetInd(h5f, dataset_name, mesh->ien + mesh->num[1] * 4 + mesh->num[2] * 6);
+	}
+
+	/* Allocate memory for partition */
+	mesh->epart = CdamTMalloc(index_type, mesh->num[1] + mesh->num[2] + mesh->num[3], HOST_MEM);
+	mesh->npart = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
+}
+
+static void PartitionMesh(SerialMesh* smesh, index_type* epart, index_type* npart) {
+	int rank, size;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	if(rank == 0) {
+		PartitionMeshMetis(smesh->num, smesh->ien, size, smesh->epart, smesh->npart);
+	}
+
+	MPI_Bcast(smesh->num, sizeof(index_type) * 4, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+	if(rank) {
+		smesh->npart = CdamTMalloc(index_type, smesh->num[0], HOST_MEM);
+	}
+	MPI_Bcast(smesh->npart, sizeof(index_type) * smesh->num[0], MPI_CHAR, 0, MPI_COMM_WORLD);
+}
+
+static void ShuffleElemByPartition(index_type nelem, index_type*ien, index_type nshl, index_type* epart) {
+	struct QsortCtx ctx = {NULL, epart, 0};
+	qsort_ctx = &ctx;
+
+	index_type i, j;
+	index_type buffer_size = nelem * (nshl + 1);
+	index_type* ien_copy = CdamTMalloc(index_type, buffer_size, HOST_MEM);
+
+	for(i = 0; i < nelem; ++i) {
+		ien_copy[i * (nshl + 1) + 0] = i;
+		for(j = 0; j < nshl; ++j) {
+			ien_copy[i * (nshl + 1) + j + 1] = ien[i * nshl + j];
+		}
+	}
+
+	qsortt(ien_copy, nelem, (nshl + 1) * sizeof(index_type), QsortCmpElem);
+
+	for(i = 0; i < nelem; ++i) {
+		for(j = 0; j < nshl; ++j) {
+			ien[i * nshl + j] = ien_copy[i * (nshl + 1) + j + 1];
+		}
+	}
+
+}
+
+static index_type DistributeElem(index_type nelem, index_type* ien, index_type* epart, index_type* mesh_ien, index_type nshl) {
+	int rank, size;
+	index_type i;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	index_type *send_count = CdamTMalloc(index_type, size, HOST_MEM);
+	index_type *send_displ = CdamTMalloc(index_type, size, HOST_MEM);
+	if(rank == 0) {
+		ShuffleElemByPartition(nelem, ien, nshl, epart);
+		CdamMemset(send_count, 0, sizeof(index_type) * size, HOST_MEM);
+		for(i = 0; i < nelem; ++i) {
+			send_count[epart[i]]++;
+		}
+		for(i = 0; i < size; ++i) {
+			send_count[i] *= nshl * sizeof(index_type);
+		}
+		send_displ[0] = 0;
+		for(i = 0; i < size - 1; i++) {
+			send_displ[i + 1] = send_displ[i] + send_count[i];
+		}
+	}
+
+	MPI_Bcast(send_count, sizeof(index_type) * size, MPI_CHAR, 0, MPI_COMM_WORLD);
+	if(mesh_ien) {
+		MPI_Scatterv(ien, send_count, send_displ, MPI_CHAR,
+								 mesh_ien, send_count[rank], MPI_CHAR,
+								 0, MPI_COMM_WORLD);
+	}
+	CdamFree(send_count, sizeof(index_type) * size, HOST_MEM);
+	CdamFree(send_displ, sizeof(index_type) * size, HOST_MEM);
+	return send_count[rank] / (nshl * sizeof(index_type));
+}
+
+static void DistributeMesh(CdamMesh* mesh, SerialMesh* smesh) {
+	index_type i;
+	int rank, size;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	mesh->num[1] = DistributeElem(smesh->num[1], smesh->ien, smesh->epart, NULL, 4);
+	mesh->num[2] = DistributeElem(smesh->num[2], smesh->ien + smesh->num[1] * 4, smesh->epart + smesh->num[1], NULL, 6);
+	mesh->num[3] = DistributeElem(smesh->num[3], smesh->ien + smesh->num[1] * 4 + smesh->num[2] * 6, smesh->epart + smesh->num[1] + smesh->num[2], NULL, 8);
+
+	CdamMeshIEN(mesh) = CdamTMalloc(index_type, mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, HOST_MEM);
+
+	DistributeElem(smesh->num[1], smesh->ien, smesh->epart, CdamMeshIEN(mesh), 4);
+	DistributeElem(smesh->num[2], smesh->ien + smesh->num[1] * 4, smesh->epart + smesh->num[1], CdamMeshIEN(mesh) + mesh->num[1] * 4, 6);
+	DistributeElem(smesh->num[3], smesh->ien + smesh->num[1] * 4 + smesh->num[2] * 6, smesh->epart + smesh->num[1] + smesh->num[2], CdamMeshIEN(mesh) + mesh->num[1] * 4 + mesh->num[2] * 6, 8);
+
+}
+
+static void AssignLocalNode(CdamMesh* mesh, SerialMesh* smesh) {
+	mesh->nodal_offset = CdamTMalloc(index_type, mesh->num_procs + 1, HOST_MEM);
+	CdamMemset(mesh->nodal_offset, 0, sizeof(index_type) * (mesh->num_procs + 1), HOST_MEM);
+
+	
+}
+
+static void GenerateL2GMapExterior(CdamMesh* mesh, SerialMesh* smesh) {
+	index_type i;
+	/* Count the number of distinct nodes */
+	mesh->num[0] = CountDistinctEntry(CdamMeshIEN(mesh), mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, NULL);
+	mesh->nodal_map_l2g_exterior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
+	/* Remove duplicate nodes and store in buffer */
+	CountDistinctEntry(CdamMeshIEN(mesh), mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, mesh->nodal_map_l2g_exterior);
+
+	/* Adjust local node indices such that 
+	 * if ownership differs, nodes owned by the current process have lower indices
+	 * if both are owned locally, nodes with exclusive ownership have lower indices
+	 * if both are ghosted, nodes with lower global indices have lower indices 
+	 */
+	byte* node_is_ghosted = CdamTMalloc(byte, smesh->num[0], HOST_MEM);
+	CdamMemset(node_is_ghosted, 0, sizeof(byte) * smesh->num[0], HOST_MEM);
+	index_type  gid;
+	for(i = 0; i < mesh->num[0]; i++) {
+		gid = mesh->nodal_map_l2g_exterior[i];
+		if(smesh->npart[gid] != mesh->rank) {
+			node_is_ghosted[i] = 1;
+		}
+	}
+	MPI_Allreduce(MPI_IN_PLACE, is_ghosted, mesh->num[0], MPI_BYTE, MPI_MAX, mesh->comm);
+	struct QsortCtx ctx = {is_ghosted, smesh->npart, mesh->rank};
+	qsort_ctx = &ctx;
+	qsort(mesh->nodal_map_l2g_exterior, mesh->num[0], sizeof(index_type), QsortCmpNpart);
+	/* Build the global to local map */
+	index_type* g2l = CdamTMalloc(index_type, mesh->num[0] * 2, HOST_MEM);
+
+	for(i = 0; i < mesh->num[0]; ++i) {
+		g2l[i * 2 + 0] = mesh->nodal_map_l2g_exterior[i];
+		g2l[i * 2 + 1] = i;
+	}
+
+	qsort(g2l, mesh->num[0], 2 * sizeof(index_type), QsortCmpIndexType);
+
+	/* Update IEN by replacing the global node index with the local node index */
+	index_type* p;
+	for(i = 0; i < mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8; ++i) {
+		p = bsearch(ien + i, g2l, mesh->num[0], 2 * sizeof(index_type), QsortCmpIndexType);
+		if(p) {
+			ien[i] = p[1];
+		}
+		else {
+			fprintf(stderr, "Error: global node index %d not found.\n", ien[i]);
+			MPI_Abort(MPI_COMM_WORLD, 1);
+		}
+	}
+
+}
+
+static void GenerateL2GMapInterior(CdamMesh* mesh, SerialMesh* smesh) {
+	mesh->nodal_map_l2g_interior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
 }
 
 void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
@@ -226,6 +576,17 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 		/* 1. Metis partition */
 		PartitionMeshMetis(num, ien, size, epart, npart);
 
+		FILE* fp = fopen("epart.txt", "w");
+		for(i = 0; i < num[1] + num[2] + num[3]; ++i) {
+			fprintf(fp, "%d\n", epart[i]);
+		}
+		fclose(fp);
+		fp = fopen("npart.txt", "w");
+		for(i = 0; i < num[0]; ++i) {
+			fprintf(fp, "%d\n", npart[i]);
+		}
+		fclose(fp);
+
 		/* 2. Shuffle the element connectivity */
 		ShuffleIENByPartition(num, ien, epart);
 		/* 2. Prepare the data for other processes */
@@ -241,6 +602,7 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 		}
 	}
 
+	/* Distribute the elements */
 	MPI_Bcast(num, sizeof(index_type) * 4, MPI_CHAR, 0, mesh->comm);
 	if(rank) {
 		npart = CdamTMalloc(index_type, num[0], HOST_MEM);
@@ -263,7 +625,7 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 
 	for(i = 0; i < size; ++i) {
 		send_count[i] = epart_count[size * 0 + i] * 4 * sizeof(index_type);
-		if(i < size) {
+		if(i < size - 1) {
 			send_displ[i + 1] = send_count[i] + send_displ[i];
 		}
 	}
@@ -273,7 +635,7 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	send_displ[0] = 0;
 	for(i = 0; i < size; ++i) {
 		send_count[i] = epart_count[size * 1 + i] * 6 * sizeof(index_type);
-		if(i < size) {
+		if(i < size - 1) {
 			send_displ[i + 1] = send_count[i] + send_displ[i];
 		}
 	}
@@ -283,7 +645,7 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	send_displ[0] = 0;
 	for(i = 0; i < size; ++i) {
 		send_count[i] = epart_count[size * 2 + i] * 8 * sizeof(index_type);
-		if(i < size) {
+		if(i < size - 1) {
 			send_displ[i + 1] = send_count[i] + send_displ[i];
 		}
 	}
@@ -306,14 +668,23 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	}
 
 	/* Generate the l2g_exterior */
-	mesh->num[0] = CountDistinctEntry(mesh->ien, mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, NULL);
+	mesh->num[0] = CountDistinctEntry(CdamMeshIEN(mesh), mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, NULL);
+	if(0 && rank == 2) {
+		FILE* fp = fopen("ien_local.txt", "w");
+		for(i = 0; i < mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8; ++i) {
+			fprintf(fp, "%d\n", mesh->ien[i]);
+		}
+		fclose(fp);
+
+	}
 	mesh->nodal_map_l2g_interior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
 	mesh->nodal_map_l2g_exterior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
-	CountDistinctEntry(mesh->ien, mesh->num[0] * 4 + mesh->num[1] * 6 + mesh->num[2] * 8, mesh->nodal_map_l2g_exterior);
+	CountDistinctEntry(CdamMeshIEN(mesh), mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, mesh->nodal_map_l2g_exterior);
 
 	int* npart_ownership = CdamTMalloc(int, num[0], HOST_MEM);
 	CdamMemset(npart_ownership, 0, sizeof(int) * num[0], HOST_MEM);
 	for(i = 0; i < mesh->nodal_offset[rank + 1] - mesh->nodal_offset[rank]; ++i) {
+		/* mark the nodes owned by other processes */
 		if(npart[mesh->nodal_map_l2g_exterior[i]] != rank) {
 			npart_ownership[mesh->nodal_map_l2g_exterior[i]] = 1;
 		}
@@ -340,8 +711,13 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	qsort(g2l, mesh->num[0], sizeof(index_type) * 2, QsortCmpIndexType);
 	for(i = 0; i < mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8; ++i) {
 		index_type* p = (index_type*)bsearch(mesh->ien + i, g2l, mesh->num[0], sizeof(index_type) * 2, QsortCmpIndexType);
-		mesh->ien[i] = p[1];
+		mesh->ien[i] = p[0];
 	}
+
+	printf("rank = %d, num_exclusive_node = %d\n", rank, mesh->num_exclusive_node);
+	printf("rank = %d, num_owned_node = %d\n", rank, mesh->nodal_offset[rank + 1] - mesh->nodal_offset[rank]);
+	printf("rank = %d, num = %d, %d, %d, %d\n", rank, mesh->num[0], mesh->num[1], mesh->num[2], mesh->num[3]);
+	return;
 
 
 	/* Generate the l2g_interior */
@@ -386,17 +762,18 @@ void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 		mesh->nodal_map_l2g_interior[i + num_owned_node] += mesh->nodal_offset[part];
 	}
 
-	index_type *block_len = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
-	for(i = 0; i < num[0]; ++i) {
-		block_len[i] = 3;
-	}
-
 	CdamMeshCoord(mesh) = CdamTMalloc(value_type, mesh->num[0] * 3, HOST_MEM);
 	snprintf(dataset_name, sizeof(dataset_name) / sizeof(char), "%s/xg", group_name);
-	H5ReadDatasetValIndexed(h5f, group_name, mesh->num[0],
-													block_len, mesh->nodal_map_l2g_exterior, CdamMeshCoord(mesh));
+	index_type* hindex = CdamTMalloc(index_type, mesh->num[0] * 3, HOST_MEM);
+	for(i = 0; i < mesh->num[0]; ++i) {
+		hindex[i * 3 + 0] = mesh->nodal_map_l2g_interior[i] * 3 + 0;
+		hindex[i * 3 + 1] = mesh->nodal_map_l2g_interior[i] * 3 + 1;
+		hindex[i * 3 + 2] = mesh->nodal_map_l2g_interior[i] * 3 + 2;
+	}
+	H5ReadDatasetValIndexed(h5f, dataset_name, mesh->num[0],
+													hindex, CdamMeshCoord(mesh));
 
-	CdamFree(block_len, sizeof(index_type) * num[0], HOST_MEM);
+	CdamFree(hindex, sizeof(index_type) * mesh->num[0] * 3, HOST_MEM);
 	CdamFree(epart_count, sizeof(index_type) * size * 3, HOST_MEM);
 	CdamFree(epart, sizeof(index_type) * (num[1] + num[2] + num[3]), HOST_MEM);
 	CdamFree(npart, sizeof(index_type) * num[0], HOST_MEM);
@@ -419,7 +796,7 @@ static void MoveToDevice(void** ptr, size_t size) {
 	*ptr = ptr_dev;
 }
 
-void CdamMeshToDevice(CdamMesh *mesh) {
+void CdamMeshPrefetch(CdamMesh *mesh) {
 	index_type num_node = mesh->num[0];
 	index_type num_tet = mesh->num[1];
 	index_type num_prism = mesh->num[2];

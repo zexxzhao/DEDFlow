@@ -5,9 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "common.h"
+#include "alloc.h"
 #include "cJSON.h"
 
-char* strdup(const char* s);
+// char* strdup(const char* s);
 /* JSON */
 /* root is the root of the JSON object */
 /* key is of the format ".key1.key2.key3..." or "key1.key2.key3..." */
@@ -16,7 +17,8 @@ static inline cJSON* JSONGetItem(cJSON* root, const char* key) {
 	const char delim[] = ".";
 	cJSON* item = root;
 	char* token = NULL;
-	char* keyDup = strdup(key);
+	char* keyDup = CdamTMalloc(char, strlen(key) + 1, HOST_MEM);
+	CdamMemcpy(keyDup, key, strlen(key) + 1, HOST_MEM, HOST_MEM);
 	if (keyDup && keyDup[0] == '.') {
 		keyDup++;
 	}
@@ -30,7 +32,7 @@ static inline cJSON* JSONGetItem(cJSON* root, const char* key) {
 		token = strtok(NULL, delim);
 	}
 	
-	free(keyDup);
+	CdamFree(keyDup, strlen(key) + 1, HOST_MEM);
 	return item;
 }
 
@@ -40,7 +42,8 @@ static inline b32 JSONHasKey(cJSON* root, const char* key) {
 	const char delim[] = ".";
 	cJSON* item = root;
 	char* token = NULL;
-	char* keyDup = strdup(key);
+	char* keyDup = CdamTMalloc(char, strlen(key) + 1, HOST_MEM);
+	CdamMemcpy(keyDup, key, strlen(key) + 1, HOST_MEM, HOST_MEM);
 	if (keyDup && keyDup[0] == '.') {
 		keyDup++;
 	}
@@ -54,7 +57,7 @@ static inline b32 JSONHasKey(cJSON* root, const char* key) {
 		token = strtok(NULL, delim);
 	}
 	
-	free(keyDup);
+	CdamFree(keyDup, strlen(key) + 1, HOST_MEM);
 	return item != NULL;
 }
 

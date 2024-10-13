@@ -72,6 +72,20 @@ typedef i32 index_type;
 #define MPI_INDEX_TYPE MPI_INT
 #endif
 
+typedef enum {
+	CDAM_I8 = 0,
+	CDAM_I16 = 1,
+	CDAM_I32 = 2,
+	CDAM_I64 = 3,
+	CDAM_U8 = 4,
+	CDAM_U16 = 5,
+	CDAM_U32 = 6,
+	CDAM_U64 = 7,
+	CDAM_F32 = 8,
+	CDAM_F64 = 9,
+	CDAM_BYTE = 10,
+} CdamDataType;
+
 #define BYTIFY(x) ((byte*)(x))
 
 /* Boolean */
@@ -81,6 +95,11 @@ typedef int32_t b32;
 #define BOOL_C(x) (!!(x))
 
 #define SIZE_OF(x) ((index_type)sizeof(x))
+/* Redefine sizeof to index_type
+ * This is to avoid implicit conversion from size_t to index_type
+ * Use ellipsis to be compatible with c++ 
+ */
+#define sizeof(...) ((index_type)sizeof(__VA_ARGS__))
 
 #if defined(NDEBUG)
 #	define ASSERT(expr) /* empty */
@@ -151,7 +170,9 @@ GPUAssertPrivate(cudaError_t code, const char *file, int line) {
 #define CUGUARD(err) /* empty */
 #endif
 
-
+/* Avoid using malloc/free directly */
+// #define malloc malloc_is_forbidden
+// #define free free_is_forbidden
 
 __END_DECLS__
 #endif /* __COMMON_H__ */

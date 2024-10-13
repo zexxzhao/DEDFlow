@@ -46,8 +46,16 @@ void ElemRHSLocal2Global(index_type num_elem, index_type* batch_index_ptr, index
 												 index_type elem_size, value_type* elem_F, index_type Fstride,
 												 value_type* F, index_type Fstride_global, const index_type* map);
 
-void MatrixAddElementLHS(Matrix* J, index_type NSHL, index_type BS, index_type num_elem, index_type* ien,
-												 index_type* batch_index_ptr, value_type* elem_J, index_type Jstride);
+void AddElemValueToVec(value_type* b, index_type nelem, index_type nshl, index_type* ien,
+											 CdamLayout* map, value_type* elem_F) {
+#if CDAM_USE_CUDA
+#else
+#endif
+}
+
+// void MatrixAddElementLHS(CdamParMat* J, index_type nshl, index_type bs, index_type num_elem, index_type* ien,
+// 												 index_type* batch_index_ptr, value_type* elem_J, index_type Jstride);
+
 
 static void ParseFEMOptions(FEMOptions opt, cJSON* config) {
 	value_type rhoc;
@@ -123,6 +131,10 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 
 		color_batch_index_ptr = color_batch_ind + color_batch_offset[c];
 
+		index_type* ien_color = (index_type*)ArenaPush(sizeof(index_type), color_batch_size * NSHL, &scratch, 0);
+
+		RestrictVec(ien_color, ien, color_batch_size, color_batch_index_ptr, NSHL * sizeof(index_type));
+
 
 		/* Calculate the element metrics */
 		elem_invJ = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * (3 * 3 + 1), &scratch, 0);
@@ -144,6 +156,10 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 
 		buffer = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
 		/* Interpolate the field values */
+		RestrictAddVecStrided(buffer + 0 * NSHL, bs * NSHL, wgalpha_dptr + 0 * num_node, 3,
+													color_batch_size * NSHL, ien_color, 1);
+
+
 		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
 										 NSHL, 3 * sizeof(value_type),
 										 wgalpha_dptr, 3, buffer, bs * NSHL);
@@ -159,22 +175,22 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 
 		qr_wggradalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * 3 * bs, &scratch, 0);
 		dgemmStridedBatched(BLAS_N, BLAS_N,
-							3, bs, NSHL,
-							one,
-							shgradg, 3, NSHL* 3,
-							buffer, NSHL, NSHL * bs,
-							zero,
-							qr_wggradalpha, 3, bs * 3,
-							color_batch_size);
+												3, bs, NSHL,
+												one,
+												shgradg, 3, NSHL* 3,
+												buffer, NSHL, NSHL * bs,
+												zero,
+												qr_wggradalpha, 3, bs * 3,
+												color_batch_size);
 		 
 		qr_wgalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
-		dgemm( BLAS_N, BLAS_N,
-							NQR, color_batch_size * bs, NSHL,
-							one,
-							d_shlu, NQR,
-							buffer, NSHL,
-							zero,
-							qr_wgalpha, NQR);
+		dgemm(BLAS_N, BLAS_N,
+					NQR, color_batch_size * bs, NSHL,
+					one,
+					d_shlu, NQR,
+					buffer, NSHL,
+					zero,
+					qr_wgalpha, NQR);
 
 		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
 										 NSHL, 3 * sizeof(value_type),
@@ -190,13 +206,13 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
 		qr_dwgalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
-		dgemm( BLAS_T, BLAS_N,
-							NQR, color_batch_size * bs, NSHL,
-							one,
-							d_shlu, NQR,
-							buffer, NSHL,
-							zero,
-							qr_dwgalpha, NQR);
+		dgemm(BLAS_T, BLAS_N,
+					NQR, color_batch_size * bs, NSHL,
+					one,
+					d_shlu, NQR,
+					buffer, NSHL,
+					zero,
+					qr_dwgalpha, NQR);
 		ArenaPop(sizeof(value_type), color_batch_size * NSHL * bs, &scratch);
 
 		if(F) {
@@ -204,6 +220,8 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 			IntElemAssembly(color_batch_size, elem_invJ, shgradg,
 											qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
 											elem_F, NULL, opt, 0);
+			AddElemValueToVec(F, color_batch_size, NSHL, ien_color, NULL, elem_F);
+			/*
 			ElemRHSLocal2Global(color_batch_size, color_batch_index_ptr, ien,
 													3, elem_F, bs,
 													F, 3, (const index_type*)NULL);
@@ -216,13 +234,15 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 			ElemRHSLocal2Global(color_batch_size, color_batch_index_ptr, ien,
 													1, elem_F + 5, bs,
 													F + num_node * 5, 1, (const index_type*)NULL);
+													*/
 		}
 		if(J) {
 			elem_J = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * NSHL * bs * bs, &scratch, 0);
 			IntElemAssembly(color_batch_size, elem_invJ, shgradg,
 											qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
 											NULL, elem_J, opt, 0);
-			MatrixAddElementLHS(J, NSHL, bs, color_batch_size, ien, color_batch_index_ptr, elem_J, bs * NSHL);
+			// MatrixAddElementLHS(J, NSHL, bs, color_batch_size, ien, color_batch_index_ptr, elem_J, bs * NSHL);
+			CdamParMatAddElemValueBatched(J, color_batch_size, NSHL, ien_color, elem_J, scratch);
 		}
 
 		scratch = scratch_original;

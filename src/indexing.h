@@ -19,6 +19,18 @@ void Iota(index_type* data, index_type n, index_type start, index_type step);
 
 void GenMaskByRange(index_type nrow, index_type ncol, index_type* input,
 										byte* mask, index_type start, index_type end, Arena scratch); 
+
+void RestrictVec(void* dst, void* src, index_type n, index_type* index, size_t elem_size);
+void ProlongateVec(void* dst, void* src, index_type n, index_type* index, size_t elem_size);
+
+void RestrictAddVecStrided(value_type* dst, index_type dst_stride,
+													 value_type* src, index_type src_stride,
+													 index_type n, index_type* index, index_type block_size); 
+
+void ProlongateAddVecStrided(value_type* dst, index_type dst_stride,
+														 value_type* src, index_type src_stride,
+														 index_type n, index_type* index, index_type block_size);
+
 __END_DECLS__
 
 

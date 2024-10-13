@@ -21,7 +21,7 @@ struct SeqMatOp {
 	void (*transpose)(void* A);
 
 	void (*multadd)(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
-	void (*multransposeadd)(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
+	void (*multtransposeadd)(value_type alpha, void* A, value_type* x, value_type beta, value_type* y);
 	void (*matmultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 	void (*mattransposemultadd)(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
 	void (*get_diag)(void* A, value_type* diag, index_type bs);

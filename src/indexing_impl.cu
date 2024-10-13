@@ -1,9 +1,13 @@
 #include <string.h>
-#include "indexing.h"
 #ifdef CDAM_USE_CUDA
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 // #include <cub/device/device_transform.cuh>
+#endif
+
+#include "indexing.h"
+
+#ifdef CDAM_USE_CUDA
 
 struct IsEqualTo {
 	index_type value;
@@ -152,6 +156,91 @@ void GenMaskByRange(index_type nrow, index_type ncol, index_type* input,
 	int num_block = CEIL_DIV(nrow * ncol, num_thread);
 	GenMaskByRangeKernel<<<num_block, num_thread>>>(nrow, ncol, input, mask, start, end);
 }
+
+static __global__ void RestrictVecKernel(void* dst, void* src, index_type n, index_type* index, size_t elem_size) {
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	byte* d = (byte*)dst;
+	byte* s = (byte*)src;
+
+	if(tid >= n * elem_size) return;
+
+	int i = tid / elem_size;
+	int j = tid % elem_size;
+
+	d += i * elem_size;
+	s += index[i] * elem_size;
+	d[j] = s[j];
+}
+
+void RestrictVec(void* dst, void* src, index_type n, index_type* index, size_t elem_size) {
+	int num_thread = 256;
+	int num_block = CEIL_DIV(n * elem_size, num_thread);
+	RestrictVecKernel<<<num_block, num_thread>>>(dst, src, n, index, elem_size);
+}
+
+static __global__ void ProlongateVecKernel(void* dst, void* src, index_type n, index_type* index, size_t elem_size) {
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	byte* d = (byte*)dst;
+	byte* s = (byte*)src;
+
+	if(tid >= n * elem_size) return;
+
+	int i = tid / elem_size;
+	int j = tid % elem_size;
+
+	d += index[i] * elem_size;
+	s += i * elem_size;
+	d[j] = s[j];
+}
+
+void ProlongateVec(void* dst, void* src, index_type n, index_type* index, size_t elem_size) {
+	int num_thread = 256;
+	int num_block = CEIL_DIV(n * elem_size, num_thread);
+
+	ProlongateVecKernel<<<num_block, num_thread>>>(dst, src, n, index, elem_size);
+}
+
+static __global__ void RestrictAddVecStridedKernel(value_type* dst, index_type dst_stride,
+																									value_type* src, index_type src_stride,
+																									index_type n, index_type* index, index_type block_size) {
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	if(tid >= n * block_size) return;
+
+	int i = tid / block_size;
+	int j = tid % block_size;
+
+	dst[i * dst_stride + j] += src[index[i] * src_stride + j];
+
+}
+
+void RestrictAddVecStrided(value_type* dst, index_type dst_stride,
+													 value_type* src, index_type src_stride,
+													 index_type n, index_type* index, index_type block_size) {
+	int num_thread = 256;
+	int num_block = CEIL_DIV(n * block_size, num_thread);
+	RestrictAddVecStridedKernel<<<num_block, num_thread>>>(dst, dst_stride, src, src_stride, n, index, block_size);
+}
+
+static __global__ void PrologateAddVecStridedKernel(value_type* dst, index_type dst_stride,
+																									value_type* src, index_type src_stride,
+																									index_type n, index_type* index, index_type block_size) {
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	if(tid >= n * block_size) return;
+
+	int i = tid / block_size;
+	int j = tid % block_size;
+
+	dst[index[i] * dst_stride + j] += src[i * src_stride + j];
+}
+
+void PrologateAddVecStrided(value_type* dst, index_type dst_stride,
+													 value_type* src, index_type src_stride,
+													 index_type n, index_type* index, index_type block_size) {
+	int num_thread = 256;
+	int num_block = CEIL_DIV(n * block_size, num_thread);
+	PrologateAddVecStridedKernel<<<num_block, num_thread>>>(dst, dst_stride, src, src_stride, n, index, block_size);
+}
+
 #else
 index_type CountValueI(index_type* data, index_type size, index_type value, Arena scratch) {
 	index_type count = 0;
@@ -213,6 +302,41 @@ void Iota(index_type* data, index_type n, index_type start, index_type step) {
 		data[i] = start + i * step;
 	}
 }
+void RestrictVec(void* dst, void* src, index_type n, index_type* index, size_t elem_size) {
+	byte* d = (byte*)dst;
+	byte* s = (byte*)src;
+	for (index_type i = 0; i < n; ++i) {
+		CdamMemcpy(d + i * elem_size, s + index[i] * elem_size, elem_size, HOST_MEM, HOST_MEM);
+	}
+}
+void ProlongateVec(void* dst, void* src, index_type n, index_type* index, size_t elem_size) {
+	byte* d = (byte*)dst;
+	byte* s = (byte*)src;
+	for(index_type i = 0; i < n; ++i) {
+		CdamMemcpy(d + index[i] * elem_size, s + i * elem_size, elem_size, HOST_MEM, HOST_MEM);
+	}
+}
+
+
+void RestrictAddVecStrided(value_type* dst, index_type dst_stride,
+													 value_type* src, index_type src_stride,
+													 index_type n, index_type* index, index_type block_size) {
+	
+	int i;
+	for(i = 0; i < n; ++i) {
+		daxpy(block_size, 1.0, src + index[i] * src_stride, 1, dst + i * dst_stride, 1);
+	}
+}
+
+void ProlongateAddVecStrided(value_type* dst, index_type dst_stride,
+														 value_type* src, index_type src_stride,
+														 index_type n, index_type* index, index_type block_size) {
+	int i;
+	for(i = 0; i < n; ++i) {
+		daxpy(block_size, 1.0, src + i * src_stride, 1, dst + index[i] * dst_stride, 1);
+	}
+}
+
 #endif
 __END_DECLS__
 

@@ -95,7 +95,7 @@ void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k
 
 }
 
-void dtranspose(int m, int n, const double *A, int lda, double *B, int ldb) {
+void dtranspose(int m, int n, double *A, int lda, double *B, int ldb) {
 	double one = 1.0, zero = 0.0;
 	if(A != B) {
 		cublasDgeam(GetCublasHandle(), CUBLAS_OP_T, CUBLAS_OP_N, m, n, &one, A, lda, &zero, B, ldb, B, ldb);
@@ -330,6 +330,12 @@ void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* 
 
 void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer) {
 	mkl_sparse_d_mv(trans, alpha, matA, x, beta, y);
+}
+
+void dgeam(BLASTrans transA, BLASTrans transB, int m, int n, double alpha, const double *A, int lda, double beta, const double *B, int ldb, double *C, int ldc) {
+	ASSERT((transA != BLAS_N || transB != BLAS_N) && "Not implemented");
+
+	ASSERT(0 && "Not implemented");	
 }
 
 #endif /* CDAM_USE_CUDA */

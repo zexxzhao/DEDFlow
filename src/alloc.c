@@ -46,6 +46,7 @@ static void DefaultFreeDevicePrivate(void* p, ptrdiff_t size, void* ctx) {
 #endif
 
 static Allocator _default_allocator[] = {
+	{NULL, NULL, NULL}, /* Dummy */
 	{DefaultMallocHostPrivate, DefaultFreeHostPrivate, NULL},
 #ifdef CDAM_USE_CUDA
 	{DefaultMallocDevicePrivate, DefaultFreeDevicePrivate, NULL}

@@ -65,7 +65,7 @@ static void UpdateSolutionPrivate(void* data, void *sol) {
 }
 
 void CdamNewtonSolverCreate(MPI_Comm comm, CdamNewtonSolver **solver) {
-	*solver = (CdamNewtonSolver*)CdamMallocHost(sizeof(CdamNewtonSolver));
+	*solver = CdamTMalloc(CdamNewtonSolver, 1, HOST_MEM);
 	memset(*solver, 0, sizeof(CdamNewtonSolver));
 	(*solver)->comm = comm;
 	(*solver)->maxit = 100;

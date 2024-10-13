@@ -1,6 +1,7 @@
 #include <string.h>
 #include "alloc.h"
 #include "Mesh.h"
+#include "layout.h"
 #include "commutor.h"
 
 __BEGIN_DECLS__
@@ -229,6 +230,40 @@ void CdamCommutorBackword(CdamCommutor* commutor, void* recvbuf, index_type bloc
 	CdamFree(ownerbuf, blocklen * bwd_displ[num_bwd_task], HOST_MEM);
 	CdamFree(ownerbuf_device, blocklen * bwd_displ[num_bwd_task], DEVICE_MEM);
 }
+
+void CdamCommuForward(CdamCommutor* commutor, void* sendbuf, void* layout, size_t blocklen) {
+	CdamLayout* map = (CdamLayout*)layout;
+
+	index_type* offset = CdamLayoutComponentOffset(map);
+	index_type n = CdamLayoutNumComponent(map);
+	index_type nnode = CdamLayoutNumNode(map);
+
+	index_type i, bs;
+	byte* buf = (byte*)sendbuf;
+
+	for(i = 0; i < n; ++i) {
+		bs = offset[i+1] - offset[i];
+		CdamCommutorForward(commutor, buf, blocklen * bs);
+		buf += nnode * bs * blocklen;
+	}
+}
+void CdamCommuBackward(CdamCommutor* commutor, void* recvbuf, void* layout, size_t blocklen) {
+	CdamLayout* map = (CdamLayout*)layout;
+
+	index_type* offset = CdamLayoutComponentOffset(map);
+	index_type n = CdamLayoutNumComponent(map);
+	index_type nnode = CdamLayoutNumNode(map);
+
+	index_type i, bs;
+	byte* buf = (byte*)recvbuf;
+
+	for(i = 0; i < n; ++i) {
+		bs = offset[i+1] - offset[i];
+		CdamCommutorBackword(commutor, buf, blocklen * bs);
+		buf += nnode * bs * blocklen;
+	}
+}
+
 
 
 
