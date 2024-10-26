@@ -49,11 +49,11 @@ __BEGIN_DECLS__
 index_type CountValueI(index_type* data, index_type size, index_type value, Arena scratch) {
 	void* d_temp_storage = NULL;
 	size_t temp_storage_bytes = 0;
-	index_type* d_mask = (index_type*)ArenaPush(sizeof(index_type), size + 1, &scratch, 0);
+	index_type* d_mask = (index_type*)AllocInArena(sizeof(index_type), size + 1, &scratch, 0);
 	TransformByRange<<<CEIL_DIV(size, 256), 256>>>(size, data, d_mask, value, value + 1);
 
 	cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_mask, d_mask + size, size);
-	d_temp_storage = ArenaPush(1, temp_storage_bytes, &scratch, 0);
+	d_temp_storage = AllocInArena(1, temp_storage_bytes, &scratch, 0);
 	index_type count;
 	cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_mask, d_mask + size, size);
 
@@ -62,8 +62,8 @@ index_type CountValueI(index_type* data, index_type size, index_type value, Aren
 }
 
 index_type CountValueImp(void* data, index_type elem_size, index_type n, void* value, Arena scratch) {
-	int* d_out = (int*)ArenaPush(sizeof(int), n / elem_size, &scratch, 0);
-	int* d_value = (int*)ArenaPush(elem_size, 1, &scratch, 0);
+	int* d_out = (int*)AllocInArena(sizeof(int), n / elem_size, &scratch, 0);
+	int* d_value = (int*)AllocInArena(elem_size, 1, &scratch, 0);
 	int num_thread = 256;
 	int num_block = CEIL_DIV(n / elem_size, num_thread);
 
@@ -72,9 +72,9 @@ index_type CountValueImp(void* data, index_type elem_size, index_type n, void* v
 
 	void* d_temp_storage = NULL;
 	size_t temp_storage_bytes = 0;
-	int* d_num_selected_out = (int*)ArenaPush(sizeof(int), 1, &scratch, 0);
+	int* d_num_selected_out = (int*)AllocInArena(sizeof(int), 1, &scratch, 0);
 	cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_out, d_num_selected_out, n / elem_size);
-	d_temp_storage = ArenaPush(1, temp_storage_bytes, &scratch, 0);
+	d_temp_storage = AllocInArena(1, temp_storage_bytes, &scratch, 0);
 	cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_out, d_num_selected_out, n / elem_size);
 	int h_num_selected;
 	CdamMemcpy(&h_num_selected, d_num_selected_out, sizeof(int), HOST_MEM, DEVICE_MEM);
@@ -84,10 +84,10 @@ index_type CountValueImp(void* data, index_type elem_size, index_type n, void* v
 void SortByKeyI(index_type* key, index_type* value, index_type n, Arena scratch) {
 	void* d_temp_storage = NULL;
 	size_t temp_storage_bytes = 0;
-	index_type* d_key_out = (index_type*)ArenaPush(sizeof(index_type), n, &scratch, 0);
-	index_type* d_value_out = (index_type*)ArenaPush(sizeof(index_type), n, &scratch, 0);
+	index_type* d_key_out = (index_type*)AllocInArena(sizeof(index_type), n, &scratch, 0);
+	index_type* d_value_out = (index_type*)AllocInArena(sizeof(index_type), n, &scratch, 0);
 	cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, key, d_key_out, value, d_value_out, n);
-	d_temp_storage = ArenaPush(1, temp_storage_bytes, &scratch, 0);
+	d_temp_storage = AllocInArena(1, temp_storage_bytes, &scratch, 0);
 	cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, key, d_key_out, value, d_value_out, n);
 	CdamMemcpy(value, d_value_out, n * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
 }

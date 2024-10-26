@@ -41,6 +41,7 @@ struct CdamMesh {
 																			 * used for output;                            *
 																			 *  same as the indices in the mesh file       */
 
+	void* commu_graph;
 	/* Color */
 	index_type num_color;
 	index_type* color;
@@ -64,6 +65,8 @@ struct CdamMesh {
 #define CdamMeshTet(mesh) (CdamMeshIEN(mesh))
 #define CdamMeshPrism(mesh) (CdamMeshIEN(mesh) + CdamMeshNumTet(mesh)*4)
 #define CdamMeshHex(mesh) (CdamMeshIEN(mesh) + CdamMeshNumTet(mesh)*4 + CdamMeshNumPrism(mesh)*6)
+
+#define CdamMeshCommuGraph(mesh) (((CdamMesh*)(mesh))->commu_graph)
 
 #define CdamMeshNumBound(mesh) (((CdamMesh*)(mesh))->num_bound)
 #define CdamMeshBoundID(mesh) (((CdamMesh*)(mesh))->bound_id)

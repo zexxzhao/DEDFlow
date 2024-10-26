@@ -17,6 +17,7 @@
 #include "h5util.h"
 #include "Mesh.h"
 #include "layout.h"
+#include "commu_graph.h"
 // #include "Particle.h"
 #include "NewtonSolver.h"
 #include "dirichlet.h"
@@ -41,9 +42,10 @@ void MyFieldInit(value_type* value, void* ctx) {
 	CdamMesh* mesh = (CdamMesh*)ctx;
 	index_type i;
 	index_type num_node = CdamMeshNumNode(mesh);
+	index_type num_node_owned = CdamMeshLocalNodeEnd(mesh) - CdamMeshLocalNodeBegin(mesh);
 	value_type* coord = CdamMeshCoord(mesh);
 
-	for(i = 0; i < num_node; i++) {
+	for(i = 0; i < num_node_owned; i++) {
 #ifdef DBG_TET
 		value[i * 3 + 0] = coord[i * 3 + 0];
 		value[i * 3 + 1] = coord[i * 3 + 1];
@@ -54,7 +56,7 @@ void MyFieldInit(value_type* value, void* ctx) {
 		value[i * 3 + 2] = 0.0; // coord[i * 3 + 2];
 #endif
 	}
-	for(i = 0; i < num_node; ++i) {
+	for(i = 0; i < num_node_owned; ++i) {
 		z = 2e-4 - coord[i * 3 + 2];
 		if (z > eps) {
 			h = 1.0;
@@ -66,8 +68,8 @@ void MyFieldInit(value_type* value, void* ctx) {
 			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
 		}
 		value[num_node * 3 + i] = 0.0;
-		value[num_node * 4 + i] = h;
-		value[num_node * 5 + i] = -coord[i * 3 + 0];
+		value[num_node * 4 + i] = mesh->rank;
+		value[num_node * 5 + i] = coord[i * 3 + 0];
 	}
 }
 
@@ -93,10 +95,11 @@ static inline void ParseJSONFile(const char* filename, cJSON** root) {
 int main(int argc, char** argv) {
 	int rank = 0, num_procs = 0;
 	char argv_opt[256];
+	index_type i;
 	CdamMesh* mesh;
 	cJSON* config = NULL;
 	{
-		memset(argv_opt, 0, 256);
+		CdamMemset(argv_opt, 0, 256, HOST_MEM);
 		for(i32 i = 1; i < argc;) {
 			if(strcmp(argv[i], "--m") == 0) {
 				strcpy(argv_opt, argv[i + 1]);
@@ -177,10 +180,48 @@ int main(int argc, char** argv) {
 	CdamMeshLoad(mesh, h5_handler, "/mesh");
 	H5CloseFile(h5_handler);
 
-	return 0;
+	index_type num_node_owned = CdamMeshLocalNodeEnd(mesh) - CdamMeshLocalNodeBegin(mesh);
+	index_type* nindex = mesh->nodal_map_l2g_exterior;
+	index_type* nindex3 = CdamTMalloc(index_type, num_node_owned * 3, HOST_MEM);
 
-	CdamMeshPrefetch(mesh);
+	for(i = 0; i < num_node_owned; i++) {
+		nindex3[i * 3 + 0] = nindex[i] * 3 + 0;
+		nindex3[i * 3 + 1] = nindex[i] * 3 + 1;
+		nindex3[i * 3 + 2] = nindex[i] * 3 + 2;
+	}
+
 	// CdamMeshGenreateColorBatch(mesh);
+	CdamLayout* layout;
+	CdamLayoutCreate(&layout, config);
+	value_type* vec, *dx;
+	// CdamNewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
+	
+	index_type num_node = CdamMeshNumNode(mesh);
+	dx = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	vec = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+
+	CommuGraph* commu;
+	CommuGraphCreate(MPI_COMM_WORLD, mesh, &commu);
+
+	CdamParMat* mat;
+	CdamParMatCreate(MPI_COMM_WORLD, (void**)&mat);
+	mat->global_nrows = CdamLayoutNumGlobal(layout);
+	mat->global_ncols = CdamLayoutNumGlobal(layout);
+	mat->commutor = commu;
+	mat->row_range[0] = mesh->nodal_offset[rank];
+	mat->row_range[1] = mesh->nodal_offset[rank + 1];
+	mat->row_count[0] = CdamLayoutNumExclusive(layout);
+	mat->row_count[1] = CdamLayoutNumShared(layout);
+	mat->row_count[2] = CdamLayoutNumGhosted(layout);
+	mat->col_range[0] = mesh->nodal_offset[rank];
+	mat->col_range[1] = mesh->nodal_offset[rank + 1];
+	mat->col_count[0] = CdamLayoutNumExclusive(layout);
+	mat->col_count[1] = CdamLayoutNumShared(layout);
+	mat->col_count[2] = CdamLayoutNumGhosted(layout);
+	mat->row_map = layout;
+	mat->col_map = layout;
+	CdamParMatSetup(mat);
+
 
 #if CDAM_USE_CUDA
 	cublasHandle_t handle;
@@ -198,27 +239,15 @@ int main(int argc, char** argv) {
 	 *     the absolute residual
 	 *     whether use user-defined UpdateSolution */
 	CdamNewtonSolverConfig(nssolver, JSONGetItem(config, "NewtonSolver"));
-
-	CdamKrylov* krylov = NULL;
-	CdamNewtonSolverGetLinearSolver(nssolver, &krylov);
-	
-	CdamKrylovSetup(krylov, mesh, JSONGetItem(config, "NewtonSolver.LinearSolver"));
-
-	CdamLayout* layout;
-	CdamLayoutCreate(&layout, config);
-	value_type* vec, *dx;
-	// CdamNewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
-	
-	index_type num_node = CdamMeshNumNode(mesh);
-	dx = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
-	vec = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 	CdamNewtonSolverB(nssolver) = vec;
 	CdamNewtonSolverX(nssolver) = dx;
-
-	CdamParMat* mat;
-	CdamParMatCreate(MPI_COMM_WORLD, (void**)&mat);
 	CdamNewtonSolverA(nssolver) = mat;
 
+	CdamKrylov* krylov = NULL;
+	CdamKrylovCreate(&krylov);
+	nssolver->lsolver = krylov;
+	
+	CdamKrylovSetup(krylov, mat, JSONGetItem(config, "NewtonSolver.LinearSolver"));
 
 	/* Simulation initialization */
 	value_type* wgold = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
@@ -233,24 +262,25 @@ int main(int argc, char** argv) {
 
 	CdamMemset(buffer, 0, num_node * sizeof(value_type) * BS, HOST_MEM);
 
+
 	if(step) {
 		sprintf(filename_buffer, "sol.%d.h5", step);
+
 		h5_handler = H5OpenFile(filename_buffer, "r");
-		H5ReadDatasetf64(h5_handler, "u", buffer);
-		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
-		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
-		CdamMemcpy(wgold, buffer, num_node * sizeof(value_type) * 3, DEVICE_MEM, HOST_MEM);
 
-		memset(buffer, 0, num_node * sizeof(value_type) * BS);
-		H5ReadDatasetf64(h5_handler, "du", buffer);
-		H5ReadDatasetf64(h5_handler, "p", buffer + num_node * 3);
-		H5ReadDatasetf64(h5_handler, "phi", buffer + num_node * 4);
-		H5ReadDatasetf64(h5_handler, "T", buffer + num_node * 5);
+		H5ReadDatasetValIndexed(h5_handler, "u", num_node_owned * 3, nindex3, buffer);
+		H5ReadDatasetValIndexed(h5_handler, "phi", num_node_owned, nindex, buffer + num_node * 4);
+		H5ReadDatasetValIndexed(h5_handler, "T", num_node_owned, nindex, buffer + num_node * 5);
+		CdamMemcpy(wgold, buffer, num_node * sizeof(value_type) * BS, DEVICE_MEM, HOST_MEM);
+
+		CdamMemset(buffer, 0, num_node * sizeof(value_type) * BS, HOST_MEM);
+		H5ReadDatasetValIndexed(h5_handler, "du", num_node_owned * 3, nindex3, buffer);
+		H5ReadDatasetValIndexed(h5_handler, "p", num_node_owned, nindex, buffer + num_node * 3);
+		H5ReadDatasetValIndexed(h5_handler, "dphi", num_node_owned, nindex, buffer + num_node * 4);
+		H5ReadDatasetValIndexed(h5_handler, "dT", num_node_owned, nindex, buffer + num_node * 5);
 		// cudaMemcpy(dwgold, buffer, num_node * sizeof(value_type) * BS, cudaMemcpyHostToDevice);
-		CdamMemcpy(dwgold, buffer, num_node * sizeof(value_type) * 3, DEVICE_MEM, HOST_MEM);
-
-		
-		CdamMemcpy(dwg, dwgold, num_node * sizeof(value_type) * 3, DEVICE_MEM, DEVICE_MEM);
+		CdamMemcpy(dwgold, buffer, num_node * sizeof(value_type) * BS, DEVICE_MEM, HOST_MEM);
+		CdamMemcpy(dwg, dwgold, num_node * sizeof(value_type) * BS, DEVICE_MEM, DEVICE_MEM);
 
 		H5CloseFile(h5_handler);
 	}
@@ -274,27 +304,39 @@ int main(int argc, char** argv) {
 		CdamMemset(dwg, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 		CdamMemset(wgold, 0, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 		CdamMemcpy(wgold, buffer, num_node * sizeof(value_type) * BS, DEVICE_MEM, HOST_MEM);
+		CommuGraphSyncForward(commu, wgold, 3);
+		CommuGraphSyncBackward(commu, wgold, 3);
+		CommuGraphSyncForward(commu, wgold + num_node * 3, 1);
+		CommuGraphSyncBackward(commu, wgold + num_node * 3, 1);
+		CommuGraphSyncForward(commu, wgold + num_node * 4, 1);
+		CommuGraphSyncBackward(commu, wgold + num_node * 4, 1);
+		CommuGraphSyncForward(commu, wgold + num_node * 5, 1);
+		CommuGraphSyncBackward(commu, wgold + num_node * 5, 1);
+
 		CdamMemset(wgold + num_node * 3, 0, num_node, DEVICE_MEM);
 		CdamMemcpy(dwg + num_node * 3, buffer + num_node * 3, num_node, DEVICE_MEM, HOST_MEM);
 	
 		h5_handler = H5OpenFile("sol.0.h5", "w");
-		H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
-		H5WriteDatasetf64(h5_handler, "p", num_node, buffer + num_node * 3);
-		H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
-		H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
 
-		memset(buffer, 0, num_node * sizeof(value_type) * BS);
-		H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
-		H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
-		H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
+		H5WriteDatasetValIndexed(h5_handler, "u", num_node_owned * 3, nindex3, buffer);
+		H5WriteDatasetValIndexed(h5_handler, "p", num_node_owned, nindex, buffer + num_node * 3);
+		H5WriteDatasetValIndexed(h5_handler, "phi", num_node_owned, nindex, buffer + num_node * 4);
+		H5WriteDatasetValIndexed(h5_handler, "T", num_node_owned, nindex, buffer + num_node * 5);
+
+		CdamMemset(buffer, 0, num_node * sizeof(value_type) * BS, HOST_MEM);
+		H5WriteDatasetValIndexed(h5_handler, "du", num_node_owned * 3, nindex3, buffer);
+		H5WriteDatasetValIndexed(h5_handler, "dphi", num_node_owned, nindex, buffer + num_node * 4);
+		H5WriteDatasetValIndexed(h5_handler, "dT", num_node_owned, nindex, buffer + num_node * 5);
 
 		H5CloseFile(h5_handler);
 
 	}
+	return 0;
 
 	/* Simulation loop */
 	value_type fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
 	value_type fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};
+	CdamMeshPrefetch(mesh);
 
 	while(step ++ < num_step) {
 		fprintf(stdout, "##################\n");
@@ -364,8 +406,10 @@ int main(int argc, char** argv) {
 
 	// CdamVecDestroy(vec);
 	// CdamVecDestroy(dx);
+	CdamFree(nindex3, num_node_owned * 3 * sizeof(index_type), HOST_MEM);
 	CdamFree(vec, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 	CdamFree(dx, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CommuGraphDestroy(commu);
 	CdamParMatDestroy(mat);
 
 	CdamNewtonSolverGetLinearSolver(nssolver, &krylov);

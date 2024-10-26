@@ -1014,11 +1014,11 @@ void GetElemInvJ3D(index_type batch_size, index_type* batch_index_ptr,
 	GetElemJ3DKernel<<<num_block, block_size>>>(batch_size, batch_index_ptr, ien, coord, elem_metric);
 
 	/* Reverse the matrices */
-	value_type* d_elem_buff = (value_type*)ArenaPush(sizeof(value_type), batch_size * 10, &scratch, 0);
-	value_type** d_mat_batch = (value_type**)ArenaPush(sizeof(value_type*), batch_size, &scratch, 0);
-	value_type** d_matinv_batch = (value_type**)ArenaPush(sizeof(value_type*), batch_size, &scratch, 0);
-	int* info = (int*)ArenaPush(sizeof(int), batch_size, &scratch, 0);	
-	int* pivot = (int*)ArenaPush(sizeof(int), batch_size * 3, &scratch, 0);
+	value_type* d_elem_buff = (value_type*)AllocInArena(sizeof(value_type), batch_size * 10, &scratch, 0);
+	value_type** d_mat_batch = (value_type**)AllocInArena(sizeof(value_type*), batch_size, &scratch, 0);
+	value_type** d_matinv_batch = (value_type**)AllocInArena(sizeof(value_type*), batch_size, &scratch, 0);
+	int* info = (int*)AllocInArena(sizeof(int), batch_size, &scratch, 0);	
+	int* pivot = (int*)AllocInArena(sizeof(int), batch_size * 3, &scratch, 0);
 
 	/* Set mat_batch */
 	GetStridedBatchKernel<<<num_block, block_size>>>(batch_size, d_elem_buff, d_matinv_batch, 10);

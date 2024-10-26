@@ -3,23 +3,78 @@
 
 __BEGIN_DECLS__
 
-/* Open an HDF5 file */
-H5FileInfo* H5OpenFile(const char* filename, const char* mode) {
-	H5FileInfo* h5file = CdamTMalloc(H5FileInfo, 1, HOST_MEM);
+#define HDF5_FAIL (-1)
 
+static hid_t H5OpenFileSerial(const char* filename, const char* mode) {
+	hid_t file_id;
 	if (strcmp(mode, "r") == 0) {
-		h5file->file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+		file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
 	}
 	else if (strcmp(mode, "w") == 0) {
-		h5file->file_id = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+		file_id = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
 	}
 	else if (strcmp(mode, "a") == 0) {
-		h5file->file_id = H5Fopen(filename, H5F_ACC_RDWR, H5P_DEFAULT);
+		file_id = H5Fopen(filename, H5F_ACC_RDWR, H5P_DEFAULT);
 	}
 	else {
 		ASSERT(false && "H5OpenFile: Invalid mode!");
 	}
-	ASSERT(h5file->file_id != H5I_INVALID_HID && "H5OpenFile: Failed to open file!");
+	ASSERT(file_id != H5I_INVALID_HID && "H5OpenFile: Failed to open file!");
+	return file_id;
+}
+
+static hid_t H5OpenFileParallel(const char* filename, const char* mode, MPI_Comm comm) {
+	hid_t plist_id;
+	hid_t file_id;
+
+	int num_procs;
+	MPI_Comm_size(comm, &num_procs);
+
+	if(num_procs > 1) {
+		plist_id = H5Pcreate(H5P_FILE_ACCESS);
+		MPI_Info info = MPI_INFO_NULL;
+		MPI_Info_create(&info);
+		herr_t status = H5Pset_fapl_mpio(plist_id, comm, info);
+		ASSERT(status != HDF5_FAIL && "H5OpenFileParallel: Failed to set MPI-IO property list!");
+		MPI_Info_free(&info);
+	}
+
+	file_id = HDF5_FAIL;
+
+	if (strcmp(mode, "r") == 0) {
+		file_id = H5Fopen(filename, H5F_ACC_RDONLY, plist_id);
+	}
+	else if (strcmp(mode, "w") == 0) {
+		file_id = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, plist_id);
+	}
+	else if (strcmp(mode, "a") == 0) {
+		file_id = H5Fopen(filename, H5F_ACC_RDWR, plist_id);
+	}
+	else {
+		ASSERT(false && "H5OpenFile: Invalid mode!");
+	}
+
+	herr_t status = H5Pclose(plist_id);
+	ASSERT(status != HDF5_FAIL && "H5OpenFileParallel: Failed to close property list!");
+
+	return file_id;
+
+
+}
+
+/* Open an HDF5 file */
+H5FileInfo* H5OpenFile(const char* filename, const char* mode) {
+	H5FileInfo* h5file = CdamTMalloc(H5FileInfo, 1, HOST_MEM);
+
+	int num_procs;
+	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+
+	if(num_procs > 1) {
+		h5file->file_id = H5OpenFileParallel(filename, mode, MPI_COMM_WORLD);
+	}
+	else {
+		h5file->file_id = H5OpenFileSerial(filename, mode);
+	}
 
 	memcpy(h5file->filename, filename, strlen(filename));
 	return h5file;
@@ -285,4 +340,80 @@ void H5WriteDatasetVal(H5FileInfo* h5file, const char *dataset_name, index_type 
 #error "H5WriteDatasetVal: No value type is defined!"
 #endif
 }
+
+void H5WriteDatasetValIndexed(H5FileInfo* h5file, const char *dataset_name,
+														 index_type size, index_type* index,
+														 value_type* data) {
+	int num_procs;
+	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+	b32 mpi_enabled = num_procs > 1;
+	hid_t group_id;
+	i32 i = 0;
+	char buff[256];
+	index_type global_size = size;
+	if(mpi_enabled) {
+		MPI_Allreduce(MPI_IN_PLACE, &global_size, 1, MPI_INDEX_TYPE, MPI_SUM, MPI_COMM_WORLD);
+	}
+	hsize_t h5len = global_size;
+	hsize_t local_size = size;
+	hid_t mem_type_id;
+#if defined(USE_F32_VALUE)
+	mem_type_id = H5T_NATIVE_FLOAT;
+#elif defined(USE_F64_VALUE)
+	mem_type_id = H5T_NATIVE_DOUBLE;
+#else
+#error "H5WriteDatasetValIndexed: No value type is defined!"
+#endif
+	hid_t dataspace_id = H5Screate_simple(1, &h5len, NULL);
+	ASSERT(dataspace_id >= 0 && "H5WriteDatasetValIndexed: Failed to create dataspace!");
+	memset(buff, 0, 256);
+	while(dataset_name[i] != '\0') {
+		if (dataset_name[i] == '/') {
+			strncpy(buff, dataset_name, i);
+			if (H5GroupExist(h5file, buff)) {
+				group_id = H5Gopen(h5file->file_id, buff, H5P_DEFAULT);
+				/* printf("H5WriteDatasetValIndexed: Opened group %s\n", buff); */
+			}
+			else {
+				group_id = H5Gcreate(h5file->file_id, buff, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+				/* printf("H5WriteDatasetValIndexed: Created group %s\n", buff); */
+			}
+			ASSERT(group_id >= 0 && "H5WriteDatasetValIndexed: Failed to create group!");
+			H5Gclose(group_id);
+		}
+		i++;
+	}
+	hid_t dataset_id = H5Dcreate(h5file->file_id, dataset_name,
+															 mem_type_id, dataspace_id,
+															 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+	ASSERT(dataset_id >= 0 && "H5WriteDatasetValIndexed: Failed to create dataset!");
+
+	hsize_t* hindex = CdamTMalloc(hsize_t, size, HOST_MEM);
+	for (i = 0; i < size; i++) {
+		hindex[i] = index[i];
+	}
+
+	H5Sselect_elements(dataspace_id, H5S_SELECT_SET, size, (const hsize_t*)hindex);
+
+	hid_t plist = H5P_DEFAULT;
+	hid_t memspace_id = H5S_ALL;
+	if(mpi_enabled) {
+		plist = H5Pcreate(H5P_DATASET_XFER);
+		H5Pset_dxpl_mpio(plist, H5FD_MPIO_INDEPENDENT);
+
+		memspace_id = H5Screate_simple(1, &local_size, NULL);
+	}
+
+	H5Dwrite(dataset_id, mem_type_id, memspace_id, dataspace_id, plist, data);
+
+	if(mpi_enabled) {
+		H5Sclose(memspace_id);
+		H5Pclose(plist);
+	}
+
+	CdamFree(hindex, size * sizeof(hsize_t), HOST_MEM);
+	H5Sclose(dataspace_id);
+	H5Dclose(dataset_id);
+}
+
 __END_DECLS__

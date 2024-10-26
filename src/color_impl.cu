@@ -223,11 +223,11 @@ void GenerateRandomColorDevice(index_type* color, index_type n, index_type max_c
 }
 
 void GetMaxColorDevice(index_type* color, index_type n, index_type* max_color, Arena scratch) {
-	index_type* output = (index_type*)ArenaPush(sizeof(index_type), 1, &scratch, 0);
+	index_type* output = (index_type*)AllocInArena(sizeof(index_type), 1, &scratch, 0);
 	index_type* temp_buff = NULL;
 	size_t temp_buff_size = 0;
 	cub::DeviceReduce::Max(temp_buff, temp_buff_size, color, output, n);
-	temp_buff = (index_type*)ArenaPush(sizeof(byte), temp_buff_size, &scratch, 0);
+	temp_buff = (index_type*)AllocInArena(sizeof(byte), temp_buff_size, &scratch, 0);
 
 	cub::DeviceReduce::Max(temp_buff, temp_buff_size, color, output, n);
 	CdamMemcpy(max_color, output, sizeof(index_type), HOST_MEM, DEVICE_MEM);

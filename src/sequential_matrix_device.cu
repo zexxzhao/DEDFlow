@@ -198,12 +198,12 @@ __global__ void SeqMatAddValueBatchedDenseKernel(value_type* data, index_type nr
 // 	/* Generate the row index map of the batch */
 // 	index_type rnode = CdamLayoutNumOwned(rmap) + CdamLayoutNumGhosted(rmap);
 // 	index_type rcomp_offset = CdamLayoutComponentOffset(rmap);
-// 	index_type* row_index_map = (index_type*)ArenaPush(sizeof(index_type), batch_size * nshl * 6, &scratch, ARENA_FLAG_NONZERO);
+// 	index_type* row_index_map = (index_type*)AllocInArena(sizeof(index_type), batch_size * nshl * 6, &scratch, ARENA_FLAG_NONZERO);
 // 	GenerateBatchedIndexMapKernel<<<CEIL_DIV(batch_size * nshl, num_threads), num_threads, 0, stream>>>(batch_size, batch_index_ptr, ien, nshl, rnode, rcomp_offset, block_row_displ, block_row_count, row_index_map);
 // 	/* Generate the column index map of the batch */
 // 	index_type cnode = CdamLayoutNumOwned(cmap) + CdamLayoutNumGhosted(cmap);
 // 	index_type ccomp_offset = CdamLayoutComponentOffset(cmap);
-// 	index_type* col_index_map = (index_type*)ArenaPush(sizeof(index_type), batch_size * nshl * 6, &scratch, ARENA_FLAG_NONZERO);
+// 	index_type* col_index_map = (index_type*)AllocInArena(sizeof(index_type), batch_size * nshl * 6, &scratch, ARENA_FLAG_NONZERO);
 // 	GenerateBatchedIndexMapKernel<<<CEIL_DIV(batch_size * nshl, num_threads), num_threads, 0, stream>>>(batch_size, batch_index_ptr, ien, nshl, cnode, ccomp_offset, block_col_displ, block_col_count, col_index_map);
 // 	/* Add the value to the data */
 // 	SeqMatAddValueBatchedDenseKernel<<<num_blocks, num_threads, 0, stream>>>(data, nrow, ncol, batch_size, nshl, row_index_map, col_index_map, block_row_count, block_col_count, value, ldv, stride);

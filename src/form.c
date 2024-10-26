@@ -112,7 +112,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 	value_type* elem_F = NULL;
 	value_type* elem_J = NULL;
 
-	value_type* d_shlu = (value_type*)ArenaPush(sizeof(value_type), NQR * NSHL, &scratch, 0);
+	value_type* d_shlu = (value_type*)AllocInArena(sizeof(value_type), NQR * NSHL, &scratch, 0);
 	CdamMemcpy(d_shlu, h_shlu, NQR * NSHL * sizeof(value_type), DEVICE_MEM, HOST_MEM);
 
 
@@ -131,18 +131,18 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 
 		color_batch_index_ptr = color_batch_ind + color_batch_offset[c];
 
-		index_type* ien_color = (index_type*)ArenaPush(sizeof(index_type), color_batch_size * NSHL, &scratch, 0);
+		index_type* ien_color = (index_type*)AllocInArena(sizeof(index_type), color_batch_size * NSHL, &scratch, 0);
 
 		RestrictVec(ien_color, ien, color_batch_size, color_batch_index_ptr, NSHL * sizeof(index_type));
 
 
 		/* Calculate the element metrics */
-		elem_invJ = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * (3 * 3 + 1), &scratch, 0);
+		elem_invJ = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * (3 * 3 + 1), &scratch, 0);
 
 		GetElemInvJ3D(color_batch_size, color_batch_index_ptr,
 									ien, coord, elem_invJ, scratch);
 
-		shgradg = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * 3, &scratch, 0);
+		shgradg = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * 3, &scratch, 0);
 		GetShapeGrad(color_batch_size, elem_invJ, shgradg);
 
 		dgemmStridedBatched(BLAS_T, BLAS_N,
@@ -154,7 +154,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 							elem_invJ, 3, NSHL * 3,
 							color_batch_size);
 
-		buffer = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
+		buffer = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
 		/* Interpolate the field values */
 		RestrictAddVecStrided(buffer + 0 * NSHL, bs * NSHL, wgalpha_dptr + 0 * num_node, 3,
 													color_batch_size * NSHL, ien_color, 1);
@@ -173,7 +173,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
-		qr_wggradalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * 3 * bs, &scratch, 0);
+		qr_wggradalpha = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * 3 * bs, &scratch, 0);
 		dgemmStridedBatched(BLAS_N, BLAS_N,
 												3, bs, NSHL,
 												one,
@@ -183,7 +183,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 												qr_wggradalpha, 3, bs * 3,
 												color_batch_size);
 		 
-		qr_wgalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
+		qr_wgalpha = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
 		dgemm(BLAS_N, BLAS_N,
 					NQR, color_batch_size * bs, NSHL,
 					one,
@@ -205,7 +205,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 										 NSHL, sizeof(value_type),
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
-		qr_dwgalpha = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
+		qr_dwgalpha = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
 		dgemm(BLAS_T, BLAS_N,
 					NQR, color_batch_size * bs, NSHL,
 					one,
@@ -213,10 +213,9 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 					buffer, NSHL,
 					zero,
 					qr_dwgalpha, NQR);
-		ArenaPop(sizeof(value_type), color_batch_size * NSHL * bs, &scratch);
 
 		if(F) {
-			elem_F = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
+			elem_F = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
 			IntElemAssembly(color_batch_size, elem_invJ, shgradg,
 											qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
 											elem_F, NULL, opt, 0);
@@ -237,7 +236,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 													*/
 		}
 		if(J) {
-			elem_J = (value_type*)ArenaPush(sizeof(value_type), color_batch_size * NSHL * NSHL * bs * bs, &scratch, 0);
+			elem_J = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * NSHL * bs * bs, &scratch, 0);
 			IntElemAssembly(color_batch_size, elem_invJ, shgradg,
 											qr_wgalpha, qr_dwgalpha, qr_wggradalpha,
 											NULL, elem_J, opt, 0);

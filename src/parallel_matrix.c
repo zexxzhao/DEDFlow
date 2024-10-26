@@ -1,6 +1,6 @@
 #include "alloc.h"
 #include "blas.h"
-#include "commutor.h"
+#include "commu_graph.h"
 #include "indexing.h"
 #include "sequential_matrix.h"
 #include "parallel_matrix.h"
@@ -201,10 +201,10 @@ void CdamParMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta
 	}
 	
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
-		CdamCommutor* commu = (CdamCommutor*)CdamParMatCommutor(A);
+		CommuGraph* commu = (CommuGraph*)CdamParMatCommutor(A);
 		CdamLayout* map = CdamParMatRowMap(A);
-		CdamCommuForward(commu, y, map, sizeof(value_type));
-		CdamCommuBackward(commu, y, map, sizeof(value_type));
+		CommuGraphSyncForward(commu, y, sizeof(value_type));
+		CommuGraphSyncBackward(commu, y, sizeof(value_type));
 	}
 
 }
@@ -236,10 +236,10 @@ void CdamParMatMultTransposeAdd(value_type alpha, void* A, value_type* x, value_
 	SeqMatMultTransposeAdd(alpha, CdamParMatGG(A), x + nrow_offset[2], 1.0, y + ncol_offset[2]);
 
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
-		CdamCommutor* commu = (CdamCommutor*)CdamParMatCommutor(A);
+		CommuGraph* commu = (CommuGraph*)CdamParMatCommutor(A);
 		CdamLayout* map = CdamParMatColMap(A);
-		CdamCommuForward(commu, y, map, sizeof(value_type));
-		CdamCommuBackward(commu, y, map, sizeof(value_type));
+		CommuGraphSyncForward(commu, y, sizeof(value_type));
+		CommuGraphSyncBackward(commu, y, sizeof(value_type));
 	}
 }
 
@@ -289,10 +289,10 @@ void CdamParMatGetDiag(void* A, value_type* diag, index_type bs) {
 	SeqMatGetDiag(CdamParMatSS(A), diag + bs * bs * nrow_exclusive, bs);
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
 		SeqMatGetDiag(CdamParMatGG(A), diag + bs * bs * (nrow_exclusive + nrow_shared), bs);
-		CdamCommutor* commu = (CdamCommutor*)CdamParMatCommutor(A);
+		CommuGraph* commu = (CommuGraph*)CdamParMatCommutor(A);
 		CdamLayout* map = CdamParMatRowMap(A);
-		CdamCommuForward(commu, diag, map, bs * bs * (int)sizeof(value_type));
-		CdamCommuBackward(commu, diag, map, bs * bs * (int)sizeof(value_type));
+		CommuGraphSyncForward(commu, diag, bs * bs * sizeof(value_type));
+		CommuGraphSyncBackward(commu, diag, bs * bs * sizeof(value_type));
 	}
 }
 
@@ -314,8 +314,8 @@ void CdamParMatAddElemValueBatched(void* A,
 	ncol_offset[2] = ncol_offset[1] + CdamLayoutNumShared(cmap);
 	ncol_offset[3] = ncol_offset[2] + CdamLayoutNumGhosted(cmap);
 
-	byte* row_mask = (byte*)ArenaPush(sizeof(byte), nelem, &scratch, 0);
-	byte* col_mask = (byte*)ArenaPush(sizeof(byte), nelem, &scratch, 0);
+	byte* row_mask = (byte*)AllocInArena(sizeof(byte), nelem, &scratch, 0);
+	byte* col_mask = (byte*)AllocInArena(sizeof(byte), nelem, &scratch, 0);
 
 	/* Add the values by submatrices */
 	GenMaskByRange(nelem, nshl, ien, row_mask, nrow_offset[0], nrow_offset[1], scratch);

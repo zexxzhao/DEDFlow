@@ -13,7 +13,7 @@ void CdamLayoutCreate(CdamLayout** layout, void* config) {
 	*layout = CdamTMalloc(CdamLayout, 1, HOST_MEM);
 	CdamMemset(*layout, 0, sizeof(CdamLayout), HOST_MEM);
 
-	for(index_type i = 0; i < CDAM_MAX_NUM_COMPONENTS + 1; i++) {
+	for(index_type i = 0; i < CDAM_MAX_NUM_COMPONENTS; i++) {
 		CdamLayoutComponentOffset(*layout)[i] = 0;
 	}
 	CdamLayoutComponentOffset(*layout)[0] = 0;
@@ -34,7 +34,7 @@ void CdamLayoutSetup(CdamLayout* layout, void* mesh) {
 	index_type n_shared = n_owned - mesh3d->num_exclusive_node;
 	index_type n_ghost = CdamMeshNumNode(mesh3d) - n_owned;
 
-	CdamLayoutNumExclusive(layout) = n_owned - n_shared;
+	CdamLayoutNumExclusive(layout) = mesh3d->num_exclusive_node;
 	CdamLayoutNumShared(layout) = n_shared;
 	CdamLayoutNumGhosted(layout) = n_ghost;
 

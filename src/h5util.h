@@ -57,6 +57,9 @@ void H5WriteDatasetf64(H5FileInfo* h5file, const char *dataset_name, index_type 
 void H5WriteDatasetInd(H5FileInfo* h5file, const char *dataset_name, index_type len, const index_type* data);
 void H5WriteDatasetVal(H5FileInfo* h5file, const char *dataset_name, index_type len, const value_type* data);
 
+void H5WriteDatasetValIndexed(H5FileInfo* h5file, const char *dataset_name, index_type size,
+														 index_type* index, value_type* data);
+
 __END_DECLS__
 
 #endif // __H5UTIL_H__

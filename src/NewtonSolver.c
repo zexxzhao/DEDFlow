@@ -86,7 +86,7 @@ void CdamNewtonSolverConfig(CdamNewtonSolver *solver, void* config) {
 	cJSON *json = (cJSON*)config;
 	solver->rtol = JSONGetItem(json, "RelativeTolerance")->valuedouble;
 	solver->atol = JSONGetItem(json, "AbsoluteTolerance")->valuedouble;
-	solver->maxit = JSONGetItem(json, "MaxIterations")->valueint;
+	solver->maxit = JSONGetItem(json, "MaxIteration")->valueint;
 	solver->relaxation = JSONGetItem(json, "RelaxationFactor")->valuedouble;
 
 }

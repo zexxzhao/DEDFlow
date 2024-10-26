@@ -103,41 +103,51 @@ void CdamPrefetch(void** ptr, size_t count, MemType dst_location) {
 }
 #endif
 
-void ArenaCreate(size_t size, MemType type, Arena** arena) {
+void ArenaCreate(size_t h_size, size_t d_size, Arena** arena) {
 	*arena = CdamTMalloc(Arena, 1, HOST_MEM);
-	(*arena)->mem_type = type;
-	(*arena)->beg = CdamTMalloc(byte, size, type);
-	(*arena)->end = (*arena)->beg + size;
-	(*arena)->ctx = NULL;
+	(*arena)->h_beg = CdamTMalloc(byte, h_size, HOST_MEM);
+	(*arena)->h_end = (*arena)->h_beg + h_size;
+	(*arena)->d_beg = CdamTMalloc(byte, d_size, DEVICE_MEM);
+	(*arena)->d_end = (*arena)->d_beg + d_size;
 }
 
 void ArenaDestroy(Arena* arena) {
-	byte* beg = arena->beg;
-	byte* end = arena->end;
-	CdamFree(beg, end - beg, arena->mem_type);
+	byte* h_beg = arena->h_beg;
+	byte* h_end = arena->h_end;
+	CdamFree(h_beg, h_end - h_beg, HOST_MEM);
+	byte* d_beg = arena->d_beg;
+	byte* d_end = arena->d_end;
+	CdamFree(d_beg, d_end - d_beg, DEVICE_MEM);
 	CdamFree(arena, sizeof(Arena), HOST_MEM);
 }
 
-void* ArenaPush(size_t elem_size, size_t count, void* ctx, int flag) {
-	Arena* arena = (Arena*)ctx;
-	ptrdiff_t available = arena->end - arena->beg;
+void* AllocInArena(size_t elem_size, size_t count, Arena* scratch, int flag) {
+	byte** beg, **end, *p;
+	ptrdiff_t available;
+	MemType mem_type;
+
+	if(flag & ARENA_ON_HOST) {
+		beg = &scratch->h_beg;
+		end = &scratch->h_end;
+		mem_type = HOST_MEM;
+	} else {
+		beg = &scratch->d_beg;
+		end = &scratch->d_end;
+		mem_type = DEVICE_MEM;
+	}
+	available = *end - *beg;
 
 	if(available < 0 || count > available / elem_size) {
-		if(flag & ARENA_FLAG_SOFTFAIL) {
+		if(flag & ARENA_SOFTFAIL) {
 			return NULL;
 		}
 		ABORT("Out of memory");
 	}
 
-	byte* p = arena->beg;
-	arena->beg += elem_size * count;
-	return flag & ARENA_FLAG_NONZERO ? p : CdamMemset(p, 0, elem_size * count, arena->mem_type);
-}
+	p = *beg;
+	*beg = p + elem_size * count;
 
-void ArenaPop(size_t elem_size, size_t count, void* ctx) {
-	Arena* arena = (Arena*)ctx;
-	byte* p = (byte*)arena->beg;
-	arena->beg = p - elem_size * count;
+	return flag & ARENA_NONZERO ? p : CdamMemset(p, 0, elem_size * count, mem_type);
 }
 
 

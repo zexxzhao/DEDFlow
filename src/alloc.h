@@ -70,19 +70,22 @@ void CdamPrefetch(void** ptr, size_t count, MemType dst_location);
 
 typedef struct Arena Arena;
 struct Arena {
-	MemType mem_type;
-	byte* beg;
-	byte* end;
+	byte* h_beg;
+	byte* h_end;
+	byte* d_beg;
+	byte* d_end;
 	void* ctx;
 };
 
-void ArenaCreate(size_t size, MemType mem_type, Arena** arena); 
+void ArenaCreate(size_t h_size, size_t d_size, Arena** arena); 
 void ArenaDestroy(Arena* arena);
 
-#define ARENA_FLAG_NONZERO (1 << 0)
-#define ARENA_FLAG_SOFTFAIL (1 << 1)
-void* ArenaPush(size_t elem_size, size_t count, void* arena, int flag);
-void ArenaPop(size_t elem_size, size_t count, void* arena);
+#define ARENA_DEFAULT (0) /* Default is on device and zeroed */
+#define ARENA_NONZERO (1 << 0)
+#define ARENA_ON_HOST (1 << 1)
+#define ARENA_SOFTFAIL (1 << 2)
+void* AllocInArena(size_t elem_size, size_t count, Arena* arena, int flag);
+// void ArenaPop(size_t elem_size, size_t count, void* arena);
 
 __END_DECLS__
 

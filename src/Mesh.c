@@ -67,7 +67,7 @@ static void LoadCoord(H5FileInfo* h5f, const char* group_name, index_type num_no
 	}
 
 	H5ReadDatasetValIndexed(h5f, dataset_name, num_node * 3, hindex, coord);
-	CdamFree(index, sizeof(index_type) * num_node, HOST_MEM);
+	CdamFree(hindex, sizeof(index_type) * num_node * 3, HOST_MEM);
 }
 
 static void LoadElementConnectivity(H5FileInfo* h5f, const char* group_name, index_type num[], index_type** ien) {
@@ -302,17 +302,28 @@ static int QsortCmpNpart(const void* a, const void* b) {
 	index_type ia = *(const index_type*)a;
 	index_type ib = *(const index_type*)b;
 	
-	b32 is_owned_a = npart[ia] == rank ? 0 : 1;
-	b32 is_owned_b = npart[ib] == rank ? 0 : 1;
+	int is_owned_a = npart[ia] == rank ? 0 : 1;
+	int is_owned_b = npart[ib] == rank ? 0 : 1;
+
+	int is_shared_a = is_shared[ia] > 1 ? 1 : 0;
+	int is_shared_b = is_shared[ib] > 1 ? 1 : 0;
 
 	if(is_owned_a != is_owned_b) {
 		return is_owned_a - is_owned_b;
 	}
-	else if(is_owned_a) {
-		return is_shared[ia] - is_shared[ib];
+	else if(is_owned_a == 0) {
+		if(is_shared_a != is_shared_b) {
+			return is_shared_a - is_shared_b;
+		}
+		else {
+			return (ia > ib) - (ia < ib);
+		}
+	}
+	else if(npart[ia] != npart[ib]) {
+		return (npart[ia] > npart[ib]) - (npart[ia] < npart[ib]);
 	}
 	else {
-		return (npart[ia] > npart[ib]) - (npart[ia] < npart[ib]);
+		return (ia > ib) - (ia < ib);
 	}
 	
 }
@@ -434,6 +445,8 @@ static void ShuffleElemByPartition(index_type nelem, index_type*ien, index_type 
 		}
 	}
 
+	CdamFree(ien_copy, sizeof(index_type) * buffer_size, HOST_MEM);
+
 }
 
 static index_type DistributeElem(index_type nelem, index_type* ien, index_type* epart, index_type* mesh_ien, index_type nshl) {
@@ -443,14 +456,14 @@ static index_type DistributeElem(index_type nelem, index_type* ien, index_type* 
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	index_type *send_count = CdamTMalloc(index_type, size, HOST_MEM);
 	index_type *send_displ = CdamTMalloc(index_type, size, HOST_MEM);
+	CdamMemset(send_count, 0, sizeof(index_type) * size, HOST_MEM);
+	CdamMemset(send_displ, 0, sizeof(index_type) * size, HOST_MEM);
 	if(rank == 0) {
-		ShuffleElemByPartition(nelem, ien, nshl, epart);
-		CdamMemset(send_count, 0, sizeof(index_type) * size, HOST_MEM);
 		for(i = 0; i < nelem; ++i) {
 			send_count[epart[i]]++;
 		}
 		for(i = 0; i < size; ++i) {
-			send_count[i] *= nshl * sizeof(index_type);
+			send_count[i] *= nshl;
 		}
 		send_displ[0] = 0;
 		for(i = 0; i < size - 1; i++) {
@@ -458,15 +471,21 @@ static index_type DistributeElem(index_type nelem, index_type* ien, index_type* 
 		}
 	}
 
-	MPI_Bcast(send_count, sizeof(index_type) * size, MPI_CHAR, 0, MPI_COMM_WORLD);
+	MPI_Bcast(send_count, size, MPI_INDEX_TYPE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(send_displ, size, MPI_INDEX_TYPE, 0, MPI_COMM_WORLD);
+
 	if(mesh_ien) {
-		MPI_Scatterv(ien, send_count, send_displ, MPI_CHAR,
-								 mesh_ien, send_count[rank], MPI_CHAR,
+		if(rank == 0) {
+			ShuffleElemByPartition(nelem, ien, nshl, epart);
+		}
+		MPI_Scatterv(ien, send_count, send_displ, MPI_INDEX_TYPE,
+								 mesh_ien, send_count[rank], MPI_INDEX_TYPE,
 								 0, MPI_COMM_WORLD);
 	}
+	index_type nelem_local = send_count[rank] / nshl;
 	CdamFree(send_count, sizeof(index_type) * size, HOST_MEM);
 	CdamFree(send_displ, sizeof(index_type) * size, HOST_MEM);
-	return send_count[rank] / (nshl * sizeof(index_type));
+	return nelem_local;
 }
 
 static void DistributeMesh(CdamMesh* mesh, SerialMesh* smesh) {
@@ -476,7 +495,6 @@ static void DistributeMesh(CdamMesh* mesh, SerialMesh* smesh) {
 	mesh->num[1] = DistributeElem(smesh->num[1], smesh->ien, smesh->epart, NULL, 4);
 	mesh->num[2] = DistributeElem(smesh->num[2], smesh->ien + smesh->num[1] * 4, smesh->epart + smesh->num[1], NULL, 6);
 	mesh->num[3] = DistributeElem(smesh->num[3], smesh->ien + smesh->num[1] * 4 + smesh->num[2] * 6, smesh->epart + smesh->num[1] + smesh->num[2], NULL, 8);
-
 	CdamMeshIEN(mesh) = CdamTMalloc(index_type, mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, HOST_MEM);
 
 	DistributeElem(smesh->num[1], smesh->ien, smesh->epart, CdamMeshIEN(mesh), 4);
@@ -486,33 +504,51 @@ static void DistributeMesh(CdamMesh* mesh, SerialMesh* smesh) {
 }
 
 static void GenerateL2GMapExterior(CdamMesh* mesh, SerialMesh* smesh) {
-	index_type i;
 	/* Count the number of distinct nodes */
 	mesh->num[0] = CountDistinctEntry(CdamMeshIEN(mesh), mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, NULL);
 	mesh->nodal_map_l2g_exterior = CdamTMalloc(index_type, mesh->num[0], HOST_MEM);
 	/* Remove duplicate nodes and store in buffer */
 	CountDistinctEntry(CdamMeshIEN(mesh), mesh->num[1] * 4 + mesh->num[2] * 6 + mesh->num[3] * 8, mesh->nodal_map_l2g_exterior);
+}
+
+static void AdjustL2GMapExterior(CdamMesh* mesh, SerialMesh* smesh) {
+	index_type i;
+	int rank = mesh->rank;
 
 	/* Adjust local node indices such that 
 	 * if ownership differs, nodes owned by the current process have lower indices
 	 * if both are owned locally, nodes with exclusive ownership have lower indices
 	 * if both are ghosted, nodes with lower global indices have lower indices 
 	 */
-	index_type* node_is_ghosted = CdamTMalloc(index_type, smesh->num[0], HOST_MEM);
-	CdamMemset(node_is_ghosted, 0, sizeof(index_type) * smesh->num[0], HOST_MEM);
+	index_type* node_is_shared = CdamTMalloc(index_type, smesh->num[0], HOST_MEM);
+	CdamMemset(node_is_shared, 0, sizeof(index_type) * smesh->num[0], HOST_MEM);
 	index_type  gid;
 	for(i = 0; i < mesh->num[0]; i++) {
 		gid = mesh->nodal_map_l2g_exterior[i];
-		if(smesh->npart[gid] != mesh->rank) {
-			node_is_ghosted[i] = 1;
+		node_is_shared[gid] ++;
+	}
+	MPI_Allreduce(MPI_IN_PLACE, node_is_shared, smesh->num[0], MPI_INDEX_TYPE, MPI_SUM, mesh->comm);
+	mesh->num_exclusive_node = 0;
+	for(i = 0; i < mesh->num[0]; i++) {
+		gid = mesh->nodal_map_l2g_exterior[i];
+		if(node_is_shared[gid] == 1 && smesh->npart[gid] == rank) {
+			mesh->num_exclusive_node++;
 		}
 	}
-	MPI_Allreduce(MPI_IN_PLACE, node_is_ghosted, mesh->num[0], MPI_BYTE, MPI_MAX, mesh->comm);
-	struct QsortCtx ctx = {node_is_ghosted, smesh->npart, mesh->rank};
+	struct QsortCtx ctx = {node_is_shared, smesh->npart, mesh->rank};
 	qsort_ctx = &ctx;
 	qsort(mesh->nodal_map_l2g_exterior, mesh->num[0], sizeof(index_type), QsortCmpNpart);
+	if(0) {
+		char filename[64];
+		sprintf(filename, "l2g_exterior_%d.txt", mesh->rank);
+		FILE* fp = fopen(filename, "w");
+		for(i = 0; i < mesh->num[0]; i++) {
+			fprintf(fp, "%d\n", mesh->nodal_map_l2g_exterior[i]);
+		}
+		fclose(fp);
+	}
 
-	CdamFree(node_is_ghosted, sizeof(index_type) * smesh->num[0], HOST_MEM);
+	CdamFree(node_is_shared, sizeof(index_type) * smesh->num[0], HOST_MEM);
 
 	/* Build the global to local map */
 	index_type* g2l = CdamTMalloc(index_type, mesh->num[0] * 2, HOST_MEM);
@@ -557,82 +593,169 @@ static void GenerateL2GMapInterior(CdamMesh* mesh, SerialMesh* smesh) {
 	/* Ghosted nodes are tricky, since the map relies on the local indices of ghosted nodes 
 	 * in their owner processors. */
 	int* send_count = CdamTMalloc(int, mesh->num_procs, HOST_MEM);
-	int* send_displ = CdamTMalloc(int, mesh->num_procs, HOST_MEM);
+	int* send_displ = CdamTMalloc(int, mesh->num_procs + 1, HOST_MEM);
 	int* recv_count = CdamTMalloc(int, mesh->num_procs, HOST_MEM);
-	int* recv_displ = CdamTMalloc(int, mesh->num_procs, HOST_MEM);
+	int* recv_displ = CdamTMalloc(int, mesh->num_procs + 1, HOST_MEM);
+
+	CdamMemset(send_count, 0, sizeof(int) * mesh->num_procs, HOST_MEM);
+	CdamMemset(send_displ, 0, sizeof(int) * mesh->num_procs + 1, HOST_MEM);
+	CdamMemset(recv_count, 0, sizeof(int) * mesh->num_procs, HOST_MEM);
+	CdamMemset(recv_displ, 0, sizeof(int) * mesh->num_procs + 1, HOST_MEM);
 
 	/* Count the ghosted nodes by ownership/partition */
 	for(i = 0; i < mesh->num[0] - num_node_owned; ++i) {
-		send_count[npart[l2g_exterior[i]]] += sizeof(index_type);
+		send_count[npart[l2g_exterior[num_node_owned + i]]]++;
 	}
-	MPI_Alltoall(send_count, sizeof(int), MPI_CHAR,
-							 recv_count, sizeof(int), MPI_CHAR, mesh->comm);
+	MPI_Alltoall(send_count, 1, MPI_INT,
+							 recv_count, 1, MPI_INT, mesh->comm);
 
-	for(i = 1; i < mesh->num_procs; ++i) {
-		send_displ[i] = send_displ[i - 1] + send_count[i - 1]; 
-		recv_displ[i] = recv_displ[i - 1] + recv_count[i - 1]; 
+	for(i = 0; i < mesh->num_procs; ++i) {
+		send_displ[i + 1] = send_displ[i] + send_count[i]; 
+		recv_displ[i + 1] = recv_displ[i] + recv_count[i]; 
+	}
+
+	int j;
+	for(i = 0; i < mesh->num_procs; i++) {
+		for(j = 0; j < send_count[i]; j++) {
+			if(npart[l2g_exterior[num_node_owned + send_displ[i] + j]] != i) {
+				fprintf(stderr, "Error: ghosted node %d is not owned by processor %d.\n", l2g_exterior[num_node_owned + send_displ[i] + j], i);
+				MPI_Abort(MPI_COMM_WORLD, 1);
+			}
+		}
 	}
 
 	/* Send the global nodal indices to their owner processors to get the local nodal indices */
-	int recv_buffer_size = recv_displ[mesh->num_procs - 1] + recv_count[mesh->num_procs - 1];
-	index_type* node_index_buffer = CdamTMalloc(index_type, recv_buffer_size / sizeof(int), HOST_MEM);
+	int recv_buffer_size = recv_displ[mesh->num_procs];
+	index_type* node_index_buffer = CdamTMalloc(index_type, recv_buffer_size, HOST_MEM);
 
-	MPI_Alltoallv(l2g_exterior + num_node_owned, send_count, send_displ, MPI_CHAR,
-								node_index_buffer, recv_count, recv_displ, MPI_CHAR, mesh->comm);
+	MPI_Alltoallv(l2g_exterior + num_node_owned, send_count, send_displ, MPI_INDEX_TYPE,
+								node_index_buffer, recv_count, recv_displ, MPI_INDEX_TYPE, mesh->comm);
+
+	if(1) {
+		printf("(%d) send_count: %d %d %d %d\n", rank, send_count[0], send_count[1], send_count[2], send_count[3]);
+		printf("(%d) send_displ: %d %d %d %d %d\n", rank, send_displ[0], send_displ[1], send_displ[2], send_displ[3], send_displ[4]);
+		printf("(%d) recv_count: %d %d %d %d\n", rank, recv_count[0], recv_count[1], recv_count[2], recv_count[3]);
+		printf("(%d) recv_displ: %d %d %d %d %d\n", rank, recv_displ[0], recv_displ[1], recv_displ[2], recv_displ[3], recv_displ[4]);
+	}
 
 	/* Get the local nodal indices */
 	void* p;
-	for(i = 0; i < recv_buffer_size / sizeof(index_type); i++) {
-		p = bsearch(node_index_buffer + i, l2g_exterior,
-								mesh->num[0] - num_node_owned, sizeof(index_type),
+	for(i = 0; i < recv_buffer_size; i++) {
+		p = bsearch(node_index_buffer + i,
+								l2g_exterior + mesh->num_exclusive_node,
+								num_node_owned - mesh->num_exclusive_node, sizeof(index_type),
 								QsortCmpIndexType);
-
-		node_index_buffer[i] = (index_type)(((index_type*)p) - l2g_exterior);
+		if(p && *(index_type*)p == node_index_buffer[i]) {
+			node_index_buffer[i] = (index_type)(((index_type*)p) - l2g_exterior);
+			ASSERT(node_index_buffer[i] >= 0 && node_index_buffer[i] < num_node_owned && "Invalid global node index.\n");
+		 	node_index_buffer[i] += mesh->nodal_offset[rank];
+			// break;
+		}
+		else {
+			fprintf(stderr, "Error: global node index %d not found in processor %d within [0, %d].\n", node_index_buffer[i], rank, num_node_owned);
+			MPI_Abort(MPI_COMM_WORLD, 1);
+		}
 	}
+	MPI_Barrier(mesh->comm);
 
 	/* Fetch the local nodal indices of the ghosted nodes */
-	MPI_Alltoallv(node_index_buffer, recv_count, recv_displ, MPI_CHAR,
+	MPI_Alltoallv(node_index_buffer, recv_count, recv_displ, MPI_INDEX_TYPE,
 								mesh->nodal_map_l2g_interior + num_node_owned,
-								send_count, send_displ, MPI_CHAR, mesh->comm);
+								send_count, send_displ, MPI_INDEX_TYPE, mesh->comm);
 
-	index_type part;
-	for(i = 0; i < mesh->num[0] - num_node_owned; ++i) {
-		part = npart[mesh->nodal_map_l2g_interior[num_node_owned + i]];
-		mesh->nodal_map_l2g_interior[num_node_owned + i] += mesh->nodal_offset[part];
+	// index_type part;
+	// for(i = 0; i < mesh->num[0] - num_node_owned; ++i) {
+	// 	part = npart[mesh->nodal_map_l2g_exterior[num_node_owned + i]];
+	// 	mesh->nodal_map_l2g_interior[num_node_owned + i] += mesh->nodal_offset[part];
+	// }
+
+	if(0) {
+		char filename[64];
+		sprintf(filename, "l2g_interior_%d.txt", mesh->rank);
+		FILE* fp = fopen(filename, "w");
+		for(i = 0; i < mesh->num[0]; i++) {
+			fprintf(fp, "%d\n", mesh->nodal_map_l2g_interior[i]);
+		}
+		fclose(fp);
+
+		if(0 && rank == 0) {
+			printf("Second: on rank 0 node_index_buffer[%d]=%d %d\n", 526, node_index_buffer[526], npart[node_index_buffer[526]]);
+		}
+
+		for(i = 0; i < mesh->num_procs; i++) {
+			for(j = 0; j < send_count[i]; j++) {
+				index_type gid = mesh->nodal_map_l2g_interior[num_node_owned + send_displ[i] + j];
+				// ASSERT(mesh->nodal_offset[i] <= gid && gid < mesh->nodal_offset[i + 1] && "Invalid global node index.\n");
+				if(!(mesh->nodal_offset[i] <= gid && gid < mesh->nodal_offset[i + 1])) {
+					fprintf(stderr, "Error (%d) l2g[%d+%d+%d]=%d should be in %d\n", rank, num_node_owned, send_displ[i], j, gid, i);
+					MPI_Abort(MPI_COMM_WORLD, 1);
+				}
+			}
+		}
 	}
 
-
 	CdamMemset(send_count, 0, sizeof(int) * mesh->num_procs, HOST_MEM);
-	CdamMemset(send_displ, 0, sizeof(int) * mesh->num_procs, HOST_MEM);
+	CdamMemset(send_displ, 0, sizeof(int) * mesh->num_procs + 1, HOST_MEM);
 	CdamMemset(recv_count, 0, sizeof(int) * mesh->num_procs, HOST_MEM);
-	CdamMemset(recv_displ, 0, sizeof(int) * mesh->num_procs, HOST_MEM);
+	CdamMemset(recv_displ, 0, sizeof(int) * mesh->num_procs + 1, HOST_MEM);
 
+	CdamFree(node_index_buffer, recv_buffer_size * sizeof(index_type), HOST_MEM);
 	CdamFree(send_count, mesh->num_procs * sizeof(int), HOST_MEM);
-	CdamFree(send_displ, mesh->num_procs * sizeof(int), HOST_MEM);
+	CdamFree(send_displ, mesh->num_procs * sizeof(int) + 1, HOST_MEM);
 	CdamFree(recv_count, mesh->num_procs * sizeof(int), HOST_MEM);
-	CdamFree(recv_displ, mesh->num_procs * sizeof(int), HOST_MEM);
+	CdamFree(recv_displ, mesh->num_procs * sizeof(int) + 1, HOST_MEM);
 }
 
 void CdamMeshLoad(CdamMesh* mesh, H5FileInfo* h5f, const char* group_name) {
 	SerialMesh smesh;
-	index_type* npart = NULL, *epart = NULL;
+	CdamMemset(&smesh, 0, sizeof(SerialMesh), HOST_MEM);
+	/* Read element connectivity on rank 0 */
 	ReadSerialMesh(h5f, group_name, &smesh); 
 
-	MPI_Bcast(smesh.num, sizeof(index_type) * 4, MPI_CHAR, 0, mesh->comm);
-	npart = CdamTMalloc(index_type, smesh.num[0], HOST_MEM);
+	MPI_Bcast(smesh.num, 4, MPI_INDEX_TYPE, 0, mesh->comm);
+	smesh.npart = CdamTMalloc(index_type, smesh.num[0], HOST_MEM);
 	if(mesh->rank == 0) {
-		epart = CdamTMalloc(index_type, smesh.num[1] + smesh.num[2] + smesh.num[3], HOST_MEM);
+		smesh.epart = CdamTMalloc(index_type, smesh.num[1] + smesh.num[2] + smesh.num[3], HOST_MEM);
 	}
-	PartitionMesh(&smesh, epart, npart);
-	MPI_Bcast(smesh.npart, sizeof(index_type) * smesh.num[0], MPI_CHAR, 0, MPI_COMM_WORLD);
 
+	/* Partition the mesh */
+	PartitionMesh(&smesh, smesh.epart, smesh.npart);
+	/* Broadcast the partition information of nodes */
+	MPI_Bcast(smesh.npart, smesh.num[0], MPI_INDEX_TYPE, 0, MPI_COMM_WORLD);
+
+	/* Generate the nodal offset */
+	mesh->nodal_offset = CdamTMalloc(index_type, mesh->num_procs + 1, HOST_MEM);
+	CdamMemset(mesh->nodal_offset, 0, sizeof(index_type) * (mesh->num_procs + 1), HOST_MEM);
+	index_type i;
+	for(i = 0; i < smesh.num[0]; ++i) {
+		mesh->nodal_offset[smesh.npart[i] + 1]++;
+	}
+	for(i = 1; i < mesh->num_procs + 1; ++i) {
+		mesh->nodal_offset[i] += mesh->nodal_offset[i - 1];
+	}
+
+
+	/* Distribute the elements, including tet, prism, and hex */
 	DistributeMesh(mesh, &smesh);
 	GenerateL2GMapExterior(mesh, &smesh);
+	AdjustL2GMapExterior(mesh, &smesh);
+	if(0) {
+		printf("(%d) # of elem: %d %d %d\n", mesh->rank, mesh->num[1], mesh->num[2], mesh->num[3]);
+		index_type num_node_owned = mesh->nodal_offset[mesh->rank + 1] - mesh->nodal_offset[mesh->rank];
+		index_type num_node_exclusive = mesh->num_exclusive_node;
+		index_type num_node_ghosted = mesh->num[0] - num_node_owned;
+		printf("(%d) # of node: %d = %d + %d + %d\n", mesh->rank, mesh->num[0], num_node_exclusive, num_node_owned - num_node_exclusive, num_node_ghosted);
+	}
 	GenerateL2GMapInterior(mesh, &smesh);
 
 	/* Read nodes */
 	CdamMeshCoord(mesh) = CdamTMalloc(value_type, mesh->num[0] * 3, HOST_MEM);
 	LoadCoord(h5f, group_name, mesh->num[0], mesh->nodal_map_l2g_exterior, CdamMeshCoord(mesh));
+
+	/* Free memory */
+	CdamFree(smesh.ien, sizeof(index_type) * (smesh.num[1] * 4 + smesh.num[2] * 6 + smesh.num[3] * 8), HOST_MEM);
+	CdamFree(smesh.epart, sizeof(index_type) * (smesh.num[1] + smesh.num[2] + smesh.num[3]), HOST_MEM);
+	CdamFree(smesh.npart, sizeof(index_type) * smesh.num[0], HOST_MEM);
 }
 
 
@@ -879,7 +1002,7 @@ static void MoveToDevice(void** ptr, size_t size) {
 		return;
 	}
 	void* ptr_dev = CdamTMalloc(byte, size, DEVICE_MEM);
-	CdamMemcpy(ptr_dev, *ptr, size, HOST_MEM, DEVICE_MEM);
+	CdamMemcpy(ptr_dev, *ptr, size, DEVICE_MEM, HOST_MEM);
 	CdamFree(*ptr, size, HOST_MEM);
 	*ptr = ptr_dev;
 }
@@ -893,7 +1016,7 @@ void CdamMeshPrefetch(CdamMesh *mesh) {
 	MoveToDevice((void**)&(mesh->coord), sizeof(value_type) * num_node * 3);
 	MoveToDevice((void**)&(mesh->ien), sizeof(index_type) * (num_tet * 4 + num_prism * 6 + num_hex * 8));
 
-	MoveToDevice((void**)&(mesh->nodal_offset), sizeof(index_type) * (mesh->num_procs + 1));
+	// MoveToDevice((void**)&(mesh->nodal_offset), sizeof(index_type) * (mesh->num_procs + 1));
 	MoveToDevice((void**)&(mesh->nodal_map_l2g_interior), sizeof(index_type) * num_node);
 	MoveToDevice((void**)&(mesh->nodal_map_l2g_exterior), sizeof(index_type) * num_node);
 
