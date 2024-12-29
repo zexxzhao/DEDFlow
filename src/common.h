@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <execinfo.h>
 
 #ifdef CDAM_USE_CUDA
 #include <cuda_runtime.h>
@@ -101,6 +102,22 @@ typedef int32_t b32;
  */
 #define sizeof(...) ((index_type)sizeof(__VA_ARGS__))
 
+static inline void PrintStackTrace(void) {
+	void* buffer[128];
+	char** strs;
+	int size, i;
+
+	size = backtrace(buffer, sizeof(buffer) / sizeof(void*));
+	strs = backtrace_symbols(buffer, size);
+	if(strs) {
+		for(i = 0; i < size; i++) {
+			printf("%s\n", strs[i]);
+		}
+	}
+	free(strs);
+}
+
+
 #if defined(NDEBUG)
 #	define ASSERT(expr) /* empty */
 #elif defined(__GNUC__) // GCC, Clang
@@ -135,6 +152,7 @@ typedef int32_t b32;
 	_a < _b ? _a : _b; \
 })
 
+#define MAX_NUM_PROCS (1024)
 
 
 typedef enum cudaMemcpyKind MemCopyKind;
@@ -154,7 +172,6 @@ enum GlobalContextType {
 typedef enum GlobalContextType GlobalContextType;
 
 void* GlobalContextGet(GlobalContextType type); 
-
 
 
 #ifdef CDAM_USE_CUDA

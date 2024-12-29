@@ -45,7 +45,9 @@ struct CdamParMat {
 	CdamLayout* col_map;
 
 	void* commutor;
-	void* submat[3][3];
+	void* submat[3 * 3];
+
+	void* ctx;
 	
 	CdamParMatOp op[1];
 };
@@ -71,17 +73,19 @@ typedef struct CdamParMat CdamParMat;
 #define CdamParMatNumColOwned(A) (CdamParMatNumColExclusive(A) + CdamParMatNumColShared(A))
 #define CdamParMatRowMap(A) (((CdamParMat*)(A))->row_map)
 #define CdamParMatColMap(A) (((CdamParMat*)(A))->col_map)
+#define CdamParMatCommuGraph(A) (((CdamParMat*)(A))->commutor)
+#define CdamParMatCtx(A) (((CdamParMat*)(A))->ctx)
+#define CdamParMatOp(A) (((CdamParMat*)(A))->op)
 
-#define CdamParMatCommutor(A) (((CdamParMat*)(A))->commutor)
-#define CdamParMatII(A) (((CdamParMat*)(A))->submat[0][0])
-#define CdamParMatIS(A) (((CdamParMat*)(A))->submat[0][1])
-#define CdamParMatIG(A) (((CdamParMat*)(A))->submat[0][2])
-#define CdamParMatSI(A) (((CdamParMat*)(A))->submat[1][1])
-#define CdamParMatSS(A) (((CdamParMat*)(A))->submat[1][1])
-#define CdamParMatSG(A) (((CdamParMat*)(A))->submat[1][2])
-#define CdamParMatGI(A) (((CdamParMat*)(A))->submat[2][0])
-#define CdamParMatGS(A) (((CdamParMat*)(A))->submat[2][1])
-#define CdamParMatGG(A) (((CdamParMat*)(A))->submat[2][2])
+#define CdamParMatII(A) (((CdamParMat*)(A))->submat[0 * 3 + 0])
+#define CdamParMatIS(A) (((CdamParMat*)(A))->submat[0 * 3 + 1])
+#define CdamParMatIG(A) (((CdamParMat*)(A))->submat[0 * 3 + 2])
+#define CdamParMatSI(A) (((CdamParMat*)(A))->submat[1 * 3 + 0])
+#define CdamParMatSS(A) (((CdamParMat*)(A))->submat[1 * 3 + 1])
+#define CdamParMatSG(A) (((CdamParMat*)(A))->submat[1 * 3 + 2])
+#define CdamParMatGI(A) (((CdamParMat*)(A))->submat[2 * 3 + 0])
+#define CdamParMatGS(A) (((CdamParMat*)(A))->submat[2 * 3 + 1])
+#define CdamParMatGG(A) (((CdamParMat*)(A))->submat[2 * 3 + 2])
 
 
 void CdamParMatCreate(MPI_Comm comm, void** A);

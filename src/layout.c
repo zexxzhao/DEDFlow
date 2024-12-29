@@ -25,6 +25,11 @@ void CdamLayoutCreate(CdamLayout** layout, void* config) {
 }
 
 void CdamLayoutDestroy(CdamLayout* layout) {
+	index_type num_node = 0;
+	num_node += CdamLayoutNumExclusive(layout);
+	num_node += CdamLayoutNumShared(layout);
+	num_node += CdamLayoutNumGhosted(layout);
+	CdamFree(CdamLayoutNodalL2G(layout), num_node * sizeof(index_type), DEVICE_MEM);
 	CdamFree(layout, sizeof(CdamLayout), HOST_MEM);
 }
 
@@ -40,7 +45,7 @@ void CdamLayoutSetup(CdamLayout* layout, void* mesh) {
 
 	CdamLayoutNodalL2G(layout) = CdamTMalloc(index_type, CdamMeshNumNode(mesh3d), DEVICE_MEM);
 	CdamMemcpy(CdamLayoutNodalL2G(layout), mesh3d->nodal_map_l2g_interior,
-						 CdamMeshNumNode(mesh3d) * sizeof(index_type), DEVICE_MEM, DEVICE_MEM);
+						 CdamMeshNumNode(mesh3d) * sizeof(index_type), DEVICE_MEM, HOST_MEM);
 
 }
 
@@ -72,7 +77,7 @@ void VecDot(void* x, void* y, void* layout, void* result, void* results) {
 		local_result[i] = 0.0;
 		begin = CdamLayoutComponentOffset(lo)[i];
 		end = CdamLayoutComponentOffset(lo)[i + 1];
-		ddot(CdamLayoutNumOwned(lo) * (end - begin),
+		CdamDdot(CdamLayoutNumOwned(lo) * (end - begin),
 							vx + begin * num, 1,
 							vy + begin * num, 1, local_result);																
 	}

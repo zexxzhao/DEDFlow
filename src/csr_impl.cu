@@ -117,12 +117,12 @@ typedef index_type index_t;
 // 	index_t num_elem = Mesh3DNumTet(mesh);
 // 	const Mesh3DData* device = Mesh3DDevice(mesh);
 // 	index_type* ien = device->ien;
-// 	index_t* buffer = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
+// 	index_t* buffer = (index_t*)CdamMallocDevice(sizeof(index_t) * num_node * MAX_ROW_LENGTH);
 // 	/* Generate a vertex-to-vetex mapping */
-// 	cudaMemset(buffer, 0, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
+// 	cudaMemset(buffer, 0, sizeof(index_t) * num_node * MAX_ROW_LENGTH);
 // 	fprintf(stderr, "Not implemented\n");
 // 
-// 	CdamFreeDevice(buffer, SIZE_OF(index_t) * num_node * MAX_ROW_LENGTH);
+// 	CdamFreeDevice(buffer, sizeof(index_t) * num_node * MAX_ROW_LENGTH);
 // }
 
 void ExpandCSRByBlockSizeDevice(const CSRAttr* attr, CSRAttr* new_attr, index_t block_size[2]) {
@@ -134,27 +134,33 @@ void ExpandCSRByBlockSizeDevice(const CSRAttr* attr, CSRAttr* new_attr, index_t 
 
 	index_t block_row = block_size[0];
 	index_t block_col = block_size[1];
-	cudaStream_t stream;
-	cudaStreamCreate(&stream);
 
 	CSRAttrNumRow(new_attr) = num_rows * block_row;
 	CSRAttrNumCol(new_attr) = num_cols * block_col;
 	CSRAttrNNZ(new_attr) = nnz * block_row * block_col;
 
-	// CSRAttrRowPtr(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * (CSRAttrNumRow(new_attr) + 1));
-	// CSRAttrColInd(new_attr) = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * CSRAttrNNZ(new_attr));
-	// index_t* find_row = (index_t*)CdamMallocDevice(SIZE_OF(index_t) * nnz);
+	CUGUARD(cudaGetLastError());
+	if(CSRAttrRowPtr(new_attr) == NULL) {
+		CSRAttrRowPtr(new_attr) = CdamTMalloc(index_t, CSRAttrNumRow(new_attr) + 1, DEVICE_MEM);
+	}
+	CUGUARD(cudaGetLastError());
+	if(CSRAttrColInd(new_attr) == NULL && CSRAttrNNZ(new_attr) > 0) {
+		CSRAttrColInd(new_attr) = CdamTMalloc(index_t, CSRAttrNNZ(new_attr), DEVICE_MEM);
+	}
+	CUGUARD(cudaGetLastError());
+	// index_t* find_row = (index_t*)CdamMallocDevice(sizeof(index_t) * nnz);
 
 	int block_dim = 256;
 	int block_num = (num_rows + block_dim - 1) / block_dim;
 	// GetFindRowKernel<<<block_num, block_dim, 0, stream>>>(nnz, num_rows, row_ptr, find_row);
-	SetRowLength<<<CEIL_DIV(num_rows, block_dim), block_dim, 0, stream>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
-	SetColIndex<<<CEIL_DIV(num_rows, block_dim), block_dim, 0, stream>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
+	if(num_rows) {
+		SetRowLength<<<CEIL_DIV(num_rows, block_dim), block_dim>>>(num_rows, row_ptr, block_row, block_col, CSRAttrRowPtr(new_attr));
+		CUGUARD(cudaGetLastError());
+		SetColIndex<<<CEIL_DIV(num_rows, block_dim), block_dim>>>(nnz, num_rows, row_ptr, col_ind, block_row, block_col, CSRAttrRowPtr(new_attr), CSRAttrColInd(new_attr));
+		CUGUARD(cudaGetLastError());
+	}
 
-	// CdamFreeDevice(find_row, SIZE_OF(index_t) * nnz);
-	cudaStreamSynchronize(stream);
-	cudaStreamDestroy(stream);
-
+	cudaDeviceSynchronize();
 }
 
 void CSRAttrGetNZIndBatchedDevice(const CSRAttr* attr,
@@ -172,81 +178,131 @@ void CSRAttrGetNZIndBatchedDevice(const CSRAttr* attr,
 																																	  batch_size, row, col, ind);
 
 }
-__global__ void GetSubmatRowLength(index_type nrow, index_type ncol, index_type nnz,
+
+static 
+__global__ void GetSubmatRowLength(index_type nrow, index_type ncol,
 																	 index_type* row_ptr, index_type* col_ind,
 																	 index_type nr, index_type* row, index_type nc, index_type* col,
+																	 b32 compressed,
 																	 index_type* new_row_ptr) {
 	index_type i = blockIdx.x * blockDim.x + threadIdx.x;
-	if(i > nr) return;
+	if(i >= nr) return;
 
-	index_type start = row_ptr[row[i]];
-	index_type end = row_ptr[row[i] + 1];
+	index_type ir = row[i], ic;
+	// if(ir >= nrow) {
+	// 	printf("WTF: i=%d ir=%d nrow=%d, [i=%d*%d+%d]\n", i, ir, nrow, blockIdx.x, blockDim.x, threadIdx.x);
+	// }
+	index_type start = row_ptr[ir];
+	index_type end = row_ptr[ir + 1];
 
-	index_type len = 0;
+	index_type k = 0, count = 0;
 
-	index_type j, k, ic;
-	for(j = start; j < end; ++j) {
-		ic = col_ind[j];
-		for(k = 0; k < nc; ++k) {
-			if(col[k] == ic) {
-				++len;
-				break;
-			}
+	for(; start != end; ++start) {
+		ic = col_ind[start];
+		while(k < nc && col[k] < ic) {
+			++k;
+		}
+		if(k < nc && col[k] == ic) {
+			++count;
 		}
 	}
-	new_row_ptr[i] = len;
+
+	new_row_ptr[compressed ? i : ir] = count;
 }
+
+static 
 __global__ void GetSubmatColInd(index_type nrow, index_type ncol, index_type nnz,
 																index_type* row_ptr, index_type* col_ind,
 																index_type nr, index_type* row, index_type nc, index_type* col,
+																b32 compressed,
 																index_type* new_row_ptr, index_type* new_col_ind) {
 	index_type i = blockIdx.x * blockDim.x + threadIdx.x;
-	if(i > nr) return;
+	if(i >= nr) return;
 
-	index_type start = row_ptr[row[i]];
-	index_type end = row_ptr[row[i] + 1];
+	index_type ir = row[i], ic;
+	index_type start = row_ptr[ir];
+	index_type end = row_ptr[ir + 1];
 
-	index_type len = 0;
+	index_type count = 0;
 
-	index_type j, k, ic;
-	new_col_ind += new_row_ptr[i];
-	for(j = start; j < end; ++j) {
-		ic = col_ind[j];
-		for(k = 0; k < nc; ++k) {
-			if(col[k] == ic) {
-				new_col_ind[len] = k;
-				++len;
-				break;
-			}
+	index_type k;
+	new_col_ind += new_row_ptr[compressed ? i : ir];
+	k = 0;
+	for(; start < end; ++start) {
+		ic = col_ind[start];
+		while(k < nc && col[k] < ic) {
+			++k;
+		}
+		if(k < nc && col[k] == ic) {
+			new_col_ind[count++] = compressed ? k : ic;
 		}
 	}
 }
 
 void GenerateSubmatCSRAttrDevice(CSRAttr* attr, index_type nr, index_type* row,
-																 index_type nc, index_type* col, CSRAttr** new_attr) {
+																 index_type nc, index_type* col, b32 compressed, CSRAttr* submat) {
 	index_type num_rows = CSRAttrNumRow(attr);
 	index_type num_cols = CSRAttrNumCol(attr);
-	*new_attr = CdamTMalloc(CSRAttr, 1, HOST_MEM);
-	CdamMemset(*new_attr, 0, sizeof(CSRAttr), HOST_MEM);
-	CSRAttrNumRow(*new_attr) = nr;
-	CSRAttrNumCol(*new_attr) = nc;
-	CSRAttrRowPtr(*new_attr) = CdamTMalloc(index_type, nr + 1, DEVICE_MEM);
-	CdamMemset(CSRAttrRowPtr(*new_attr), 0, sizeof(index_type) * (nr + 1), DEVICE_MEM);
+	CdamMemset(submat, 0, sizeof(CSRAttr), HOST_MEM);
+	CSRAttrNumRow(submat) = compressed ? nr : num_rows;
+	CSRAttrNumCol(submat) = compressed ? nc : num_cols;
+	CUGUARD(cudaGetLastError());
+	CSRAttrRowPtr(submat) = CdamTMalloc(index_type, CSRAttrNumRow(submat) + 1, DEVICE_MEM);
+	CUGUARD(cudaGetLastError());
+	CdamMemset(CSRAttrRowPtr(submat), 0, sizeof(index_type) * (CSRAttrNumRow(submat) + 1), DEVICE_MEM);
+	CUGUARD(cudaGetLastError());
 
-	GetSubmatRowLength<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
-																								 CSRAttrRowPtr(attr), CSRAttrColInd(attr),
-																								 nr, row, nc, col, CSRAttrRowPtr(*new_attr) + 1);
-
-	thrust::inclusive_scan(thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr)),
-												 thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr) + nr + 1),
-												 thrust::device_ptr<index_type>(CSRAttrRowPtr(*new_attr)));
-
-
-	CdamMemcpy(&CSRAttrNNZ(*new_attr), CSRAttrRowPtr(*new_attr) + nr, sizeof(index_type), HOST_MEM, DEVICE_MEM);
-	CSRAttrColInd(*new_attr) = CdamTMalloc(index_type, CSRAttrNNZ(*new_attr), DEVICE_MEM);
-	GetSubmatColInd<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
-																						  CSRAttrRowPtr(attr), CSRAttrColInd(attr),
-																						  nr, row, nc, col, CSRAttrRowPtr(*new_attr), CSRAttrColInd(*new_attr));
+	if(nr) {
+		GetSubmatRowLength<<<CEIL_DIV(nr, 256), 256>>>(CSRAttrNumRow(attr), CSRAttrNumCol(attr),
+																									 CSRAttrRowPtr(attr), CSRAttrColInd(attr),
+																									 nr, row, nc, col,
+																									 compressed, CSRAttrRowPtr(submat) + 1);
+		// CUGUARD(cudaDeviceSynchronize());
+		CUGUARD(cudaGetLastError());
+		// CUGUARD(cudaStreamSynchronize(0));
+		// printf("nr=%d nc=%d\n", nr, nc);
+	}
+	if(CSRAttrNumRow(submat)) {
+		void* temp_buff = NULL;
+		size_t temp_buff_size = 0;
+		CUGUARD(cudaGetLastError());
+		cub::DeviceScan::InclusiveSum(temp_buff, temp_buff_size, CSRAttrRowPtr(submat), CSRAttrNumRow(submat) + 1);
+		CUGUARD(cudaGetLastError());
+		temp_buff = CdamTMalloc(char, temp_buff_size, DEVICE_MEM);
+		CUGUARD(cudaGetLastError());
+		cub::DeviceScan::InclusiveSum(temp_buff, temp_buff_size, CSRAttrRowPtr(submat), CSRAttrNumRow(submat) + 1);
+		CUGUARD(cudaGetLastError());
+		// exit(0);
+		CdamFree(temp_buff, temp_buff_size, DEVICE_MEM);
+		CUGUARD(cudaGetLastError());
+		// thrust::inclusive_scan(thrust::device_ptr<index_type>(CSRAttrRowPtr(submat)),
+		// 											 thrust::device_ptr<index_type>(CSRAttrRowPtr(submat) + CSRAttrNumRow(submat) + 1),
+		// 											 thrust::device_ptr<index_type>(CSRAttrRowPtr(submat)));
+		// CUGUARD(cudaDeviceSynchronize());
+		CUGUARD(cudaGetLastError());
+		// CUGUARD(cudaStreamSynchronize(0));
+	}
+	if(nc == 0 || nr == 0) {
+		CSRAttrNNZ(submat) = 0;
+	}
+	else {
+		CdamMemcpy(&CSRAttrNNZ(submat), CSRAttrRowPtr(submat) + CSRAttrNumRow(submat), sizeof(index_type), HOST_MEM, DEVICE_MEM);
+	}
+	// if(CSRAttrNNZ(submat) == 0) {
+	// 	CSRAttrColInd(submat) = NULL;
+	// 	return;
+	// }
+	CSRAttrColInd(submat) = CdamTMalloc(index_type, CSRAttrNNZ(submat), DEVICE_MEM);
+	CUGUARD(cudaGetLastError());
+	if(nr) {
+		GetSubmatColInd<<<CEIL_DIV(nr, 256), 256>>>(num_rows, num_cols, CSRAttrNNZ(attr),
+																								CSRAttrRowPtr(attr), CSRAttrColInd(attr),
+																								nr, row, nc, col, compressed,
+																								CSRAttrRowPtr(submat), CSRAttrColInd(submat));
+		// CUGUARD(cudaDeviceSynchronize());
+		CUGUARD(cudaGetLastError());
+		// CUGUARD(cudaStreamSynchronize(0));
+	}
 }
 															
 

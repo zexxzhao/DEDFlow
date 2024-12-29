@@ -20,12 +20,13 @@ typedef struct GlobalCtx GlobalCtx;
 static void* global_ctx = NULL;
 
 void Init(int argc, char **argv) {
-	MPI_Init(&argc, &argv);
+	// MPI_Init(&argc, &argv);
+	MPI_Init(NULL, NULL);
 	global_ctx = CdamTMalloc(GlobalCtx, 1, HOST_MEM);
 	GlobalCtx *ctx = (GlobalCtx *)global_ctx;
 #ifdef CDAM_USE_CUDA
-	cusparseCreate(&ctx->cusparse_handle);
 	cublasCreate(&ctx->cublas_handle);
+	cusparseCreate(&ctx->cusparse_handle);
 #ifdef USE_AMGX
 	AMGX_initialize();
 #endif
@@ -36,13 +37,13 @@ void Finalize() {
 	MPI_Finalize();
 	GlobalCtx *ctx = (GlobalCtx *)global_ctx;
 #ifdef CDAM_USE_CUDA
-	cusparseDestroy(ctx->cusparse_handle);
 	cublasDestroy(ctx->cublas_handle);
+	cusparseDestroy(ctx->cusparse_handle);
 #ifdef USE_AMGX
 	AMGX_finalize();
 #endif
 #endif
-	CdamFree(global_ctx, SIZE_OF(GlobalCtx), HOST_MEM);
+	CdamFree(global_ctx, sizeof(GlobalCtx), HOST_MEM);
 }
 
 void* GlobalContextGet(GlobalContextType type) {

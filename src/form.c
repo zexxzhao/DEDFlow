@@ -4,6 +4,7 @@
 #include "json.h"
 #include "Mesh.h"
 #include "csr.h"
+#include "indexing.h"
 #include "parallel_matrix.h"
 
 #include "assemble.h"
@@ -105,10 +106,9 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 												 FEMOptions opt, Arena scratch) {
 	const i32 NSHL = 4;
 	// value_type* d_shlu = CdamTMalloc(value_type, NQR * NSHL, DEVICE_MEM);
-	value_type one = 1.0, zero = 0.0, minus_one = -1.0;
+	// value_type one = 1.0, zero = 0.0, minus_one = -1.0;
 
 	value_type* buffer, *elem_invJ, *shgradg, *qr_wgalpha, *qr_dwgalpha, *qr_wggradalpha;
-	int* pivot, *info;
 	value_type* elem_F = NULL;
 	value_type* elem_J = NULL;
 
@@ -120,7 +120,7 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 	index_type* color_batch_index_ptr;
 
 	index_type bs = 0;
-	bs += 3 * opt[OPTION_NS] + opt[OPTION_T] + opt[OPTION_PHI];
+	bs += 3 * (int)opt[OPTION_NS] + (int)opt[OPTION_T] + (int)opt[OPTION_PHI];
 
 
 	Arena scratch_original = scratch;
@@ -145,14 +145,14 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 		shgradg = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * 3, &scratch, 0);
 		GetShapeGrad(color_batch_size, elem_invJ, shgradg);
 
-		dgemmStridedBatched(BLAS_T, BLAS_N,
-							3, 3, 3,
-							one,
-							shgradg + 3, 3, NSHL * 3,
-							shgradg + 3, 3, NSHL * 3,
-							zero,
-							elem_invJ, 3, NSHL * 3,
-							color_batch_size);
+		CdamDgemmStridedBatched(BLAS_T, BLAS_N,
+														3, 3, 3,
+														1.0,
+														shgradg + 3, 3, NSHL * 3,
+														shgradg + 3, 3, NSHL * 3,
+														0.0,
+														elem_invJ, 3, NSHL * 3,
+														color_batch_size);
 
 		buffer = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
 		/* Interpolate the field values */
@@ -174,23 +174,23 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
 		qr_wggradalpha = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * 3 * bs, &scratch, 0);
-		dgemmStridedBatched(BLAS_N, BLAS_N,
-												3, bs, NSHL,
-												one,
-												shgradg, 3, NSHL* 3,
-												buffer, NSHL, NSHL * bs,
-												zero,
-												qr_wggradalpha, 3, bs * 3,
-												color_batch_size);
+		CdamDgemmStridedBatched(BLAS_N, BLAS_N,
+														3, bs, NSHL,
+														1.0,
+														shgradg, 3, NSHL* 3,
+														buffer, NSHL, NSHL * bs,
+														0.0,
+														qr_wggradalpha, 3, bs * 3,
+														color_batch_size);
 		 
 		qr_wgalpha = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
-		dgemm(BLAS_N, BLAS_N,
-					NQR, color_batch_size * bs, NSHL,
-					one,
-					d_shlu, NQR,
-					buffer, NSHL,
-					zero,
-					qr_wgalpha, NQR);
+		CdamDgemm(BLAS_N, BLAS_N,
+							NQR, color_batch_size * bs, NSHL,
+							1.0,
+							d_shlu, NQR,
+							buffer, NSHL,
+							0.0,
+							qr_wgalpha, NQR);
 
 		LoadElementValue(color_batch_size, color_batch_index_ptr, ien,
 										 NSHL, 3 * sizeof(value_type),
@@ -206,13 +206,13 @@ void AssembleSystemTetra(index_type num_node, value_type* coord,
 										 dwgalpha_dptr + num_node * 5, 1, buffer + 5 * NSHL, bs * NSHL);
 
 		qr_dwgalpha = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NQR * bs, &scratch, 0);
-		dgemm(BLAS_T, BLAS_N,
-					NQR, color_batch_size * bs, NSHL,
-					one,
-					d_shlu, NQR,
-					buffer, NSHL,
-					zero,
-					qr_dwgalpha, NQR);
+		CdamDgemm(BLAS_T, BLAS_N,
+							NQR, color_batch_size * bs, NSHL,
+							1.0,
+							d_shlu, NQR,
+							buffer, NSHL,
+							0.0,
+							qr_dwgalpha, NQR);
 
 		if(F) {
 			elem_F = (value_type*)AllocInArena(sizeof(value_type), color_batch_size * NSHL * bs, &scratch, 0);
@@ -258,14 +258,14 @@ void AssembleSystem(void* mesh, void* wgalpha, void* dwgalpha,
 	index_type num_hex = CdamMeshNumHex(mesh);
 	index_type* ien = CdamMeshIEN(mesh);
 
-	index_type ec, num_color = CdamMeshNumColor(mesh);
+	index_type num_color = CdamMeshNumColor(mesh);
 	index_type* color_batch_offset = CdamMeshColorBatchOffset(mesh);
 	index_type* color_batch_ind = CdamMeshColorBatchInd(mesh);
 	index_type bs = 0;
 	FEMOptions opt;
 	ParseFEMOptions(opt, config);
 
-	bs += 3 * opt[OPTION_NS] + opt[OPTION_T] + opt[OPTION_PHI];
+	bs += 3 * (int)opt[OPTION_NS] + (int)opt[OPTION_T] + (int)opt[OPTION_PHI];
 
 	if (F) {
 		CdamMemset(F, 0, num_node * bs * sizeof(value_type), DEVICE_MEM);

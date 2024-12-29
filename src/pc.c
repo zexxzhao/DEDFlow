@@ -3,6 +3,7 @@
 #include "layout.h"
 #include "vec_impl.h"
 #include "blas.h"
+#include "indexing.h"
 #include "parallel_matrix.h"
 #include "alloc.h"
 #include "krylov.h"
@@ -44,7 +45,7 @@ static void PCRicahrdsonApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 	index_type count = pc->count;
 	value_type omega = pc->omega;
 	CdamMemcpy(y, x, count * sizeof(value_type), DEVICE_MEM, DEVICE_MEM);
-	dscal(count, omega, y, 1);
+	CdamDscal(count, omega, y, 1);
 }
 
 
@@ -95,9 +96,9 @@ static void PCJacobiSetupPrivate(CdamPC* pc, void* config) {
 		pivot = info + n;
 
 		/* Blockwise LU decomposition */
-		dgetrfBatched(bs, input_batch, bs, pivot, info, n);
+		CdamDgetrfBatched(bs, input_batch, bs, pivot, info, n);
 		/* Blockwise Inverse */
-		dgetriBatched(bs, input_batch, bs, pivot, output_batch, bs, info, n);
+		CdamDgetriBatched(bs, input_batch, bs, pivot, output_batch, bs, info, n);
 	}
 }
 
@@ -124,7 +125,7 @@ static void PCJacobiApplyPrivate(CdamPC* pc, value_type* x, value_type* y) {
 		VecPointwiseMult(x, diag, y, pc->count);
 	}
 	else if(bs > 1) {
-		dgemvStridedBatched(BLAS_N, bs, bs, 1.0,
+		CdamDgemvStridedBatched(BLAS_N, bs, bs, 1.0,
 												diag_inv, bs, bs * bs,
 												x, 1, bs, 0.0,
 												y, 1, bs,

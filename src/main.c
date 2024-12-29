@@ -25,8 +25,11 @@
 #include "krylov.h"
 #include "assemble.h"
 
+#include "parallel_matrix.h"
+#include "sequential_matrix.h"
+
 #define kRHOC (0.5)
-#define kDT (5e-2)
+#define kTINC (5e-2)
 #define kALPHAM (0.5 * (3.0 - kRHOC) / (1.0 + kRHOC))
 #define kALPHAF (1.0 / (1.0 + kRHOC))
 #define kGAMMA (0.5 + kALPHAM - kALPHAF)
@@ -56,7 +59,8 @@ void MyFieldInit(value_type* value, void* ctx) {
 		value[i * 3 + 2] = 0.0; // coord[i * 3 + 2];
 #endif
 	}
-	for(i = 0; i < num_node_owned; ++i) {
+	// for(i = 0; i < num_node_owned; ++i) {
+	for(i = 0; i < num_node; ++i) {
 		z = 2e-4 - coord[i * 3 + 2];
 		if (z > eps) {
 			h = 1.0;
@@ -68,7 +72,7 @@ void MyFieldInit(value_type* value, void* ctx) {
 			h = 0.5 * (1.0 + z / eps + sin(M_PI * z / eps) / M_PI);
 		}
 		value[num_node * 3 + i] = 0.0;
-		value[num_node * 4 + i] = mesh->rank;
+		value[num_node * 4 + i] = 1.0 + h * 0.0;
 		value[num_node * 5 + i] = coord[i * 3 + 0];
 	}
 }
@@ -90,6 +94,97 @@ static inline void ParseJSONFile(const char* filename, cJSON** root) {
 
 	ASSERT(*root && "Cannot parse JSON file");
 
+}
+
+struct ParMatAux {
+	CSRAttr* parent;
+	CSRAttr spy[9];
+	CSRAttr spy_expand[9];
+};
+
+static void ParMatSetupPrivate(void* A) {
+	CdamParMat* mat = (CdamParMat*)A;
+	CdamLayout* rmap = mat->row_map;
+	CdamLayout* cmap = mat->col_map;
+	index_type* rcount = mat->row_count;
+	index_type* ccount = mat->col_count;
+
+
+	index_type roffset[4], coffset[4];
+	roffset[0] = 0;
+	roffset[1] = roffset[0] + rcount[0];
+	roffset[2] = roffset[1] + rcount[1];
+	roffset[3] = roffset[2] + rcount[2];
+	coffset[0] = 0;
+	coffset[1] = coffset[0] + ccount[0];
+	coffset[2] = coffset[1] + ccount[1];
+	coffset[3] = coffset[2] + ccount[2];
+
+	index_type i, j;
+
+	struct ParMatAux* aux = (struct ParMatAux*)CdamParMatCtx(A);
+	CSRAttr* attr = aux->parent;
+	CSRAttr* spy = aux->spy;
+	CSRAttr* spy_expand = aux->spy_expand;
+	index_type block_size[] = {6, 6};
+	void** submat = (void**)mat->submat;
+
+	index_type* h_index = CdamTMalloc(index_type, roffset[3], HOST_MEM);
+	index_type* d_index = CdamTMalloc(index_type, roffset[3], DEVICE_MEM);
+	for(i = 0; i < roffset[3]; i++) {
+		h_index[i] = i;
+	}
+	CdamMemcpy(d_index, h_index, roffset[3] * sizeof(index_type), DEVICE_MEM, HOST_MEM);
+
+
+	for(i = 0; i < 3; i++) {
+		for(j = 0; j < 3; j++) {
+			/* Decompose the matrix into 3x3 subblocks */
+			CUGUARD(cudaGetLastError());
+			GenerateSubmatCSRAttr(attr, rcount[i], d_index + roffset[i],
+														ccount[j], d_index + coffset[j], TRUE, spy + i * 3 + j);
+			CUGUARD(cudaGetLastError());
+			/* Expand the single DOF spy into multiple DOF */
+			ExpandCSRByBlockSize(spy + i * 3 + j, spy_expand + i * 3 + j, block_size);
+			CUGUARD(cudaGetLastError());
+
+			/* Create submatrices */
+			SeqMatCreate(MAT_TYPE_CSR, CSRAttrNumRow(spy_expand + i * 3 + j),
+									 CSRAttrNumCol(spy_expand + i * 3 + j), submat + i * 3 + j);
+			/* Set the spy attribute */
+			SeqMatAsType(submat[i * 3 + j], SeqMatCSR)->spy = spy_expand + i * 3 + j;
+			// SeqMatSetup(submat[i * 3 + j]);
+		}
+	}
+
+	CdamFree(h_index, roffset[3] * sizeof(index_type), HOST_MEM);
+	CdamFree(d_index, roffset[3] * sizeof(index_type), DEVICE_MEM);
+}
+
+static void ParMatDestroyPrivate(void* A) {
+	CdamParMat* mat = (CdamParMat*)A;
+	struct ParMatAux* aux = (struct ParMatAux*)CdamParMatCtx(mat);
+	CSRAttr* spy = aux->spy;
+	CSRAttr* spy_expand = aux->spy_expand;
+	index_type i, j;
+	for(i = 0; i < 3; i++) {
+		for(j = 0; j < 3; j++) {
+			CdamFree(spy[i * 3 + j].row_ptr, sizeof(index_type) * (CSRAttrNumRow(spy + i * 3 + j) + 1), DEVICE_MEM);
+			CdamFree(spy[i * 3 + j].col_ind, sizeof(index_type) * CSRAttrNNZ(spy + i * 3 + j), DEVICE_MEM);
+
+			CdamFree(spy_expand[i * 3 + j].row_ptr, sizeof(index_type) * (CSRAttrNumRow(spy_expand + i * 3 + j) + 1), DEVICE_MEM);
+			CdamFree(spy_expand[i * 3 + j].col_ind, sizeof(index_type) * CSRAttrNNZ(spy_expand + i * 3 + j), DEVICE_MEM);
+			// printf("spy[%d][%d]=%p\n", i, j, spy + i * 3 + j);
+			// printf("spy_expand[%d][%d]=%p\n", i, j, spy_expand + i * 3 + j);
+			// CSRAttrDestroy(spy + i * 3 + j);
+			// CSRAttrDestroy(spy_expand + i * 3 + j);
+		}
+	}
+}
+
+
+static inline void DestroyJSON(cJSON* root) {
+	cJSON_Delete(root);
 }
 
 int main(int argc, char** argv) {
@@ -193,6 +288,7 @@ int main(int argc, char** argv) {
 	// CdamMeshGenreateColorBatch(mesh);
 	CdamLayout* layout;
 	CdamLayoutCreate(&layout, config);
+	CdamLayoutSetup(layout, mesh);
 	value_type* vec, *dx;
 	// CdamNewtonSolverGetLinearSystem(nssolver, &mat, &dx, &vec);
 	
@@ -202,6 +298,7 @@ int main(int argc, char** argv) {
 
 	CommuGraph* commu;
 	CommuGraphCreate(MPI_COMM_WORLD, mesh, &commu);
+
 
 	CdamParMat* mat;
 	CdamParMatCreate(MPI_COMM_WORLD, (void**)&mat);
@@ -220,6 +317,14 @@ int main(int argc, char** argv) {
 	mat->col_count[2] = CdamLayoutNumGhosted(layout);
 	mat->row_map = layout;
 	mat->col_map = layout;
+
+	CdamParMatCtx(mat) = CdamTMalloc(struct ParMatAux, 1, HOST_MEM);
+	struct ParMatAux* aux = (struct ParMatAux*)CdamParMatCtx(mat);
+	CdamMemset(aux, 0, sizeof(struct ParMatAux), HOST_MEM);
+	aux->parent = CSRAttrCreate(mesh);
+	CdamParMatOp(mat)->setup = ParMatSetupPrivate;
+	CdamParMatOp(mat)->destroy = ParMatDestroyPrivate;
+
 	CdamParMatSetup(mat);
 
 
@@ -248,6 +353,7 @@ int main(int argc, char** argv) {
 	nssolver->lsolver = krylov;
 	
 	CdamKrylovSetup(krylov, mat, JSONGetItem(config, "NewtonSolver.LinearSolver"));
+	CdamNewtonSolverSetKrylov(nssolver, krylov);
 
 	/* Simulation initialization */
 	value_type* wgold = CdamTMalloc(value_type, num_node * sizeof(value_type) * BS, DEVICE_MEM);
@@ -312,12 +418,13 @@ int main(int argc, char** argv) {
 		CommuGraphSyncBackward(commu, wgold + num_node * 4, 1);
 		CommuGraphSyncForward(commu, wgold + num_node * 5, 1);
 		CommuGraphSyncBackward(commu, wgold + num_node * 5, 1);
-
+		
+		CdamMemcpy(buffer, wgold, num_node * sizeof(value_type) * BS, HOST_MEM, DEVICE_MEM);
 		CdamMemset(wgold + num_node * 3, 0, num_node, DEVICE_MEM);
 		CdamMemcpy(dwg + num_node * 3, buffer + num_node * 3, num_node, DEVICE_MEM, HOST_MEM);
 	
 		h5_handler = H5OpenFile("sol.0.h5", "w");
-
+		
 		H5WriteDatasetValIndexed(h5_handler, "u", num_node_owned * 3, nindex3, buffer);
 		H5WriteDatasetValIndexed(h5_handler, "p", num_node_owned, nindex, buffer + num_node * 3);
 		H5WriteDatasetValIndexed(h5_handler, "phi", num_node_owned, nindex, buffer + num_node * 4);
@@ -331,23 +438,25 @@ int main(int argc, char** argv) {
 		H5CloseFile(h5_handler);
 
 	}
-	return 0;
+	// return 0;
 
 	/* Simulation loop */
 	value_type fac_pred[] = {(kGAMMA - 1.0) / kGAMMA};
-	value_type fac_corr[] = {kDT * (1.0 - kGAMMA), kDT * kGAMMA};
+	value_type fac_corr[] = {kTINC * (1.0 - kGAMMA), kTINC * kGAMMA};
 	CdamMeshPrefetch(mesh);
 
-	while(step ++ < num_step) {
-		fprintf(stdout, "##################\n");
-		fprintf(stdout, "# Step %d\n", step);
-		fprintf(stdout, "##################\n");
-		fflush(stdout);
+	while(step++ < num_step) {
+		if (rank == 0) {
+			fprintf(stdout, "##################\n");
+			fprintf(stdout, "# Step %d\n", step);
+			fprintf(stdout, "##################\n");
+			fflush(stdout);
+		}
 		/* Prediction stage */
 		// cublasDscal(handle, num_node * 3, fac_pred, dwg, 1);
 		// cublasDscal(handle, num_node * 2, fac_pred, dwg + num_node * 4, 1);
-		dscal(num_node * 3, fac_pred[0], dwgold, 1);
-		dscal(num_node * 2, fac_pred[0], dwgold + num_node * 4, 1);
+		CdamDscal(num_node * 3, fac_pred[0], dwg, 1);
+		CdamDscal(num_node * 2, fac_pred[0], dwg + num_node * 4, 1);
 
 		/* Generate new particles */
 		// ParticleContextAdd(pctx);
@@ -369,11 +478,11 @@ int main(int argc, char** argv) {
 		// cublasDaxpy(handle, num_node * 2, fac_corr + 1, dwg + num_node * 4, 1, wgold + num_node * 4, 1);
 		// cublasDcopy(handle, num_node * 6, dwg, 1, dwgold, 1);
 
-		daxpy(num_node * 3, fac_corr[0], dwgold, 1, wgold, 1);
-		daxpy(num_node * 2, fac_corr[0], dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
-		daxpy(num_node * 3, fac_corr[1], dwg, 1, wgold, 1);
-		daxpy(num_node * 2, fac_corr[1], dwg + num_node * 4, 1, wgold + num_node * 4, 1);
-		dcopy(num_node * 6, dwg, 1, dwgold, 1);
+		CdamDaxpy(num_node * 3, fac_corr[0], dwgold, 1, wgold, 1);
+		CdamDaxpy(num_node * 2, fac_corr[0], dwgold + num_node * 4, 1, wgold + num_node * 4, 1);
+		CdamDaxpy(num_node * 3, fac_corr[1], dwg, 1, wgold, 1);
+		CdamDaxpy(num_node * 2, fac_corr[1], dwg + num_node * 4, 1, wgold + num_node * 4, 1);
+		CdamDcopy(num_node * 6, dwg, 1, dwgold, 1);
 
 		/* Particle update */
 		// ParticleContextUpdate(pctx);
@@ -381,36 +490,60 @@ int main(int argc, char** argv) {
 		// ParticleContextRemove(pctx);
 
 		if (step % 10 == 0) {
-			sprintf(filename_buffer, "sol.%d.h5", step);
-			fprintf(stdout, "Save solution to %s\n", filename_buffer);
+			if (rank == 0) {
+				sprintf(filename_buffer, "sol.%d.h5", step);
+				fprintf(stdout, "Save solution to %s\n", filename_buffer);
+			}
 			h5_handler = H5OpenFile(filename_buffer, "w");
 		
-			cudaMemcpy(buffer, wgold, num_node * sizeof(value_type) * BS, cudaMemcpyDeviceToHost);
-			cudaMemcpy(buffer + num_node * 3, dwgold + num_node * 3, num_node * sizeof(value_type), cudaMemcpyDeviceToHost);
-			H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
-			H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
-			H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
+			// cudaMemcpy(buffer, wgold, num_node * sizeof(value_type) * BS, cudaMemcpyDeviceToHost);
+			// cudaMemcpy(buffer + num_node * 3, dwgold + num_node * 3, num_node * sizeof(value_type), cudaMemcpyDeviceToHost);
+			CdamMemcpy(buffer, wgold, num_node * sizeof(value_type) * BS, HOST_MEM, DEVICE_MEM);
+			CdamMemcpy(buffer + num_node * 3, dwgold + num_node * 3, num_node, HOST_MEM, DEVICE_MEM);
+			// H5WriteDatasetf64(h5_handler, "u", num_node * 3, buffer);
+			// H5WriteDatasetf64(h5_handler, "phi", num_node, buffer + num_node * 4);
+			// H5WriteDatasetf64(h5_handler, "T", num_node, buffer + num_node * 5);
+			H5WriteDatasetValIndexed(h5_handler, "u", num_node_owned * 3, nindex3, buffer);
+			H5WriteDatasetValIndexed(h5_handler, "phi", num_node_owned, nindex, buffer + num_node * 4);
+			H5WriteDatasetValIndexed(h5_handler, "T", num_node_owned, nindex, buffer + num_node * 5);
 
-			cudaMemcpy(buffer, dwgold, num_node * sizeof(value_type) * BS, cudaMemcpyDeviceToHost);
-			H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
-			H5WriteDatasetf64(h5_handler, "p", num_node, buffer + num_node * 3);
-			H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
-			H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
+			// cudaMemcpy(buffer, dwgold, num_node * sizeof(value_type) * BS, cudaMemcpyDeviceToHost);
+			CdamMemcpy(buffer, dwgold, num_node * sizeof(value_type) * BS, HOST_MEM, DEVICE_MEM);
+			// H5WriteDatasetf64(h5_handler, "du", num_node * 3, buffer);
+			// H5WriteDatasetf64(h5_handler, "p", num_node, buffer + num_node * 3);
+			// H5WriteDatasetf64(h5_handler, "dphi", num_node, buffer + num_node * 4);
+			// H5WriteDatasetf64(h5_handler, "dT", num_node, buffer + num_node * 5);
+			H5WriteDatasetValIndexed(h5_handler, "du", num_node_owned * 3, nindex3, buffer);
+			H5WriteDatasetValIndexed(h5_handler, "p", num_node_owned, nindex, buffer + num_node * 3);
+			H5WriteDatasetValIndexed(h5_handler, "dphi", num_node_owned, nindex, buffer + num_node * 4);
+			H5WriteDatasetValIndexed(h5_handler, "dT", num_node_owned, nindex, buffer + num_node * 5);
 			
 			// ParticleContextUpdateHost(pctx);
 			// ParticleContextSave(pctx, h5_handler, "ptc/test/group/context");
 			H5CloseFile(h5_handler);
 		}	
+		break;
 	}
 
 
 	// CdamVecDestroy(vec);
 	// CdamVecDestroy(dx);
+
+	DestroyJSON(config);
 	CdamFree(nindex3, num_node_owned * 3 * sizeof(index_type), HOST_MEM);
 	CdamFree(vec, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 	CdamFree(dx, num_node * sizeof(value_type) * BS, DEVICE_MEM);
 	CommuGraphDestroy(commu);
 	CdamParMatDestroy(mat);
+
+	CSRAttrDestroy(aux->parent);
+	CdamFree(aux, sizeof(struct ParMatAux), HOST_MEM);
+	CdamLayoutDestroy(layout);
+
+	CdamFree(dwgold, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamFree(dwg, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamFree(wgold, num_node * sizeof(value_type) * BS, DEVICE_MEM);
+	CdamFree(buffer, num_node * sizeof(value_type) * BS, HOST_MEM);
 
 	CdamNewtonSolverGetLinearSolver(nssolver, &krylov);
 	CdamKrylovDestroy(krylov);

@@ -3,9 +3,9 @@ DEBUG=1
 
 
 
-CDAM_USE_CUDA=0
+CDAM_USE_CUDA=1
 CDAM_USE_MKL=0
-CDAM_USE_ACCELERATE=1
+CDAM_USE_ACCELERATE=0
 
 
 # These packages are required
@@ -54,6 +54,7 @@ FLAGS= -fPIC -Wall -Wextra \
 			-Wconversion -Wdouble-promotion \
 			-Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion \
 			-Wno-deprecated-declarations
+FLAGS+=-Werror -Wno-error=cpp -Wno-unused-variable
 DEFINES=-DUSE_I32_INDEX -DUSE_F64_VALUE # -DCDAM_USE_CUDA # -DDBG_TET
 CC=mpicc
 CFLAGS=-std=c99 $(FLAGS) $(DEFINES) $(C_OPT) # -fno-omit-frame-pointer
@@ -62,8 +63,8 @@ INC=
 LIB=
 
 DEFINES+= -DUSE_HDF5
-INC+=-I$(HDF5_ROOT)/include -I$(HYPRE_DIR)/include
-LIB+=-L$(HDF5_ROOT)/lib -lhdf5 -L$(HYPRE_DIR)/lib -lHYPRE
+INC+=-I$(HDF5_ROOT)/include 
+LIB+=-L$(HDF5_ROOT)/lib -lhdf5 
 
 DEFINES+= -DUSE_METIS
 INC+=-I$(METIS_DIR)/include
@@ -105,7 +106,7 @@ endif
 # CU_ARCH=86: RTX 3090
 NVCCFLAGS=-std=c++17 $(CU_OPT) $(DEFINES) -Wno-deprecated-gpu-targets -Wno-deprecated-declarations
 ifneq ($(CU_ARCH),)
-NVCCFLAGS+= --generate-code arch=compute_${CU_ARCH},code=sm_${CU_ARCH} --compiler-options -fPIC  $(DEFINES)
+NVCCFLAGS+= --generate-code arch=compute_${CU_ARCH},code=sm_${CU_ARCH} --compiler-options -fPIC
 endif
 CU_INC=
 CU_LIB=-L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcurand 

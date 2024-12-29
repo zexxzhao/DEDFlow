@@ -81,15 +81,15 @@ static void SolveFlexGMRESPrivate(void* ksp, void* A, void* x, void* b) {
 
 		/* Arnoldi process */
 		/* H[0:iter+1, iter] = Q[0:n, 0:iter+1].T * Q[0:n, iter+1] */
-		dgemv(BLAS_T, n, iter + 1,
-					one, Q, n,
-					Q + n * (iter + 1), 1,
-					zero, H + ldh * iter, 1);
+		CdamDgemv(BLAS_T, n, iter + 1,
+							one, Q, n,
+							Q + n * (iter + 1), 1,
+							zero, H + ldh * iter, 1);
 		/* Q[0:n, iter+1] -= Q[0:n, 0:iter+1] * H[0:iter+1, iter] */
-		dgemv(BLAS_N, n, iter + 1,
-					minus_one, Q, n,
-					H + ldh * iter, 1,
-					one, Q + n * (iter + 1), 1);
+		CdamDgemv(BLAS_N, n, iter + 1,
+							minus_one, Q, n,
+							H + ldh * iter, 1,
+							one, Q + n * (iter + 1), 1);
 
 		/* H[iter+1, iter] = || Q[0:n, iter+1] || */ 
 		SetPointerModeDevice();
@@ -100,12 +100,12 @@ static void SolveFlexGMRESPrivate(void* ksp, void* A, void* x, void* b) {
 		/* Apply Givens rotation to H[0:iter+2, iter] */
 		SetPointerModeDevice();
 		for (index_type i = 0; i < iter; i++) {
-			drot(1, 
-					H + ldh * iter + i, 1,
-					H + ldh * iter + i + 1, 1, 
-					gv[2 * i], gv[2 * i + 1]);
+			CdamDrot(1, 
+							 H + ldh * iter + i, 1,
+							 H + ldh * iter + i + 1, 1, 
+							gv[2 * i], gv[2 * i + 1]);
 		}
-		drotg(H[ldh * iter + iter],
+		CdamDrotg(H[ldh * iter + iter],
 					H[ldh * iter + iter + 1],
 					gv + 2 * iter, gv + 2 * iter + 1);
 		GMRESResidualUpdatePrivate(beta + iter, gv + 2 * iter);
@@ -128,12 +128,12 @@ static void SolveFlexGMRESPrivate(void* ksp, void* A, void* x, void* b) {
 	if(iter) { /* If the iteration is not zero */
 		/* Get the solution */
 		/* Solve upper triangular system H[0:iter, 0:iter] @ y = beta[0:iter+1] and beta <= y */
-		dtrsv(BLAS_UP, BLAS_N, BLAS_NU,
-					iter, H, ldh, beta, 1);
+		CdamDtrsv(BLAS_UP, BLAS_N, BLAS_NU,
+							iter, H, ldh, beta, 1);
 		/* Compute tmp = Q[0:n, 0:iter] * y */
-		dgemv(BLAS_N, n, iter,
-					one, Q, n, beta, 1,
-					zero, tmp, 1);
+		CdamDgemv(BLAS_N, n, iter,
+							one, Q, n, beta, 1,
+							zero, tmp, 1);
 		/* Apply preconditioner */
 		krylov->op->pc_apply(pc, tmp, tmp + n);
 		/* x += tmp */
@@ -161,15 +161,15 @@ static void VecCopyPrivate(index_type n, void* x, void* y) {
 }
 
 static void VecAxpyPrivate(index_type n, value_type alpha, void* x, void* y) {
-	daxpy(n, alpha, x, 1, y, 1);
+	CdamDaxpy(n, alpha, x, 1, y, 1);
 }
 
 static void VecScalPrivate(index_type n, value_type alpha, void* x) {
-	dscal(n, alpha, x, 1);
+	CdamDscal(n, alpha, x, 1);
 }
 
 static void VecDotPrivate(index_type n, void* x, void* y, value_type* result) {
-	ddot(n, x, 1, y, 1, result);
+	CdamDdot(n, x, 1, y, 1, result);
 	MPI_Allreduce(MPI_IN_PLACE, result, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 }
 

@@ -28,8 +28,21 @@ void CSRAttrDestroy(CSRAttr *attr);
 
 CSRAttr* CSRAttrCreateBlock(const CSRAttr* attr, index_type block_row, index_type block_col);
 
+void ExpandCSRByBlockSize(const CSRAttr* csr, CSRAttr* new_attr, index_type block_size[2]);
+
+/** @brief Generate a sparsity pattern of a submatrix of a CSR matrix.
+ * The row and colum indices should be sorted in ascending order and unique.
+ *
+ * @param attr The sparsity pattern of the original CSR matrix.
+ * @param row The row indices of the submatrix.
+ * @param col The column indices of the submatrix.
+ * @param compressed Whether the submatrix is compressed.
+ * @param submat The sparsity pattern of the submatrix.
+ */
 void GenerateSubmatCSRAttr(CSRAttr* attr, index_type nr, index_type* row,
-													 index_type nc, index_type* col, CSRAttr** submat);
+													 index_type nc, index_type* col,
+													 b32 compressed,
+													 CSRAttr* submat);
 
 index_type CSRAttrLength(CSRAttr *attr, index_type row);
 index_type* CSRAttrRow(CSRAttr *attr, index_type row);

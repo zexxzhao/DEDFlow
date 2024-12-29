@@ -87,7 +87,7 @@ __global__ void SeqMatGetDiagDenseKernel(value_type* data, index_type n, value_t
 void SeqMatGetDiagDenseGPU(value_type* data, index_type n,
 													 value_type* diag, index_type bs, cudaStream_t stream) {
 	if(bs == 1) {
-		dcopy(n, data, n + 1, diag, 1);
+		CdamDcopy(n, data, n + 1, diag, 1);
 	}
 	else if(bs > 1) {
 		int num_threads = 256;

@@ -12,6 +12,9 @@ __BEGIN_DECLS__
 static void* DefaultMallocHostPrivate(ptrdiff_t size, void* ctx) {
 	void* p;
 	UNUSED(ctx);
+	if(size == 0) {
+		return NULL;
+	}
 	p = malloc(size);
 	ASSERT(p && "Out of memory");
 	return p;
@@ -32,6 +35,9 @@ static void DefaultMemsetHostPrivate(void* p, int c, ptrdiff_t size, void* ctx) 
 static void* DefaultMallocDevicePrivate(ptrdiff_t size, void* ctx) {
 	void* p;
 	UNUSED(ctx);
+	if(size == 0) {
+		return NULL;
+	}
 	CUGUARD(cudaMalloc(&p, size));
 	ASSERT(p && "Out of memory");
 	return p;

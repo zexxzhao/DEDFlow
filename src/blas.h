@@ -83,57 +83,57 @@ void SetPointerModeDevice();
 void SetPointerModeHost();
 
 /* BLAS Level 1 */
-void dscal(int n, double alpha, double *x, int incx);
-void dcopy(int n, double *x, int incx, double *y, int incy);
-void ddot(int n, double *x, int incx, double *y, int incy, double *r);
-void daxpy(int n, double alpha, double *x, int incx, double *y, int incy);
-void dnrm2(int n, double *x, int incx, double *r);
-void drot(int n, double *x, int incx, double *y, int incy, double c, double s);
-void drotg(double a, double b, double *c, double *s);
+void CdamDscal(int n, double alpha, double *x, int incx);
+void CdamDcopy(int n, double *x, int incx, double *y, int incy);
+void CdamDdot(int n, double *x, int incx, double *y, int incy, double *r);
+void CdamDaxpy(int n, double alpha, double *x, int incx, double *y, int incy);
+void CdamDnrm2(int n, double *x, int incx, double *r);
+void CdamDrot(int n, double *x, int incx, double *y, int incy, double c, double s);
+void CdamDrotg(double a, double b, double *c, double *s);
 
 /* BLAS Level 2 */
-void dgemv(BLASTrans trans, int m, int n, double alpha, const double *A, int lda, const double *x, int incx, double beta, double *y, int incy);
+void CdamDgemv(BLASTrans trans, int m, int n, double alpha, const double *A, int lda, const double *x, int incx, double beta, double *y, int incy);
 
-void dtrsv(BLASUpLo uplo, BLASTrans trans, BLASDiag diag, int n, const double *A, int lda, double *x, int incx); 
+void CdamDtrsv(BLASUpLo uplo, BLASTrans trans, BLASDiag diag, int n, const double *A, int lda, double *x, int incx); 
 
 /* BLAS Level 3 */
-void dgemm(BLASTrans transA, BLASTrans transB, int m, int n, int k, double alpha, const double *A, int lda, const double *B, int ldb, double beta, double *C, int ldc);
+void CdamDgemm(BLASTrans transA, BLASTrans transB, int m, int n, int k, double alpha, const double *A, int lda, const double *B, int ldb, double beta, double *C, int ldc);
 
 /* BLAS Extension */
 
-void dgemvBatched(BLASTrans trans, int m, int n, double alpha,
+void CdamDgemvBatched(BLASTrans trans, int m, int n, double alpha,
 									const double *const Aarray[], int lda,
 									const double *const xarray[], int incx, double beta,
 									double *const yarray[], int incy, int batchCount);
 
-void dgemvStridedBatched(BLASTrans trans, int m, int n, double alpha,
+void CdamDgemvStridedBatched(BLASTrans trans, int m, int n, double alpha,
 												const double *A, int lda, int strideA,
 												const double *x, int incx, int strideX, double beta,
 												double *y, int incy, int strideY, int batchCount);
 
-void dgemmBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k, double alpha,
+void CdamDgemmBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k, double alpha,
 									const double *const Aarray[], int lda,
 									const double *const Barray[], int ldb, double beta,
 									double *const Carray[], int ldc, int batchCount);
-void dgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k, double alpha,
+void CdamDgemmStridedBatched(BLASTrans transA, BLASTrans transB, int m, int n, int k, double alpha,
 												const double *A, int lda, int strideA,
 												const double *B, int ldb, int strideB, double beta,
 												double *C, int ldc, int strideC, int batchCount);
 
-void dtranspose(int m, int n, double *A, int lda, double *B, int ldb);
-void dgeam(BLASTrans transA, BLASTrans transB, int m, int n, double alpha, const double *A, int lda, double beta, const double *B, int ldb, double *C, int ldc);
+void CdamDtranspose(int m, int n, double *A, int lda, double *B, int ldb);
+void CdamDgeam(BLASTrans transA, BLASTrans transB, int m, int n, double alpha, const double *A, int lda, double beta, const double *B, int ldb, double *C, int ldc);
 
 /* LAPACK */
-void dgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
-void dgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, double *const Carray[], int ldc, int *infoArray, int batchSize);
+void CdamDgetrfBatched(int n, double *const Aarray[], int lda, int *PivotArray, int *infoArray, int batchSize);
+void CdamDgetriBatched(int n, double *const Aarray[], int lda, int *PivotArray, double *const Carray[], int ldc, int *infoArray, int batchSize);
 
 /* Sparse BLAS */
 
-void SpMatCreate(SPMatDesc* matDesc, int m, int n, int nnz, int* row_ptr, int* col_ind, double* values);
-void SpMatDestroy(SPMatDesc matDesc);
-void dspmvBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize);
-void dspmvPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
-void dspmv(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
+void CdamSPMatCreate(SPMatDesc* matDesc, int m, int n, int nnz, int* row_ptr, int* col_ind, double* values);
+void CdamSPMatDestroy(SPMatDesc matDesc);
+void CdamDSPMVBufferSize(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, size_t* bufferSize);
+void CdamDSPMVPreprocess(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
+void CdamDSPMV(SPTrans trans, double alpha, SPMatDesc matA, const double* x, double beta, double* y, void* buffer);
 
 __END_DECLS__
 

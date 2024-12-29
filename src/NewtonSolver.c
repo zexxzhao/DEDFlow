@@ -60,7 +60,7 @@ static void UpdateSolutionPrivate(void* data, void *sol) {
 		relaxation *= -1.0;
 	}
 
-	daxpy(n, relaxation, dx, 1, sol, 1);
+	CdamDaxpy(n, relaxation, dx, 1, sol, 1);
 	
 }
 
@@ -78,7 +78,7 @@ void CdamNewtonSolverCreate(MPI_Comm comm, CdamNewtonSolver **solver) {
 }
 
 void CdamNewtonSolverDestroy(CdamNewtonSolver *solver) {
-	CdamFreeHost(solver, sizeof(CdamNewtonSolver));
+	CdamFree(solver, sizeof(CdamNewtonSolver), HOST_MEM);
 	solver = NULL;
 }
 
@@ -162,6 +162,7 @@ void CdamNewtonSolverSolve(CdamNewtonSolver* solver, value_type* x) {
 
 	
 	/* Construct the right-hand side */
+	ASSERT(solver->op->linear_form);
 	solver->op->linear_form(solver, b, NULL);
 
 

@@ -27,7 +27,7 @@ static void MatMultAddDenseDensePrivate(value_type alpha, void* A, void* B, valu
 		ASSERT(m == SeqMatNumRow(C) && "Matrix C must have the same number of rows as matrix A.");
 		ASSERT(n == SeqMatNumCol(C) && "Matrix C must have the same number of columns as matrix B.");
 	}
-	dgemm(BLAS_N, BLAS_N, n, m, k, alpha, dataB, n, dataA, k, beta, SeqMatAsType(C, SeqMatDense)->data, n);
+	CdamDgemm(BLAS_N, BLAS_N, n, m, k, alpha, dataB, n, dataA, k, beta, SeqMatAsType(C, SeqMatDense)->data, n);
 
 }
 static void MatMultAddDenseCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse);
@@ -102,7 +102,7 @@ static void SeqMatTransposeDensePrivate(void* A) {
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
 	SeqMatNumRow(A) = ncol;
 	SeqMatNumCol(A) = nrow;
-	dtranspose(nrow, ncol, data, ncol, data, nrow);
+	CdamDtranspose(nrow, ncol, data, ncol, data, nrow);
 }
 
 static void SeqMatMultAddDensePrivate(value_type alpha, void* A, value_type *x, value_type beta, value_type *y) {
@@ -110,7 +110,7 @@ static void SeqMatMultAddDensePrivate(value_type alpha, void* A, value_type *x, 
 	index_type ncol = SeqMatNumCol(A);
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
 
-	dgemv(BLAS_T, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
+	CdamDgemv(BLAS_T, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
 }
 
 static void SeqMatMultTransposeAddDensePrivate(value_type alpha, void* A, value_type *x, value_type beta, value_type *y) {
@@ -118,7 +118,7 @@ static void SeqMatMultTransposeAddDensePrivate(value_type alpha, void* A, value_
 	index_type ncol = SeqMatNumCol(A);
 	value_type* data = SeqMatAsType(A, SeqMatDense)->data;
 
-	dgemv(BLAS_N, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
+	CdamDgemv(BLAS_N, ncol, nrow, alpha, data, ncol, x, 1, beta, y, 1);
 }
 
 static void SeqMatMatMultAddDensePrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {
@@ -225,15 +225,15 @@ static void SeqMatSetupCSRPrivate(void* A) {
 	SeqMatAsType(A, SeqMatCSR)->data = CdamTMalloc(value_type, spy->nnz, DEVICE_MEM);
 	CdamMemset(SeqMatAsType(A, SeqMatCSR)->data, 0, spy->nnz * sizeof(value_type), DEVICE_MEM);
 
-	SpMatCreate(&SeqMatAsType(A, SeqMatCSR)->descr, nrow, ncol, spy->nnz, CSRAttrRowPtr(spy), CSRAttrColInd(spy), SeqMatAsType(A, SeqMatCSR)->data);
+	CdamSPMatCreate(&SeqMatAsType(A, SeqMatCSR)->descr, nrow, ncol, spy->nnz, CSRAttrRowPtr(spy), CSRAttrColInd(spy), SeqMatAsType(A, SeqMatCSR)->data);
 
 	value_type* x = CdamTMalloc(value_type, ncol, DEVICE_MEM);
 	value_type* y = CdamTMalloc(value_type, nrow, DEVICE_MEM);
 
-	dspmvBufferSize(SP_N, 1.0, SeqMatAsType(A, SeqMatCSR)->descr, x, 0.0, y, &SeqMatAsType(A, SeqMatCSR)->buffer_size);
+	CdamDSPMVBufferSize(SP_N, 1.0, SeqMatAsType(A, SeqMatCSR)->descr, x, 0.0, y, &SeqMatAsType(A, SeqMatCSR)->buffer_size);
 	SeqMatAsType(A, SeqMatCSR)->buffer = CdamTMalloc(char, SeqMatAsType(A, SeqMatCSR)->buffer_size, DEVICE_MEM);
 
-	dspmvPreprocess(SP_N, 1.0, SeqMatAsType(A, SeqMatCSR)->descr, x, 0.0, y, SeqMatAsType(A, SeqMatCSR)->buffer);
+	CdamDSPMVPreprocess(SP_N, 1.0, SeqMatAsType(A, SeqMatCSR)->descr, x, 0.0, y, SeqMatAsType(A, SeqMatCSR)->buffer);
 
 	CdamFree(x, sizeof(value_type) * ncol, DEVICE_MEM);
 	CdamFree(y, sizeof(value_type) * nrow, DEVICE_MEM);
@@ -243,7 +243,7 @@ static void SeqMatSetupCSRPrivate(void* A) {
 static void SeqMatDestroyCSRPrivate(void* A) {
 	CSRAttr* spy = SeqMatAsType(A, SeqMatCSR)->spy;
 	CdamFree(SeqMatAsType(A, SeqMatCSR)->data, sizeof(value_type) * spy->nnz, DEVICE_MEM);
-	SpMatDestroy(SeqMatAsType(A, SeqMatCSR)->descr);
+	CdamSPMatDestroy(SeqMatAsType(A, SeqMatCSR)->descr);
 	CdamFree(SeqMatAsType(A, SeqMatCSR)->buffer, SeqMatAsType(A, SeqMatCSR)->buffer_size, DEVICE_MEM);
 	CdamFree(SeqMatAsType(A, SeqMatCSR), sizeof(SeqMatCSR), HOST_MEM);
 }
@@ -316,11 +316,11 @@ static void SeqMatTransposeCSRPrivate(void* A) {
 }
 
 static void SeqMatMultAddCSRPrivate(value_type alpha, void* A, value_type* x, value_type beta, value_type* y) {
-	dspmv(SP_N, alpha, SeqMatAsType(A, SeqMatCSR)->descr, x, beta, y, SeqMatAsType(A, SeqMatCSR)->buffer);
+	CdamDSPMV(SP_N, alpha, SeqMatAsType(A, SeqMatCSR)->descr, x, beta, y, SeqMatAsType(A, SeqMatCSR)->buffer);
 }
 
 static void SeqMatMultTransposeAddCSRPrivate(value_type alpha, void* A, value_type* x, value_type beta, value_type* y) {
-	dspmv(SP_T, alpha, SeqMatAsType(A, SeqMatCSR)->descr, x, beta, y,SeqMatAsType(A, SeqMatCSR)->buffer);
+	CdamDSPMV(SP_T, alpha, SeqMatAsType(A, SeqMatCSR)->descr, x, beta, y,SeqMatAsType(A, SeqMatCSR)->buffer);
 }
 
 static void SeqMatMatMultAddCSRPrivate(value_type alpha, void* A, void* B, value_type beta, void* C, MatReuse reuse) {

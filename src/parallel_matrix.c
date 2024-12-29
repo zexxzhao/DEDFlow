@@ -15,6 +15,10 @@ void CdamParMatCreate(MPI_Comm comm, void** A) {
 
 void CdamParMatDestroy(void* A) {
 
+	if(A == NULL) {
+		return;
+	}
+
 	SeqMatDestroy(CdamParMatII(A));
 	SeqMatDestroy(CdamParMatIS(A));
 	SeqMatDestroy(CdamParMatIG(A));
@@ -28,10 +32,34 @@ void CdamParMatDestroy(void* A) {
 	SeqMatDestroy(CdamParMatGG(A));
 
 
+	if(CdamParMatCtx(A) && CdamParMatOp(A)->destroy) {
+		CdamParMatOp(A)->destroy(A);
+	}
+
 	CdamFree(A, sizeof(CdamParMat), HOST_MEM);
 }
 
 void CdamParMatSetup(void* A) {
+
+	if (A == NULL) {
+		return;
+	}
+
+	if(CdamParMatCtx(A) && CdamParMatOp(A)->setup) {
+		CdamParMatOp(A)->setup(A);
+	}
+
+	SeqMatSetup(CdamParMatII(A));
+	SeqMatSetup(CdamParMatIS(A));
+	SeqMatSetup(CdamParMatIG(A));
+
+	SeqMatSetup(CdamParMatSI(A));
+	SeqMatSetup(CdamParMatSS(A));
+	SeqMatSetup(CdamParMatSG(A));
+
+	SeqMatSetup(CdamParMatGI(A));
+	SeqMatSetup(CdamParMatGS(A));
+	SeqMatSetup(CdamParMatGG(A));
 }
 
 void CdamParMatZero(void* A) {
@@ -201,8 +229,9 @@ void CdamParMatMultAdd(value_type alpha, void* A, value_type* x, value_type beta
 	}
 	
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
-		CommuGraph* commu = (CommuGraph*)CdamParMatCommutor(A);
+		CommuGraph* commu = (CommuGraph*)CdamParMatCommuGraph(A);
 		CdamLayout* map = CdamParMatRowMap(A);
+		UNUSED(map);
 		CommuGraphSyncForward(commu, y, sizeof(value_type));
 		CommuGraphSyncBackward(commu, y, sizeof(value_type));
 	}
@@ -236,8 +265,9 @@ void CdamParMatMultTransposeAdd(value_type alpha, void* A, value_type* x, value_
 	SeqMatMultTransposeAdd(alpha, CdamParMatGG(A), x + nrow_offset[2], 1.0, y + ncol_offset[2]);
 
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
-		CommuGraph* commu = (CommuGraph*)CdamParMatCommutor(A);
+		CommuGraph* commu = (CommuGraph*)CdamParMatCommuGraph(A);
 		CdamLayout* map = CdamParMatColMap(A);
+		UNUSED(map);
 		CommuGraphSyncForward(commu, y, sizeof(value_type));
 		CommuGraphSyncBackward(commu, y, sizeof(value_type));
 	}
@@ -289,8 +319,9 @@ void CdamParMatGetDiag(void* A, value_type* diag, index_type bs) {
 	SeqMatGetDiag(CdamParMatSS(A), diag + bs * bs * nrow_exclusive, bs);
 	if(CdamParMatAssemblyType(A) == MAT_DISASSEMBLED) {
 		SeqMatGetDiag(CdamParMatGG(A), diag + bs * bs * (nrow_exclusive + nrow_shared), bs);
-		CommuGraph* commu = (CommuGraph*)CdamParMatCommutor(A);
+		CommuGraph* commu = (CommuGraph*)CdamParMatCommuGraph(A);
 		CdamLayout* map = CdamParMatRowMap(A);
+		UNUSED(map);
 		CommuGraphSyncForward(commu, diag, bs * bs * sizeof(value_type));
 		CommuGraphSyncBackward(commu, diag, bs * bs * sizeof(value_type));
 	}

@@ -7,7 +7,7 @@
 
 __BEGIN_DECLS__
 
-#define CDAM_COMMUTOR_MAX_NUM_TASK (1024)
+#define CDAM_MAX_NUM_TASK MAX_NUM_PROCS
 
 /* The interprocessor mapping is defined by the user */
 /* The vec consists of three parts: exclusive, shared, ghosted */
@@ -49,17 +49,17 @@ struct CommuGraph {
 	int rank, num_procs;
 
 	int num_fwd_task;
-	int fwd_dstproc[CDAM_COMMUTOR_MAX_NUM_TASK]; /* connected part */
-	int fwd_count[CDAM_COMMUTOR_MAX_NUM_TASK]; /* forward size */
-	int fwd_displ[CDAM_COMMUTOR_MAX_NUM_TASK]; /* forward displacement */
+	int fwd_dstproc[CDAM_MAX_NUM_TASK]; /* connected part */
+	int fwd_count[CDAM_MAX_NUM_TASK]; /* forward size */
+	int fwd_displ[CDAM_MAX_NUM_TASK + 1]; /* forward displacement */
 
 	int num_bwd_task;
-	int bwd_srcproc[CDAM_COMMUTOR_MAX_NUM_TASK]; /* connected part */
-	int bwd_count[CDAM_COMMUTOR_MAX_NUM_TASK]; /* backward size */
-	int bwd_displ[CDAM_COMMUTOR_MAX_NUM_TASK]; /* backward displacement */
+	int bwd_srcproc[CDAM_MAX_NUM_TASK]; /* connected part */
+	int bwd_count[CDAM_MAX_NUM_TASK]; /* backward size */
+	int bwd_displ[CDAM_MAX_NUM_TASK + 1]; /* backward displacement */
 
-	MPI_Request req[CDAM_COMMUTOR_MAX_NUM_TASK * 2]; /* request for communication */
-	MPI_Status stat[CDAM_COMMUTOR_MAX_NUM_TASK * 2]; /* status for communication */
+	MPI_Request req[CDAM_MAX_NUM_TASK * 2]; /* request for communication */
+	MPI_Status stat[CDAM_MAX_NUM_TASK * 2]; /* status for communication */
 
 	index_type* bwd_task_index;
 	int range_exclusive[2];

@@ -5,7 +5,7 @@
 
 __BEGIN_DECLS__
 
-#define TAG(d, s) (CDAM_COMMUTOR_MAX_NUM_TASK * (d) + (s))
+#define TAG(d, s) (CDAM_MAX_NUM_TASK * (d) + (s))
 
 
 void AddValuePrivate(void*, void*, index_type, index_type*, index_type);

@@ -1025,21 +1025,21 @@ void GetElemInvJ3D(index_type batch_size, index_type* batch_index_ptr,
 	GetStridedBatchKernel<<<num_block, block_size>>>(batch_size, elem_metric, d_mat_batch, 10);
 
 	/* LU decomposition */
-	dgetrfBatched(3, d_mat_batch, 3, pivot, info, batch_size);
+	CdamDgetrfBatched(3, d_mat_batch, 3, pivot, info, batch_size);
 	/* Calculate the determinant of the Jacobian matrix */
 	GetElemDetJKernel<<<num_block, block_size>>>(batch_size, elem_metric);
 	/* Invert the Jacobian matrix */
-	dgetriBatched(3, d_mat_batch, 3, pivot, d_matinv_batch, 3, info, batch_size);
+	CdamDgetriBatched(3, d_mat_batch, 3, pivot, d_matinv_batch, 3, info, batch_size);
 	/* Copy the inverse of the Jacobian matrix to the elem_metric */
 	/* elem_metric[0:9, :] = d_matinv_batch[0:9, :], where elem_metric is 10xN */
 #ifdef CDAM_USE_CUDA
-	dgeam(BLAS_N, BLAS_N,
-				9, batch_size,
-				1.0,
-				d_elem_buff, 10,
-				0.0,
-				elem_metric, 10,
-				elem_metric, 10);
+	CdamDgeam(BLAS_N, BLAS_N,
+						9, batch_size,
+						1.0,
+						d_elem_buff, 10,
+						0.0,
+						elem_metric, 10,
+						elem_metric, 10);
 #else
 	for(index_type i = 0; i < batch_size; ++i) {
 		CdamMemcpy(elem_metric + i * 10, d_matinv_batch[i], 9 * SIZE_OF(value_type), DEVICE_MEM, HOST_MEM);
